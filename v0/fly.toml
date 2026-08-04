@@ -1,0 +1,29 @@
+# fly.toml app configuration file generated for place-logging on 2026-04-25T21:19:53-04:00
+#
+# See https://fly.io/docs/reference/configuration/ for information about how to use this file.
+#
+
+app = 'place-logging'
+primary_region = 'ewr'
+
+[build]
+
+[env]
+  DB_PATH = '/data/places.db'
+  WORKDIR = '/data/downloads'
+
+[[mounts]]
+  source = 'placedata'
+  destination = '/data'
+
+[http_service]
+  internal_port = 8000
+  force_https = true
+  auto_stop_machines = 'stop'
+  auto_start_machines = true
+  min_machines_running = 0
+  processes = ['app']
+
+[[vm]]
+  size = 'shared-cpu-1x'
+  memory = '1gb'

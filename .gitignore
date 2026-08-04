@@ -1,0 +1,17 @@
+# Secrets and local Python environments
+.env
+.venv/
+__pycache__/
+*.py[cod]
+
+# Runtime state and downloaded source media
+data/
+downloads/
+logs/
+*.db
+*.db-journal
+*.mp4
+*.info.json
+
+# macOS
+.DS_Store

@@ -1,0 +1,5 @@
+python-telegram-bot[webhooks]>=21.6
+google-genai>=1.73
+python-dotenv>=1.0
+requests>=2.32
+yt-dlp>=2026.3.17
