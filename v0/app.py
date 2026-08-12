@@ -5,6 +5,8 @@ import asyncio
 import logging
 import os
 import secrets
+import time
+import uuid
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from pathlib import Path
@@ -12,6 +14,9 @@ from typing import Any, Literal
 
 from dotenv import load_dotenv
 from fastapi import FastAPI, Header, HTTPException, Request, status
+from fastapi.encoders import jsonable_encoder
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field
 from telegram import Update
 from telegram.ext import Application
@@ -83,6 +88,63 @@ def _allowed_ids() -> set[int]:
     }
 
 
+def _validation_diagnostics(exc: RequestValidationError) -> dict[str, Any]:
+    """Describe malformed API input without logging secrets or full payloads."""
+    body = exc.body
+    diagnostics: dict[str, Any] = {
+        "body_type": type(body).__name__,
+        "errors": [
+            {
+                "location": list(error.get("loc", ())),
+                "type": error.get("type"),
+                "input_type": type(error.get("input")).__name__,
+            }
+            for error in exc.errors()
+        ],
+    }
+    if isinstance(body, dict):
+        diagnostics["body_keys"] = sorted(str(key) for key in body)
+        if "source_url" in body:
+            source_url = body["source_url"]
+            diagnostics["source_url_type"] = type(source_url).__name__
+            if isinstance(source_url, str):
+                diagnostics["source_url_preview"] = repr(source_url[:500])
+            elif isinstance(source_url, (bytes, bytearray)):
+                diagnostics["source_url_bytes"] = len(source_url)
+            else:
+                diagnostics["source_url_shape"] = _safe_shape(source_url)
+        if "delivery" in body:
+            diagnostics["delivery"] = _safe_shape(body["delivery"])
+    return diagnostics
+
+
+def _safe_shape(value: Any, depth: int = 0) -> Any:
+    """Return bounded diagnostic structure while redacting likely secrets."""
+    if depth >= 3:
+        return f"<{type(value).__name__}>"
+    if isinstance(value, dict):
+        shaped = {}
+        for key, child in list(value.items())[:20]:
+            key_text = str(key)
+            if any(
+                marker in key_text.lower()
+                for marker in ("auth", "token", "secret", "password", "prompt")
+            ):
+                shaped[key_text] = "<redacted>"
+            else:
+                shaped[key_text] = _safe_shape(child, depth + 1)
+        return shaped
+    if isinstance(value, (list, tuple)):
+        return [_safe_shape(child, depth + 1) for child in list(value)[:10]]
+    if isinstance(value, str):
+        return {"type": "str", "repr": repr(value[:500]), "length": len(value)}
+    if isinstance(value, (int, float, bool)) or value is None:
+        return value
+    if isinstance(value, (bytes, bytearray)):
+        return {"type": type(value).__name__, "length": len(value)}
+    return f"<{type(value).__name__}>"
+
+
 def build_runtime() -> Runtime:
     root = Path(__file__).parent
     service = IngestService(
@@ -139,6 +201,52 @@ def create_app(injected_runtime: Runtime | None = None) -> FastAPI:
         lifespan=lifespan,
     )
 
+    @application.middleware("http")
+    async def request_observability(request: Request, call_next):
+        request_id = request.headers.get("fly-request-id") or uuid.uuid4().hex[:12]
+        request.state.request_id = request_id
+        started = time.perf_counter()
+        try:
+            response = await call_next(request)
+        except Exception:
+            log.exception(
+                "HTTP request crashed request_id=%s method=%s path=%s",
+                request_id,
+                request.method,
+                request.url.path,
+            )
+            raise
+        elapsed_ms = round((time.perf_counter() - started) * 1000, 1)
+        log.info(
+            "HTTP request request_id=%s method=%s path=%s status=%s "
+            "duration_ms=%s content_type=%r content_length=%r",
+            request_id,
+            request.method,
+            request.url.path,
+            response.status_code,
+            elapsed_ms,
+            request.headers.get("content-type"),
+            request.headers.get("content-length"),
+        )
+        response.headers["X-Request-ID"] = request_id
+        return response
+
+    @application.exception_handler(RequestValidationError)
+    async def request_validation_error(
+        request: Request,
+        exc: RequestValidationError,
+    ) -> JSONResponse:
+        log.warning(
+            "Request validation failed request_id=%s path=%s diagnostics=%s",
+            getattr(request.state, "request_id", "unknown"),
+            request.url.path,
+            _validation_diagnostics(exc),
+        )
+        return JSONResponse(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            content={"detail": jsonable_encoder(exc.errors())},
+        )
+
     @application.get("/healthz")
     async def healthz() -> dict[str, str]:
         return {"status": "ok"}
@@ -165,7 +273,19 @@ def create_app(injected_runtime: Runtime | None = None) -> FastAPI:
         runtime: Runtime = request.app.state.runtime
         expected = f"Bearer {runtime.ingest_api_token}"
         if not authorization or not secrets.compare_digest(authorization, expected):
+            log.warning(
+                "Ingest authentication rejected request_id=%s",
+                getattr(request.state, "request_id", "unknown"),
+            )
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED)
+
+        ingest_started = time.perf_counter()
+        log.info(
+            "Ingest accepted request_id=%s source_url=%r delivery=%s",
+            getattr(request.state, "request_id", "unknown"),
+            payload.source_url,
+            payload.delivery,
+        )
 
         notification = None
         delivery_status: Literal["not_requested", "sent", "failed"] = (
@@ -193,6 +313,15 @@ def create_app(injected_runtime: Runtime | None = None) -> FastAPI:
                 payload.user_prompt,
             )
         except (ValueError, NotImplementedError) as exc:
+            log.warning(
+                "Ingest rejected request_id=%s error_type=%s detail=%r "
+                "source_url=%r duration_ms=%s",
+                getattr(request.state, "request_id", "unknown"),
+                type(exc).__name__,
+                str(exc),
+                payload.source_url,
+                round((time.perf_counter() - ingest_started) * 1000, 1),
+            )
             if notification is not None:
                 await notification.edit_text(f"❌ {type(exc).__name__}: {exc}")
             raise HTTPException(
@@ -200,7 +329,12 @@ def create_app(injected_runtime: Runtime | None = None) -> FastAPI:
                 detail=str(exc),
             ) from exc
         except Exception as exc:
-            log.exception("API ingest failed")
+            log.exception(
+                "API ingest failed request_id=%s source_url=%r duration_ms=%s",
+                getattr(request.state, "request_id", "unknown"),
+                payload.source_url,
+                round((time.perf_counter() - ingest_started) * 1000, 1),
+            )
             if notification is not None:
                 await notification.edit_text("❌ Place Logger could not process that link.")
             raise HTTPException(
@@ -219,6 +353,15 @@ def create_app(injected_runtime: Runtime | None = None) -> FastAPI:
             except Exception:
                 delivery_status = "failed"
                 log.exception("Ingest saved but Telegram result delivery failed")
+        log.info(
+            "Ingest completed request_id=%s item_id=%s places=%s "
+            "delivery_status=%s duration_ms=%s",
+            getattr(request.state, "request_id", "unknown"),
+            result.get("item_id"),
+            len(result.get("places_extracted", [])),
+            delivery_status,
+            round((time.perf_counter() - ingest_started) * 1000, 1),
+        )
         return {**result, "delivery_status": delivery_status}
 
     return application
