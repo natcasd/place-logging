@@ -41,6 +41,9 @@ logging.basicConfig(
     level=logging.INFO,
 )
 log = logging.getLogger("bot")
+# python-telegram-bot logs Bot API request URLs through httpx at INFO level;
+# those URLs contain the Telegram token. Keep them out of application logs.
+logging.getLogger("httpx").setLevel(logging.WARNING)
 
 
 def _format_result(result: dict) -> str:
@@ -96,7 +99,7 @@ async def handle(update: Update, _ctx: ContextTypes.DEFAULT_TYPE) -> None:
     user_prompt = URL_RE.sub("", text).strip() or None
 
     if not source_url:
-        await msg.reply_text("Send me a URL (Instagram Reel / TikTok / YouTube), optionally with a note.")
+        await msg.reply_text("Send me a public Instagram or YouTube URL, optionally with a note.")
         return
 
     ack = await msg.reply_text("🔎 Working on it…")

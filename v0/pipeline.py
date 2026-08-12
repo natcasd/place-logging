@@ -1,5 +1,5 @@
 """
-Ingest pipeline: source_url → mp4 → Gemini extract → Places resolve → result dict.
+Ingest pipeline: source URL → platform ingest → Gemini extract → Places resolve.
 
 Stays synchronous for simplicity; bot.py offloads to a thread via asyncio.to_thread.
 """
@@ -9,9 +9,11 @@ import json
 import logging
 import os
 import subprocess
+import sys
 import time
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 
 import requests
 from google import genai
@@ -34,11 +36,44 @@ def _client() -> genai.Client:
 
 # ---------- Fetcher ----------
 
+YOUTUBE_HOSTS = {
+    "youtube.com",
+    "www.youtube.com",
+    "m.youtube.com",
+    "youtu.be",
+}
+INSTAGRAM_HOSTS = {"instagram.com", "www.instagram.com"}
+TIKTOK_HOSTS = {
+    "tiktok.com",
+    "www.tiktok.com",
+    "vm.tiktok.com",
+    "tiktokv.com",
+    "www.tiktokv.com",
+}
+
+
+def source_platform(source_url: str) -> str:
+    """Return the supported source platform for a URL."""
+    host = (urlparse(source_url).hostname or "").lower()
+    if host in YOUTUBE_HOSTS:
+        return "youtube"
+    if host in INSTAGRAM_HOSTS:
+        return "instagram"
+    if host in TIKTOK_HOSTS:
+        return "tiktok"
+    return "other"
+
+
 def fetch(source_url: str, workdir: Path) -> tuple[Path, dict[str, Any]]:
-    """Download mp4 with yt-dlp, return (mp4_path, metadata)."""
+    """Download an Instagram video with yt-dlp."""
+    if source_platform(source_url) != "instagram":
+        raise ValueError("fetch() only supports Instagram URLs")
+
     workdir.mkdir(parents=True, exist_ok=True)
     cmd = [
-        "yt-dlp",
+        sys.executable,
+        "-m",
+        "yt_dlp",
         "--no-playlist",
         "--write-info-json",
         "-o", f"{workdir}/%(id)s.%(ext)s",
@@ -47,7 +82,7 @@ def fetch(source_url: str, workdir: Path) -> tuple[Path, dict[str, Any]]:
     ]
     result = subprocess.run(cmd, capture_output=True, text=True, check=False)
     if result.returncode != 0:
-        raise RuntimeError(f"yt-dlp failed: {result.stderr.strip()[:300]}")
+        raise RuntimeError(f"yt-dlp failed: {result.stderr.strip()[-1000:]}")
 
     mp4_path = Path(result.stdout.strip().splitlines()[-1])
     info_path = mp4_path.with_suffix(".info.json")
@@ -86,6 +121,65 @@ Return ONLY valid JSON in this shape:
 If NO physical place is discussed in the video, return { "places": [] }.
 """
 
+EXTRACTION_RESPONSE_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "places": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "extracted_name": {"type": "string"},
+                    "location_hints": {
+                        "type": "object",
+                        "properties": {
+                            "neighborhood": {"type": "string"},
+                            "city": {"type": "string"},
+                            "region_or_country": {"type": "string"},
+                            "on_screen_text": {"type": "string"},
+                            "visual_landmarks": {"type": "string"},
+                        },
+                    },
+                    "dishes": {"type": "array", "items": {"type": "string"}},
+                    "why_its_cool": {"type": "string"},
+                    "tags": {"type": "array", "items": {"type": "string"}},
+                    "extraction_confidence": {
+                        "type": "string",
+                        "enum": ["high", "medium", "low"],
+                    },
+                },
+                "required": [
+                    "extracted_name",
+                    "dishes",
+                    "why_its_cool",
+                    "tags",
+                    "extraction_confidence",
+                ],
+            },
+        }
+    },
+    "required": ["places"],
+}
+
+
+def _extraction_prompt(
+    metadata: dict[str, Any],
+    user_prompt: str | None = None,
+) -> str:
+    prompt = (
+        EXTRACTOR_PROMPT
+        + "\n\nSource metadata (supporting evidence, but trust the video itself "
+          "for on_screen_text / visual_landmarks):\n"
+        + json.dumps(metadata, indent=2, ensure_ascii=False)
+    )
+    if user_prompt:
+        prompt += (
+            "\n\nUser prompt (highest authority — may clarify, correct, or override "
+            "what you'd otherwise infer from the content):\n"
+            + user_prompt
+        )
+    return prompt
+
 
 def extract(
     mp4_path: Path,
@@ -103,24 +197,16 @@ def extract(
     if uploaded.state.name != "ACTIVE":
         raise RuntimeError(f"Gemini file upload ended in state {uploaded.state.name}")
 
-    prompt = (
-        EXTRACTOR_PROMPT
-        + "\n\nSource metadata (supporting evidence, but trust the video itself "
-          "for on_screen_text / visual_landmarks):\n"
-        + json.dumps(metadata, indent=2, ensure_ascii=False)
-    )
-    if user_prompt:
-        prompt += (
-            "\n\nUser prompt (highest authority — may clarify, correct, or override "
-            "what you'd otherwise infer from the content):\n"
-            + user_prompt
-        )
+    prompt = _extraction_prompt(metadata, user_prompt)
 
-    model = os.environ.get("GEMINI_MODEL", "gemini-2.5-flash")
+    model = os.environ.get("GEMINI_MODEL", "gemini-3.1-flash-lite")
     response = client.models.generate_content(
         model=model,
         contents=[uploaded, prompt],
-        config=types.GenerateContentConfig(response_mime_type="application/json"),
+        config=types.GenerateContentConfig(
+            response_mime_type="application/json",
+            response_schema=EXTRACTION_RESPONSE_SCHEMA,
+        ),
     )
 
     # Cleanup the uploaded file
@@ -130,6 +216,29 @@ def extract(
         pass
 
     parsed = json.loads(response.text)
+    return parsed.get("places", [])
+
+
+def extract_youtube_url(
+    source_url: str,
+    user_prompt: str | None = None,
+) -> list[dict[str, Any]]:
+    """Have Gemini analyze a public YouTube URL without downloading it."""
+    metadata = {"source_platform": "youtube", "webpage_url": source_url}
+    model = os.environ.get(
+        "GEMINI_YOUTUBE_MODEL",
+        os.environ.get("GEMINI_MODEL", "gemini-3.1-flash-lite"),
+    )
+    response = _client().interactions.create(
+        model=model,
+        input=[
+            {"type": "text", "text": _extraction_prompt(metadata, user_prompt)},
+            {"type": "video", "uri": source_url},
+        ],
+        response_format=EXTRACTION_RESPONSE_SCHEMA,
+        store=False,
+    )
+    parsed = json.loads(response.output_text)
     return parsed.get("places", [])
 
 
@@ -192,7 +301,7 @@ Return JSON of this shape:
         len(candidates),
         place.get("extracted_name"),
     )
-    model = os.environ.get("GEMINI_MODEL", "gemini-2.5-flash")
+    model = os.environ.get("GEMINI_MODEL", "gemini-3.1-flash-lite")
     resp = _client().models.generate_content(
         model=model,
         contents=[prompt],
@@ -300,15 +409,27 @@ def process_ingest(
         # v0 only wires up URL-based ingest (see doc 09 for the generalized plan).
         raise NotImplementedError("v0 requires a source URL")
 
-    mp4_path, metadata = fetch(source_url, workdir)
-    try:
-        places = extract(mp4_path, metadata, user_prompt)
-    finally:
+    platform = source_platform(source_url)
+    if platform == "tiktok":
+        raise NotImplementedError(
+            "TikTok ingestion is temporarily unavailable while its downloader support is unstable"
+        )
+    if platform == "other":
+        raise ValueError("Supported URLs are public YouTube videos and Instagram posts")
+
+    if platform == "youtube":
+        metadata = {"source_platform": "youtube", "webpage_url": source_url}
+        places = extract_youtube_url(source_url, user_prompt)
+    else:
+        mp4_path, metadata = fetch(source_url, workdir)
         try:
-            mp4_path.unlink(missing_ok=True)
-            mp4_path.with_suffix(".info.json").unlink(missing_ok=True)
-        except Exception:
-            log.exception("cleanup failed (non-fatal)")
+            places = extract(mp4_path, metadata, user_prompt)
+        finally:
+            try:
+                mp4_path.unlink(missing_ok=True)
+                mp4_path.with_suffix(".info.json").unlink(missing_ok=True)
+            except Exception:
+                log.exception("cleanup failed (non-fatal)")
 
     resolved = [{"extracted": p, **resolve(p)} for p in places]
 
