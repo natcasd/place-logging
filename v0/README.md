@@ -1,10 +1,12 @@
-# v0 — Telegram bot scaffold
+# v0 — shared place-ingest API and Telegram bot
 
-Minimal working v0: Telegram → Extractor → Resolver → SQLite.
+Minimal working v0: clients → shared ingest service → Extractor → Resolver → SQLite.
 
 ## Layout
 
-- `bot.py` — Telegram webhook handler (entry point)
+- `app.py` — FastAPI entry point and HTTP transport
+- `bot.py` — Telegram transport adapter
+- `ingest_service.py` — shared process-and-persist application service
 - `pipeline.py` — platform-aware `ingest → extract → resolve` pipeline
 - `store.py` — SQLite schema + `save_ingest()`
 - `data/` — mp4 download cache + `places.db` (both gitignored)
@@ -38,15 +40,54 @@ cloudflared tunnel --url http://localhost:8000
 ```
 Copy the `https://....trycloudflare.com` URL it prints into `.env` as `PUBLIC_URL`.
 
-**Terminal 2 — bot:**
+**Terminal 2 — API and bot:**
 ```bash
 source .venv/bin/activate
-python bot.py
+uvicorn app:app --host 0.0.0.0 --port 8000
 ```
 
 Then share a public Instagram Reel or YouTube video to your bot via the iOS share sheet → Telegram → pick your bot. Or type a message containing a URL. YouTube URLs are sent directly to Gemini; Instagram media is fetched with `yt-dlp`.
 
 The bot replies "🔎 Working on it…", then edits that message with the final result once the pipeline finishes (~10–30s).
+
+## Shared ingest API
+
+Telegram and HTTP clients use the same `IngestService`, so extraction,
+resolution, and persistence behave consistently across transports.
+
+```bash
+curl https://place-logging.fly.dev/api/v1/ingests \
+  --request POST \
+  --header "Authorization: Bearer $INGEST_API_TOKEN" \
+  --header "Content-Type: application/json" \
+  --data '{"source_url":"https://youtu.be/example","delivery":"response_only"}'
+```
+
+Set `delivery` to `telegram` to send progress and the final result to
+`SHORTCUT_TELEGRAM_CHAT_ID` (or the first allowed Telegram user). The request
+stays open until processing and persistence complete, which keeps a
+scale-to-zero Fly machine alive for the full job.
+
+### iPhone Shortcut
+
+Create a shortcut named **Save to Place Logger**:
+
+1. Open its details, enable **Show in Share Sheet**, and accept **URLs** and
+   **Text**.
+2. Add **Get URLs from Shortcut Input**.
+3. Add **Get Item from List** and select **First Item**.
+4. Add **Get Contents of URL** with:
+   - URL: `https://place-logging.fly.dev/api/v1/ingests`
+   - Method: `POST`
+   - Header: `Authorization` = `Bearer <your INGEST_API_TOKEN>`
+   - Request body: JSON
+   - `source_url`: the first URL from the previous action
+   - `delivery`: `telegram`
+5. Add **Show Notification** with “Saved to Place Logger.”
+
+The token is separate from the Telegram bot token and can be rotated without
+recreating the bot. Do not publish a Shortcut containing the token; use a
+per-user token or an import question before sharing it with another person.
 
 ## Sanity-checking a run
 
