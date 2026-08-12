@@ -1,11 +1,11 @@
 # v0 — Telegram bot scaffold
 
-Minimal working v0: Telegram → Fetcher → Extractor → Resolver → SQLite.
+Minimal working v0: Telegram → Extractor → Resolver → SQLite.
 
 ## Layout
 
 - `bot.py` — Telegram webhook handler (entry point)
-- `pipeline.py` — `fetch → extract → resolve` as a single `process_ingest()` fn
+- `pipeline.py` — platform-aware `ingest → extract → resolve` pipeline
 - `store.py` — SQLite schema + `save_ingest()`
 - `data/` — mp4 download cache + `places.db` (both gitignored)
 
@@ -44,7 +44,7 @@ source .venv/bin/activate
 python bot.py
 ```
 
-Then share an Instagram Reel / TikTok / YouTube to your bot via the iOS share sheet → Telegram → pick your bot. Or type a message containing a URL.
+Then share a public Instagram Reel or YouTube video to your bot via the iOS share sheet → Telegram → pick your bot. Or type a message containing a URL. YouTube URLs are sent directly to Gemini; Instagram media is fetched with `yt-dlp`.
 
 The bot replies "🔎 Working on it…", then edits that message with the final result once the pipeline finishes (~10–30s).
 
@@ -58,6 +58,15 @@ sqlite3 data/places.db 'select p.id, p.extracted_name, p.resolution_status, p.fo
 ## Known gaps (intentional for v0)
 
 - No viewer yet — disambiguation of `needs_review` items currently isn't possible through a UI.
-- No retry / error recovery for yt-dlp rate limits.
+- TikTok is temporarily unsupported while its upstream downloader support is unstable.
+- No retry / error recovery for Instagram rate limits.
 - URL-only ingest (pure-text + article/tweet URLs are the v0.5 expansion in doc 09).
 - No nearby-search, filters, or map yet.
+
+## Delivery
+
+- Pull requests and pushes to `main` run `.github/workflows/ci.yml`.
+- A successful CI run for a push to `main` triggers `.github/workflows/deploy.yml`.
+- Deployment uses an app-scoped `FLY_API_TOKEN`, updates existing Machines only,
+  disables Fly high-availability provisioning, and preserves scale-to-zero.
+- Pull requests never receive the production Fly token and never deploy.
