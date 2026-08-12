@@ -1,38 +1,14 @@
-"""
-Telegram bot (webhook mode). Receives a URL (+ optional text), runs the pipeline,
-replies with the result, persists to SQLite.
-
-Run with:
-    source .venv/bin/activate
-    python bot.py
-
-Requires cloudflared tunnel (or real host) pointing at localhost:$PORT and PUBLIC_URL
-set to that tunnel URL in .env.
-"""
+"""Telegram transport adapter for the shared ingest service."""
 from __future__ import annotations
 
 import asyncio
 import logging
-import os
 import re
-from pathlib import Path
 
-from dotenv import load_dotenv
 from telegram import Update
 from telegram.ext import Application, ContextTypes, MessageHandler, filters
 
-load_dotenv(Path(__file__).parent / ".env")
-
-from pipeline import process_ingest       # noqa: E402
-from store import init_db, save_ingest    # noqa: E402
-
-
-DB_PATH = Path(os.environ.get("DB_PATH", Path(__file__).parent / "data" / "places.db"))
-WORKDIR = Path(os.environ.get("WORKDIR", Path(__file__).parent / "data" / "downloads"))
-
-ALLOWED_IDS = {
-    int(x) for x in os.environ.get("TELEGRAM_ALLOWED_USER_IDS", "").split(",") if x.strip()
-}
+from ingest_service import IngestService
 
 URL_RE = re.compile(r"https?://\S+")
 
@@ -83,13 +59,49 @@ def _format_result(result: dict) -> str:
     return "\n".join(lines).strip()
 
 
-async def handle(update: Update, _ctx: ContextTypes.DEFAULT_TYPE) -> None:
+def build_application(
+    token: str,
+    service: IngestService,
+    allowed_ids: set[int],
+) -> Application:
+    application = Application.builder().token(token).updater(None).build()
+    application.bot_data["ingest_service"] = service
+    application.bot_data["allowed_ids"] = allowed_ids
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle))
+    return application
+
+
+async def send_ingest_result(
+    application: Application,
+    chat_id: int,
+    service: IngestService,
+    source_url: str,
+    user_prompt: str | None = None,
+) -> dict:
+    """Run an ingest and report progress/results to a Telegram chat."""
+    ack = await application.bot.send_message(chat_id, "🔎 Working on it…")
+    try:
+        result = await asyncio.to_thread(service.ingest, source_url, user_prompt)
+        await ack.edit_text(
+            _format_result(result),
+            parse_mode="Markdown",
+            disable_web_page_preview=True,
+        )
+        return result
+    except Exception as exc:
+        log.exception("ingest failed")
+        await ack.edit_text(f"❌ {type(exc).__name__}: {exc}")
+        raise
+
+
+async def handle(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
     msg = update.message
     if msg is None:
         return
 
     user_id = msg.from_user.id if msg.from_user else None
-    if ALLOWED_IDS and user_id not in ALLOWED_IDS:
+    allowed_ids: set[int] = ctx.application.bot_data["allowed_ids"]
+    if allowed_ids and user_id not in allowed_ids:
         log.info("ignoring message from unauthorized user_id=%s", user_id)
         return
 
@@ -102,43 +114,15 @@ async def handle(update: Update, _ctx: ContextTypes.DEFAULT_TYPE) -> None:
         await msg.reply_text("Send me a public Instagram or YouTube URL, optionally with a note.")
         return
 
-    ack = await msg.reply_text("🔎 Working on it…")
-
     try:
-        result = await asyncio.to_thread(process_ingest, source_url, user_prompt, WORKDIR)
-        await asyncio.to_thread(save_ingest, DB_PATH, result)
-        await ack.edit_text(_format_result(result), parse_mode="Markdown", disable_web_page_preview=True)
-    except Exception as exc:
-        log.exception("ingest failed")
-        await ack.edit_text(f"❌ {type(exc).__name__}: {exc}")
-
-
-def main() -> None:
-    init_db(DB_PATH)
-
-    token = os.environ["TELEGRAM_BOT_TOKEN"]
-
-    public_url = os.environ.get("PUBLIC_URL")
-    if not public_url:
-        app_name = os.environ.get("FLY_APP_NAME")
-        if not app_name:
-            raise RuntimeError("Set PUBLIC_URL or run on Fly (FLY_APP_NAME auto-injected)")
-        public_url = f"https://{app_name}.fly.dev"
-    public_url = public_url.rstrip("/")
-
-    port = int(os.environ.get("PORT", "8000"))
-
-    app = Application.builder().token(token).build()
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle))
-
-    log.info("Starting bot in webhook mode; registering %s/webhook", public_url)
-    app.run_webhook(
-        listen="0.0.0.0",
-        port=port,
-        url_path="webhook",
-        webhook_url=f"{public_url}/webhook",
-    )
-
-
-if __name__ == "__main__":
-    main()
+        service: IngestService = ctx.application.bot_data["ingest_service"]
+        await send_ingest_result(
+            ctx.application,
+            msg.chat_id,
+            service,
+            source_url,
+            user_prompt,
+        )
+    except Exception:
+        # send_ingest_result already logs and reports a safe user-facing failure.
+        pass

@@ -14,4 +14,4 @@ COPY . .
 ENV PYTHONUNBUFFERED=1 PORT=8000
 EXPOSE 8000
 
-CMD ["python", "bot.py"]
+CMD ["uvicorn", "app:app", "--host", "0.0.0.0", "--port", "8000"]
