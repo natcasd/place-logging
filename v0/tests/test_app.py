@@ -79,6 +79,27 @@ class ApiTests(unittest.TestCase):
             None,
         )
 
+    def test_validation_failure_logs_shape_without_authorization(self) -> None:
+        with self.assertLogs("app", level="WARNING") as captured:
+            response = self.client.post(
+                "/api/v1/ingests",
+                headers={"Authorization": "Bearer do-not-log-this"},
+                json={"source_url": {"unexpected": "object"}},
+            )
+
+        self.assertEqual(response.status_code, 422)
+        logs = "\n".join(captured.output)
+        self.assertIn("source_url_type': 'dict'", logs)
+        self.assertIn("body_keys': ['source_url']", logs)
+        self.assertIn("source_url_shape", logs)
+        self.assertNotIn("do-not-log-this", logs)
+
+    def test_request_observability_adds_request_id(self) -> None:
+        response = self.client.get("/healthz")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.headers["x-request-id"])
+
     def test_telegram_delivery_reports_result(self) -> None:
         notification = SimpleNamespace(edit_text=AsyncMock())
         self.telegram.bot.send_message.return_value = notification
