@@ -1,0 +1,6 @@
+PLACE_LOGGER_API_TOKEN =
+#include? "Secrets.xcconfig"
+
+CODE_SIGN_IDENTITY[sdk=iphonesimulator*] =
+CODE_SIGNING_REQUIRED[sdk=iphonesimulator*] = NO
+CODE_SIGNING_ALLOWED[sdk=iphonesimulator*] = NO

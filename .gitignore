@@ -15,3 +15,10 @@ logs/
 
 # macOS
 .DS_Store
+
+# Local iOS credentials and generated build state
+ios/Config/Secrets.xcconfig
+ios/DerivedData/
+ios/build/
+*.xcuserstate
+xcuserdata/

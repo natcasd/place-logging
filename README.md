@@ -2,6 +2,10 @@
 
 Ideation workspace for a personal place-logging app idea. Docs are numbered in rough reading order.
 
+The working product lives in two directories: `v0/` contains the Fly-hosted
+API and processing pipeline, while `ios/` contains the native SwiftUI app and
+share extension.
+
 - [00_concept.md](00_concept.md) — the core idea and v0 user flow
 - [01_competitive_landscape.md](01_competitive_landscape.md) — what already exists in this space
 - [02_decision_next_steps.md](02_decision_next_steps.md) — honest read + recommended next step (try the competitors before building)
@@ -24,3 +28,5 @@ Ideation workspace for a personal place-logging app idea. Docs are numbered in r
 - `POST /api/v1/shortcut/diagnostics` is an authenticated debugging endpoint.
   It logs a bounded, redacted description of exactly what Shortcuts sent and
   never processes or persists a place.
+- `GET /api/v1/places` is the authenticated, read-only list API used by the
+  native iPhone app. It returns saved places newest-first.

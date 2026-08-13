@@ -106,3 +106,56 @@ def save_ingest(db_path: Path, result: dict[str, Any]) -> int:
         return item_id
     finally:
         con.close()
+
+
+def list_places(db_path: Path, limit: int = 200) -> list[dict[str, Any]]:
+    """Return saved places newest-first for read-only clients."""
+    con = sqlite3.connect(db_path)
+    con.row_factory = sqlite3.Row
+    try:
+        rows = con.execute(
+            """SELECT
+                 p.id,
+                 p.item_id,
+                 p.ordinal,
+                 p.extracted_name,
+                 p.google_place_id,
+                 p.lat,
+                 p.lng,
+                 p.formatted_address,
+                 p.google_maps_url,
+                 p.dishes_json,
+                 p.why_its_cool,
+                 p.tags_json,
+                 p.resolution_status,
+                 i.source_url,
+                 i.created_at
+               FROM places AS p
+               JOIN items AS i ON i.id = p.item_id
+               ORDER BY i.created_at DESC, p.item_id DESC, p.ordinal ASC
+               LIMIT ?""",
+            (limit,),
+        ).fetchall()
+
+        return [
+            {
+                "id": row["id"],
+                "item_id": row["item_id"],
+                "ordinal": row["ordinal"],
+                "name": row["extracted_name"],
+                "google_place_id": row["google_place_id"],
+                "latitude": row["lat"],
+                "longitude": row["lng"],
+                "formatted_address": row["formatted_address"],
+                "google_maps_url": row["google_maps_url"],
+                "dishes": json.loads(row["dishes_json"] or "[]"),
+                "why_its_cool": row["why_its_cool"] or "",
+                "tags": json.loads(row["tags_json"] or "[]"),
+                "resolution_status": row["resolution_status"],
+                "source_url": row["source_url"],
+                "saved_at": row["created_at"],
+            }
+            for row in rows
+        ]
+    finally:
+        con.close()

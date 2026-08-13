@@ -1,0 +1,469 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 77;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		064A3063186D6FA1DE5DCC64 /* ShareViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 14F9A82FE76648FCA9EB4AE7 /* ShareViewController.swift */; };
+		26C4D2D6EDA00B35597DCDA7 /* PlaceLoggerShare.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = ED4E058694F66A65E2067927 /* PlaceLoggerShare.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+		2B3C761B0F6580623D93432B /* PlaceLoggerAPI.swift in Sources */ = {isa = PBXBuildFile; fileRef = CD439B1B2B56ED9548B3A7D6 /* PlaceLoggerAPI.swift */; };
+		35FA7C74B90CA3C91792B341 /* PlaceLoggerAPI.swift in Sources */ = {isa = PBXBuildFile; fileRef = CD439B1B2B56ED9548B3A7D6 /* PlaceLoggerAPI.swift */; };
+		539E263B1CEE634631ADBCF8 /* Models.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9065EE50C75A067C2E5FDFAF /* Models.swift */; };
+		6B9118EB245C5AE58643E039 /* PlaceLoggerApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3966F5FA07BE13D9F432C431 /* PlaceLoggerApp.swift */; };
+		A13AC3B8A041213A9CBDC4AE /* APIConfig.swift in Sources */ = {isa = PBXBuildFile; fileRef = DEC84888F492275FE45F6B68 /* APIConfig.swift */; };
+		ADDA8920EC727782B0A39DBB /* Models.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9065EE50C75A067C2E5FDFAF /* Models.swift */; };
+		D8CD16D2D03261DA49C75A82 /* PlacesView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 84E6A5828324B0E8949325D2 /* PlacesView.swift */; };
+		F95C56977278060D2DB4E2A0 /* APIConfig.swift in Sources */ = {isa = PBXBuildFile; fileRef = DEC84888F492275FE45F6B68 /* APIConfig.swift */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		0CF71FBF588C37F3A66E0D45 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 31F61A04AAAEBC70CCC23A5C /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 4A4FDC9086C664F184DE03A4;
+			remoteInfo = PlaceLoggerShare;
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXCopyFilesBuildPhase section */
+		8C40EAAE648B6B9418AAA3E1 /* Embed Foundation Extensions */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 13;
+			files = (
+				26C4D2D6EDA00B35597DCDA7 /* PlaceLoggerShare.appex in Embed Foundation Extensions */,
+			);
+			name = "Embed Foundation Extensions";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXCopyFilesBuildPhase section */
+
+/* Begin PBXFileReference section */
+		117409D5429477A36432D246 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
+		14F9A82FE76648FCA9EB4AE7 /* ShareViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShareViewController.swift; sourceTree = "<group>"; };
+		3966F5FA07BE13D9F432C431 /* PlaceLoggerApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlaceLoggerApp.swift; sourceTree = "<group>"; };
+		4A0D76B916EFF821B9BED9A7 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
+		84E6A5828324B0E8949325D2 /* PlacesView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlacesView.swift; sourceTree = "<group>"; };
+		9065EE50C75A067C2E5FDFAF /* Models.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models.swift; sourceTree = "<group>"; };
+		C3073F44E078202B89E6435C /* PlaceLogger.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = PlaceLogger.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		CD439B1B2B56ED9548B3A7D6 /* PlaceLoggerAPI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlaceLoggerAPI.swift; sourceTree = "<group>"; };
+		DEC84888F492275FE45F6B68 /* APIConfig.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = APIConfig.swift; sourceTree = "<group>"; };
+		ED4E058694F66A65E2067927 /* PlaceLoggerShare.appex */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = "wrapper.app-extension"; path = PlaceLoggerShare.appex; sourceTree = BUILT_PRODUCTS_DIR; };
+		FB99F6D2DFD3814F7A9E74CF /* Base.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Base.xcconfig; sourceTree = "<group>"; };
+/* End PBXFileReference section */
+
+/* Begin PBXGroup section */
+		11E4A1F38083C4185BF1C5CF /* Config */ = {
+			isa = PBXGroup;
+			children = (
+				FB99F6D2DFD3814F7A9E74CF /* Base.xcconfig */,
+			);
+			path = Config;
+			sourceTree = "<group>";
+		};
+		2E773A964BC5427298E424D5 /* Shared */ = {
+			isa = PBXGroup;
+			children = (
+				DEC84888F492275FE45F6B68 /* APIConfig.swift */,
+				9065EE50C75A067C2E5FDFAF /* Models.swift */,
+				CD439B1B2B56ED9548B3A7D6 /* PlaceLoggerAPI.swift */,
+			);
+			path = Shared;
+			sourceTree = "<group>";
+		};
+		8130B50DFBA1193170B313A9 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				C3073F44E078202B89E6435C /* PlaceLogger.app */,
+				ED4E058694F66A65E2067927 /* PlaceLoggerShare.appex */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+		B8531FA0AABAF9495DF70EB5 /* PlaceLoggerShare */ = {
+			isa = PBXGroup;
+			children = (
+				117409D5429477A36432D246 /* Info.plist */,
+				14F9A82FE76648FCA9EB4AE7 /* ShareViewController.swift */,
+			);
+			path = PlaceLoggerShare;
+			sourceTree = "<group>";
+		};
+		E58E0C81873DC123E36A0D95 = {
+			isa = PBXGroup;
+			children = (
+				11E4A1F38083C4185BF1C5CF /* Config */,
+				FB63A3EE4D7AC875E86CFFAA /* PlaceLogger */,
+				B8531FA0AABAF9495DF70EB5 /* PlaceLoggerShare */,
+				2E773A964BC5427298E424D5 /* Shared */,
+				8130B50DFBA1193170B313A9 /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		FB63A3EE4D7AC875E86CFFAA /* PlaceLogger */ = {
+			isa = PBXGroup;
+			children = (
+				4A0D76B916EFF821B9BED9A7 /* Info.plist */,
+				3966F5FA07BE13D9F432C431 /* PlaceLoggerApp.swift */,
+				84E6A5828324B0E8949325D2 /* PlacesView.swift */,
+			);
+			path = PlaceLogger;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		13BE591597807113153FD45F /* PlaceLogger */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 40542E9B837239A42417045E /* Build configuration list for PBXNativeTarget "PlaceLogger" */;
+			buildPhases = (
+				DFD40B99E744E4815DB5F0F3 /* Sources */,
+				8C40EAAE648B6B9418AAA3E1 /* Embed Foundation Extensions */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				24877C4A86CF5C29EFE08E4B /* PBXTargetDependency */,
+			);
+			name = PlaceLogger;
+			packageProductDependencies = (
+			);
+			productName = PlaceLogger;
+			productReference = C3073F44E078202B89E6435C /* PlaceLogger.app */;
+			productType = "com.apple.product-type.application";
+		};
+		4A4FDC9086C664F184DE03A4 /* PlaceLoggerShare */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 15302123814ABFC0D0D24C49 /* Build configuration list for PBXNativeTarget "PlaceLoggerShare" */;
+			buildPhases = (
+				CDF95454C3FCB063CCDDB5CF /* Sources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = PlaceLoggerShare;
+			packageProductDependencies = (
+			);
+			productName = PlaceLoggerShare;
+			productReference = ED4E058694F66A65E2067927 /* PlaceLoggerShare.appex */;
+			productType = "com.apple.product-type.app-extension";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		31F61A04AAAEBC70CCC23A5C /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = YES;
+				LastUpgradeCheck = 1430;
+				TargetAttributes = {
+					13BE591597807113153FD45F = {
+						DevelopmentTeam = "";
+						ProvisioningStyle = Automatic;
+					};
+					4A4FDC9086C664F184DE03A4 = {
+						DevelopmentTeam = "";
+						ProvisioningStyle = Automatic;
+					};
+				};
+			};
+			buildConfigurationList = AD25129179E07812C1AE96AF /* Build configuration list for PBXProject "PlaceLogger" */;
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				Base,
+				en,
+			);
+			mainGroup = E58E0C81873DC123E36A0D95;
+			minimizedProjectReferenceProxies = 1;
+			preferredProjectObjectVersion = 77;
+			productRefGroup = 8130B50DFBA1193170B313A9 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				13BE591597807113153FD45F /* PlaceLogger */,
+				4A4FDC9086C664F184DE03A4 /* PlaceLoggerShare */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXSourcesBuildPhase section */
+		CDF95454C3FCB063CCDDB5CF /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				A13AC3B8A041213A9CBDC4AE /* APIConfig.swift in Sources */,
+				ADDA8920EC727782B0A39DBB /* Models.swift in Sources */,
+				35FA7C74B90CA3C91792B341 /* PlaceLoggerAPI.swift in Sources */,
+				064A3063186D6FA1DE5DCC64 /* ShareViewController.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		DFD40B99E744E4815DB5F0F3 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				F95C56977278060D2DB4E2A0 /* APIConfig.swift in Sources */,
+				539E263B1CEE634631ADBCF8 /* Models.swift in Sources */,
+				2B3C761B0F6580623D93432B /* PlaceLoggerAPI.swift in Sources */,
+				6B9118EB245C5AE58643E039 /* PlaceLoggerApp.swift in Sources */,
+				D8CD16D2D03261DA49C75A82 /* PlacesView.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		24877C4A86CF5C29EFE08E4B /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 4A4FDC9086C664F184DE03A4 /* PlaceLoggerShare */;
+			targetProxy = 0CF71FBF588C37F3A66E0D45 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
+
+/* Begin XCBuildConfiguration section */
+		0D389E576F6D826AD04749E4 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				APPLICATION_EXTENSION_API_ONLY = YES;
+				CODE_SIGN_STYLE = Automatic;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = PlaceLoggerShare/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.natcasd.placelogger.share;
+				PRODUCT_NAME = PlaceLoggerShare;
+				SDKROOT = iphoneos;
+				SKIP_INSTALL = YES;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
+		1A38EE354189511A51B43190 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				APPLICATION_EXTENSION_API_ONLY = YES;
+				CODE_SIGN_STYLE = Automatic;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = PlaceLoggerShare/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.natcasd.placelogger.share;
+				PRODUCT_NAME = PlaceLoggerShare;
+				SDKROOT = iphoneos;
+				SKIP_INSTALL = YES;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		44E00FF7B3F92F062182E75F /* Debug */ = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReference = FB99F6D2DFD3814F7A9E74CF /* Base.xcconfig */;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				CURRENT_PROJECT_VERSION = 1;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				DEVELOPMENT_TEAM = "";
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"$(inherited)",
+					"DEBUG=1",
+				);
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				MARKETING_VERSION = 0.1.0;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				MTL_FAST_MATH = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_VERSION = 6.0;
+			};
+			name = Debug;
+		};
+		4E38FE34DC8E372BE32905FD /* Release */ = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReference = FB99F6D2DFD3814F7A9E74CF /* Base.xcconfig */;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				CURRENT_PROJECT_VERSION = 1;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				DEVELOPMENT_TEAM = "";
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				MARKETING_VERSION = 0.1.0;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				MTL_FAST_MATH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
+				SWIFT_VERSION = 6.0;
+			};
+			name = Release;
+		};
+		6111B653C58A5687D04DD574 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_IDENTITY = "iPhone Developer";
+				CODE_SIGN_STYLE = Automatic;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = PlaceLogger/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.natcasd.placelogger;
+				PRODUCT_NAME = PlaceLogger;
+				SDKROOT = iphoneos;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		6D6310565C920A5A1A872264 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_IDENTITY = "iPhone Developer";
+				CODE_SIGN_STYLE = Automatic;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = PlaceLogger/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.natcasd.placelogger;
+				PRODUCT_NAME = PlaceLogger;
+				SDKROOT = iphoneos;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		15302123814ABFC0D0D24C49 /* Build configuration list for PBXNativeTarget "PlaceLoggerShare" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				1A38EE354189511A51B43190 /* Debug */,
+				0D389E576F6D826AD04749E4 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		40542E9B837239A42417045E /* Build configuration list for PBXNativeTarget "PlaceLogger" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				6111B653C58A5687D04DD574 /* Debug */,
+				6D6310565C920A5A1A872264 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		AD25129179E07812C1AE96AF /* Build configuration list for PBXProject "PlaceLogger" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				44E00FF7B3F92F062182E75F /* Debug */,
+				4E38FE34DC8E372BE32905FD /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+/* End XCConfigurationList section */
+	};
+	rootObject = 31F61A04AAAEBC70CCC23A5C /* Project object */;
+}
