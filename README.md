@@ -12,3 +12,12 @@ Ideation workspace for a personal place-logging app idea. Docs are numbered in r
 - [07_place_resolution.md](07_place_resolution.md) — the extracted-name → physical-restaurant step (Google Places Text Search, locationBias, multi-place-per-Reel schema)
 - [**08_full_architecture.md**](08_full_architecture.md) — **current consolidated architecture.** Read this first for the complete v0 picture.
 - [09_generalized_ingest.md](09_generalized_ingest.md) — generalized ingest (tweets, articles, pure text, user_prompt augmentation); notes what stays behind an expand-later seam in v0
+
+## Ingest API boundaries
+
+- `POST /api/v1/ingests` is the canonical authenticated JSON API. It accepts
+  `source_url` as a normal string.
+- `POST /api/v1/shortcut/ingests` is an Apple Shortcuts transport adapter. It
+  accepts `source_url_base64`, decodes it, and immediately delegates to the
+  canonical ingest flow. This isolates Shortcuts-specific content/provenance
+  behavior from the core API and processing service.

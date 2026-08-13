@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import asyncio
+import base64
+import binascii
 import logging
 import os
 import secrets
@@ -40,6 +42,21 @@ class IngestRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     source_url: str = Field(min_length=1, max_length=4096)
+    user_prompt: str | None = Field(default=None, max_length=4000)
+    delivery: Literal["response_only", "telegram"] = "response_only"
+
+
+class ShortcutIngestRequest(BaseModel):
+    """Apple Shortcuts transport envelope.
+
+    Base64 makes the URL a plain string before it crosses Shortcuts' network
+    permission boundary. The decoded value immediately enters the canonical
+    IngestRequest flow below.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    source_url_base64: str = Field(min_length=4, max_length=8192)
     user_prompt: str | None = Field(default=None, max_length=4000)
     delivery: Literal["response_only", "telegram"] = "response_only"
 
@@ -363,6 +380,43 @@ def create_app(injected_runtime: Runtime | None = None) -> FastAPI:
             round((time.perf_counter() - ingest_started) * 1000, 1),
         )
         return {**result, "delivery_status": delivery_status}
+
+    @application.post(
+        "/api/v1/shortcut/ingests",
+        response_model=IngestResponse,
+    )
+    async def create_shortcut_ingest(
+        payload: ShortcutIngestRequest,
+        request: Request,
+        authorization: str | None = Header(default=None),
+    ) -> dict[str, Any]:
+        """Decode the Shortcuts envelope, then use the canonical ingest API."""
+        try:
+            source_url = base64.b64decode(
+                payload.source_url_base64,
+                validate=True,
+            ).decode("utf-8").strip()
+        except (binascii.Error, UnicodeDecodeError, ValueError) as exc:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="source_url_base64 must encode a UTF-8 URL",
+            ) from exc
+
+        if not 1 <= len(source_url) <= 4096:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Decoded source URL must contain 1 to 4096 characters",
+            )
+
+        return await create_ingest(
+            IngestRequest(
+                source_url=source_url,
+                user_prompt=payload.user_prompt,
+                delivery=payload.delivery,
+            ),
+            request,
+            authorization,
+        )
 
     return application
 
