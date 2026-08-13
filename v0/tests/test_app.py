@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import unittest
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
@@ -78,6 +79,57 @@ class ApiTests(unittest.TestCase):
             "https://youtu.be/test",
             None,
         )
+
+    def test_shortcut_adapter_decodes_url_into_shared_ingest_flow(self) -> None:
+        source_url = "https://www.instagram.com/reel/test/"
+        encoded_url = base64.b64encode(source_url.encode()).decode()
+
+        response = self.client.post(
+            "/api/v1/shortcut/ingests",
+            headers={"Authorization": "Bearer api-secret"},
+            json={
+                "source_url_base64": encoded_url,
+                "delivery": "telegram",
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.service.ingest.assert_called_once_with(source_url, None)
+
+    def test_shortcut_adapter_rejects_invalid_base64(self) -> None:
+        response = self.client.post(
+            "/api/v1/shortcut/ingests",
+            headers={"Authorization": "Bearer api-secret"},
+            json={"source_url_base64": "not-valid-base64!"},
+        )
+
+        self.assertEqual(response.status_code, 422)
+        self.assertEqual(
+            response.json()["detail"],
+            "source_url_base64 must encode a UTF-8 URL",
+        )
+        self.service.ingest.assert_not_called()
+
+    def test_shortcut_adapter_rejects_non_ascii_base64(self) -> None:
+        response = self.client.post(
+            "/api/v1/shortcut/ingests",
+            headers={"Authorization": "Bearer api-secret"},
+            json={"source_url_base64": "not-base64-🚫"},
+        )
+
+        self.assertEqual(response.status_code, 422)
+        self.service.ingest.assert_not_called()
+
+    def test_shortcut_adapter_requires_bearer_token(self) -> None:
+        encoded_url = base64.b64encode(b"https://youtu.be/test").decode()
+
+        response = self.client.post(
+            "/api/v1/shortcut/ingests",
+            json={"source_url_base64": encoded_url},
+        )
+
+        self.assertEqual(response.status_code, 401)
+        self.service.ingest.assert_not_called()
 
     def test_validation_failure_logs_shape_without_authorization(self) -> None:
         with self.assertLogs("app", level="WARNING") as captured:
