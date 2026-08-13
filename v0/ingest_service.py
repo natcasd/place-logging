@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Any
 
 from pipeline import process_ingest
-from store import init_db, save_ingest
+from store import init_db, list_places, save_ingest
 
 
 @dataclass(frozen=True)
@@ -26,3 +26,7 @@ class IngestService:
         result = process_ingest(source_url, user_prompt, self.workdir)
         item_id = save_ingest(self.db_path, result)
         return {"item_id": item_id, **result}
+
+    def places(self, limit: int = 200) -> list[dict[str, Any]]:
+        """Return saved places for app clients."""
+        return list_places(self.db_path, limit)

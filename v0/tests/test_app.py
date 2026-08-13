@@ -66,6 +66,51 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(response.status_code, 401)
         self.service.ingest.assert_not_called()
 
+    def test_places_requires_bearer_token(self) -> None:
+        response = self.client.get("/api/v1/places")
+
+        self.assertEqual(response.status_code, 401)
+        self.service.places.assert_not_called()
+
+    def test_places_returns_saved_places(self) -> None:
+        self.service.places.return_value = [
+            {
+                "id": 7,
+                "item_id": 12,
+                "ordinal": 0,
+                "name": "Test Place",
+                "google_place_id": "places/test",
+                "latitude": 40.7,
+                "longitude": -74.0,
+                "formatted_address": "123 Test St",
+                "google_maps_url": "https://maps.google.com/test",
+                "dishes": ["cream soda"],
+                "why_its_cool": "A classic.",
+                "tags": ["deli"],
+                "resolution_status": "resolved",
+                "source_url": "https://youtu.be/test",
+                "saved_at": "2026-08-13 12:00:00",
+            }
+        ]
+
+        response = self.client.get(
+            "/api/v1/places?limit=25",
+            headers={"Authorization": "Bearer api-secret"},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["places"][0]["name"], "Test Place")
+        self.service.places.assert_called_once_with(25)
+
+    def test_places_rejects_excessive_limit(self) -> None:
+        response = self.client.get(
+            "/api/v1/places?limit=501",
+            headers={"Authorization": "Bearer api-secret"},
+        )
+
+        self.assertEqual(response.status_code, 422)
+        self.service.places.assert_not_called()
+
     def test_ingest_calls_shared_service_and_returns_result(self) -> None:
         response = self.client.post(
             "/api/v1/ingests",

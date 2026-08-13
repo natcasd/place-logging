@@ -1,0 +1,83 @@
+name: PlaceLogger
+options:
+  bundleIdPrefix: com.natcasd.placelogger
+  deploymentTarget:
+    iOS: "17.0"
+  createIntermediateGroups: true
+configs:
+  Debug: debug
+  Release: release
+configFiles:
+  Debug: Config/Base.xcconfig
+  Release: Config/Base.xcconfig
+settings:
+  base:
+    DEVELOPMENT_TEAM: ""
+    SWIFT_VERSION: "6.0"
+    MARKETING_VERSION: "0.1.0"
+    CURRENT_PROJECT_VERSION: "1"
+targets:
+  PlaceLogger:
+    type: application
+    platform: iOS
+    sources:
+      - path: PlaceLogger
+      - path: Shared
+    info:
+      path: PlaceLogger/Info.plist
+      properties:
+        CFBundleDisplayName: Place Logger
+        UILaunchScreen: {}
+        APIBaseURL: https://place-logging.fly.dev
+        APIToken: $(PLACE_LOGGER_API_TOKEN)
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.natcasd.placelogger
+        PRODUCT_NAME: PlaceLogger
+        GENERATE_INFOPLIST_FILE: false
+        CODE_SIGN_STYLE: Automatic
+    dependencies:
+      - target: PlaceLoggerShare
+        embed: true
+  PlaceLoggerShare:
+    type: app-extension
+    platform: iOS
+    sources:
+      - path: PlaceLoggerShare
+      - path: Shared
+    info:
+      path: PlaceLoggerShare/Info.plist
+      properties:
+        CFBundleDisplayName: Save to Place Logger
+        APIBaseURL: https://place-logging.fly.dev
+        APIToken: $(PLACE_LOGGER_API_TOKEN)
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.share-services
+          NSExtensionPrincipalClass: $(PRODUCT_MODULE_NAME).ShareViewController
+          NSExtensionAttributes:
+            NSExtensionActivationRule:
+              NSExtensionActivationSupportsWebURLWithMaxCount: 1
+              NSExtensionActivationSupportsWebPageWithMaxCount: 1
+              NSExtensionActivationSupportsText: true
+              NSExtensionActivationSupportsImageWithMaxCount: 1
+              NSExtensionActivationSupportsMovieWithMaxCount: 1
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.natcasd.placelogger.share
+        PRODUCT_NAME: PlaceLoggerShare
+        GENERATE_INFOPLIST_FILE: false
+        CODE_SIGN_STYLE: Automatic
+        SKIP_INSTALL: true
+        APPLICATION_EXTENSION_API_ONLY: true
+schemes:
+  PlaceLogger:
+    build:
+      targets:
+        PlaceLogger: all
+        PlaceLoggerShare: all
+    run:
+      config: Debug
+    test:
+      config: Debug
+    archive:
+      config: Release

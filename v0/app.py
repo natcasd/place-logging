@@ -80,6 +80,28 @@ class ShortcutDiagnosticResponse(BaseModel):
     body_sha256: str
 
 
+class SavedPlace(BaseModel):
+    id: int
+    item_id: int
+    ordinal: int
+    name: str
+    google_place_id: str | None
+    latitude: float | None
+    longitude: float | None
+    formatted_address: str | None
+    google_maps_url: str | None
+    dishes: list[str]
+    why_its_cool: str
+    tags: list[str]
+    resolution_status: str
+    source_url: str
+    saved_at: str
+
+
+class PlacesResponse(BaseModel):
+    places: list[SavedPlace]
+
+
 @dataclass
 class Runtime:
     service: IngestService
@@ -282,6 +304,21 @@ def create_app(injected_runtime: Runtime | None = None) -> FastAPI:
     @application.get("/healthz")
     async def healthz() -> dict[str, str]:
         return {"status": "ok"}
+
+    @application.get("/api/v1/places", response_model=PlacesResponse)
+    async def get_places(
+        request: Request,
+        authorization: str | None = Header(default=None),
+        limit: int = 200,
+    ) -> dict[str, Any]:
+        runtime: Runtime = request.app.state.runtime
+        _require_ingest_auth(runtime, authorization)
+        if not 1 <= limit <= 500:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="limit must be between 1 and 500",
+            )
+        return {"places": await asyncio.to_thread(runtime.service.places, limit)}
 
     @application.post("/webhook", include_in_schema=False)
     async def telegram_webhook(
