@@ -21,3 +21,6 @@ Ideation workspace for a personal place-logging app idea. Docs are numbered in r
   accepts `source_url_base64`, decodes it, and immediately delegates to the
   canonical ingest flow. This isolates Shortcuts-specific content/provenance
   behavior from the core API and processing service.
+- `POST /api/v1/shortcut/diagnostics` is an authenticated debugging endpoint.
+  It logs a bounded, redacted description of exactly what Shortcuts sent and
+  never processes or persists a place.

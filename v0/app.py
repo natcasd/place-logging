@@ -4,6 +4,8 @@ from __future__ import annotations
 import asyncio
 import base64
 import binascii
+import hashlib
+import json
 import logging
 import os
 import secrets
@@ -69,6 +71,13 @@ class IngestResponse(BaseModel):
     places_extracted: list[dict[str, Any]]
     resolved_places: list[dict[str, Any]]
     delivery_status: Literal["not_requested", "sent", "failed"]
+
+
+class ShortcutDiagnosticResponse(BaseModel):
+    request_id: str
+    content_type: str | None
+    body_bytes: int
+    body_sha256: str
 
 
 @dataclass
@@ -160,6 +169,12 @@ def _safe_shape(value: Any, depth: int = 0) -> Any:
     if isinstance(value, (bytes, bytearray)):
         return {"type": type(value).__name__, "length": len(value)}
     return f"<{type(value).__name__}>"
+
+
+def _require_ingest_auth(runtime: Runtime, authorization: str | None) -> None:
+    expected = f"Bearer {runtime.ingest_api_token}"
+    if not authorization or not secrets.compare_digest(authorization, expected):
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED)
 
 
 def build_runtime() -> Runtime:
@@ -288,13 +303,14 @@ def create_app(injected_runtime: Runtime | None = None) -> FastAPI:
         authorization: str | None = Header(default=None),
     ) -> dict[str, Any]:
         runtime: Runtime = request.app.state.runtime
-        expected = f"Bearer {runtime.ingest_api_token}"
-        if not authorization or not secrets.compare_digest(authorization, expected):
+        try:
+            _require_ingest_auth(runtime, authorization)
+        except HTTPException:
             log.warning(
                 "Ingest authentication rejected request_id=%s",
                 getattr(request.state, "request_id", "unknown"),
             )
-            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED)
+            raise
 
         ingest_started = time.perf_counter()
         log.info(
@@ -380,6 +396,66 @@ def create_app(injected_runtime: Runtime | None = None) -> FastAPI:
             round((time.perf_counter() - ingest_started) * 1000, 1),
         )
         return {**result, "delivery_status": delivery_status}
+
+    @application.post(
+        "/api/v1/shortcut/diagnostics",
+        response_model=ShortcutDiagnosticResponse,
+    )
+    async def create_shortcut_diagnostic(
+        request: Request,
+        authorization: str | None = Header(default=None),
+    ) -> dict[str, Any]:
+        """Record how Apple Shortcuts serialized a share item; never ingest it."""
+        runtime: Runtime = request.app.state.runtime
+        _require_ingest_auth(runtime, authorization)
+
+        body = await request.body()
+        if len(body) > 2_000_000:
+            raise HTTPException(
+                status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                detail="Diagnostic body exceeds 2 MB",
+            )
+
+        content_type = request.headers.get("content-type")
+        body_sha256 = hashlib.sha256(body).hexdigest()
+        try:
+            decoded = body.decode("utf-8")
+        except UnicodeDecodeError:
+            diagnostics: Any = {
+                "body_type": "binary",
+                "prefix_hex": body[:256].hex(),
+            }
+        else:
+            try:
+                parsed = json.loads(decoded)
+            except json.JSONDecodeError:
+                diagnostics = {
+                    "body_type": "text",
+                    "preview": repr(decoded[:4000]),
+                    "text_length": len(decoded),
+                }
+            else:
+                diagnostics = {
+                    "body_type": "json",
+                    "shape": _safe_shape(parsed),
+                }
+
+        request_id = getattr(request.state, "request_id", "unknown")
+        log.warning(
+            "Shortcut diagnostic request_id=%s content_type=%r body_bytes=%s "
+            "body_sha256=%s diagnostics=%s",
+            request_id,
+            content_type,
+            len(body),
+            body_sha256,
+            diagnostics,
+        )
+        return {
+            "request_id": request_id,
+            "content_type": content_type,
+            "body_bytes": len(body),
+            "body_sha256": body_sha256,
+        }
 
     @application.post(
         "/api/v1/shortcut/ingests",

@@ -131,6 +131,49 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(response.status_code, 401)
         self.service.ingest.assert_not_called()
 
+    def test_shortcut_diagnostic_logs_shape_without_ingesting(self) -> None:
+        with self.assertLogs("app", level="WARNING") as captured:
+            response = self.client.post(
+                "/api/v1/shortcut/diagnostics",
+                headers={"Authorization": "Bearer api-secret"},
+                json={
+                    "input_type": "Media",
+                    "detected_links": ["https://www.instagram.com/reel/test/"],
+                    "shortcut_input": "sample share text",
+                    "token": "must-not-appear",
+                },
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["content_type"], "application/json")
+        self.assertGreater(response.json()["body_bytes"], 0)
+        self.assertEqual(len(response.json()["body_sha256"]), 64)
+        logs = "\n".join(captured.output)
+        self.assertIn("Shortcut diagnostic", logs)
+        self.assertIn("detected_links", logs)
+        self.assertIn("https://www.instagram.com/reel/test/", logs)
+        self.assertNotIn("must-not-appear", logs)
+        self.service.ingest.assert_not_called()
+
+    def test_shortcut_diagnostic_requires_bearer_token(self) -> None:
+        response = self.client.post(
+            "/api/v1/shortcut/diagnostics",
+            content=b"raw shortcut input",
+        )
+
+        self.assertEqual(response.status_code, 401)
+        self.service.ingest.assert_not_called()
+
+    def test_shortcut_diagnostic_rejects_oversized_body(self) -> None:
+        response = self.client.post(
+            "/api/v1/shortcut/diagnostics",
+            headers={"Authorization": "Bearer api-secret"},
+            content=b"x" * 2_000_001,
+        )
+
+        self.assertEqual(response.status_code, 413)
+        self.service.ingest.assert_not_called()
+
     def test_validation_failure_logs_shape_without_authorization(self) -> None:
         with self.assertLogs("app", level="WARNING") as captured:
             response = self.client.post(
