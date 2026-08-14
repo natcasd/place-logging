@@ -54,6 +54,68 @@ class YouTubeExtractionTests(unittest.TestCase):
 
 
 class InstagramFetcherTests(unittest.TestCase):
+    def test_prefers_full_720p_video_near_target_bitrate(self) -> None:
+        info = {
+            "formats": [
+                {
+                    "format_id": "audio",
+                    "vcodec": "none",
+                    "acodec": "aac",
+                    "abr": 76,
+                },
+                {
+                    "format_id": "video-low",
+                    "vcodec": "vp9",
+                    "acodec": "none",
+                    "width": 720,
+                    "height": 1280,
+                    "vbr": 1496,
+                },
+                {
+                    "format_id": "video-target",
+                    "vcodec": "vp9",
+                    "acodec": "none",
+                    "width": 720,
+                    "height": 1280,
+                    "vbr": 2064,
+                },
+                {
+                    "format_id": "video-too-large",
+                    "vcodec": "vp9",
+                    "acodec": "none",
+                    "width": 720,
+                    "height": 1280,
+                    "vbr": 2883,
+                },
+                {
+                    "format_id": "video-1080p",
+                    "vcodec": "vp9",
+                    "acodec": "none",
+                    "width": 1080,
+                    "height": 1920,
+                    "vbr": 5600,
+                },
+            ]
+        }
+
+        self.assertEqual(
+            pipeline._preferred_instagram_format(info),
+            "video-target+audio",
+        )
+
+    def test_falls_back_when_separate_tracks_are_unavailable(self) -> None:
+        info = {
+            "formats": [
+                {
+                    "format_id": "progressive",
+                    "vcodec": "unknown",
+                    "acodec": "unknown",
+                }
+            ]
+        }
+
+        self.assertIsNone(pipeline._preferred_instagram_format(info))
+
     @patch("pipeline.subprocess.run")
     def test_uses_yt_dlp_from_running_python_environment(
         self,
@@ -71,8 +133,55 @@ class InstagramFetcherTests(unittest.TestCase):
                 Path("/tmp/place-logging-fetch-test"),
             )
 
-        command = mock_run.call_args.args[0]
+        command = mock_run.call_args_list[-1].args[0]
         self.assertEqual(command[:3], [sys.executable, "-m", "yt_dlp"])
+
+    @patch("pipeline.subprocess.run")
+    def test_downloads_selected_video_and_audio_tracks(
+        self,
+        mock_run: MagicMock,
+    ) -> None:
+        probe_info = {
+            "formats": [
+                {
+                    "format_id": "audio",
+                    "vcodec": "none",
+                    "acodec": "aac",
+                    "abr": 76,
+                },
+                {
+                    "format_id": "video",
+                    "vcodec": "vp9",
+                    "acodec": "none",
+                    "width": 720,
+                    "height": 1280,
+                    "vbr": 2000,
+                },
+            ]
+        }
+        mock_run.side_effect = [
+            SimpleNamespace(
+                returncode=0,
+                stderr="",
+                stdout=json.dumps(probe_info),
+            ),
+            SimpleNamespace(
+                returncode=1,
+                stderr="download failed",
+                stdout="",
+            ),
+        ]
+
+        with self.assertRaisesRegex(RuntimeError, "download failed"):
+            pipeline.fetch(
+                "https://www.instagram.com/reel/abc/",
+                Path("/tmp/place-logging-fetch-test"),
+            )
+
+        command = mock_run.call_args_list[1].args[0]
+        self.assertIn("-f", command)
+        self.assertEqual(command[command.index("-f") + 1], "video+audio")
+        self.assertIn("--merge-output-format", command)
 
 
 class InstagramExtractionTests(unittest.TestCase):

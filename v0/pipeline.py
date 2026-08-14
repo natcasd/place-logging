@@ -51,6 +51,9 @@ TIKTOK_HOSTS = {
     "www.tiktokv.com",
 }
 
+INSTAGRAM_MAX_VIDEO_HEIGHT = 720
+INSTAGRAM_TARGET_VIDEO_KBPS = 2500
+
 
 def source_platform(source_url: str) -> str:
     """Return the supported source platform for a URL."""
@@ -64,12 +67,99 @@ def source_platform(source_url: str) -> str:
     return "other"
 
 
+def _preferred_instagram_format(info: dict[str, Any]) -> str | None:
+    """Choose a complete, efficient Instagram DASH rendition when available."""
+    formats = info.get("formats") or []
+    video_candidates = []
+    audio_candidates = []
+    for item in formats:
+        if not isinstance(item, dict):
+            continue
+        vcodec = item.get("vcodec")
+        acodec = item.get("acodec")
+        if vcodec and vcodec != "none" and acodec == "none":
+            width = item.get("width")
+            height = item.get("height")
+            bitrate = item.get("vbr") or item.get("tbr")
+            if (
+                isinstance(width, (int, float))
+                and isinstance(height, (int, float))
+                and min(width, height) <= INSTAGRAM_MAX_VIDEO_HEIGHT
+                and isinstance(bitrate, (int, float))
+            ):
+                video_candidates.append(item)
+        elif vcodec == "none" and acodec and acodec != "none":
+            audio_candidates.append(item)
+
+    if not video_candidates or not audio_candidates:
+        return None
+
+    under_target = [
+        item
+        for item in video_candidates
+        if (item.get("vbr") or item.get("tbr")) <= INSTAGRAM_TARGET_VIDEO_KBPS
+    ]
+    if under_target:
+        video = max(
+            under_target,
+            key=lambda item: (
+                min(item.get("width") or 0, item.get("height") or 0),
+                item.get("vbr") or item.get("tbr") or 0,
+            ),
+        )
+    else:
+        video = min(
+            video_candidates,
+            key=lambda item: item.get("vbr") or item.get("tbr") or float("inf"),
+        )
+    audio = max(
+        audio_candidates,
+        key=lambda item: item.get("abr") or item.get("tbr") or 0,
+    )
+    video_id = video.get("format_id")
+    audio_id = audio.get("format_id")
+    if not video_id or not audio_id:
+        return None
+
+    log.info(
+        "Selected Instagram formats video=%s resolution=%sx%s bitrate_kbps=%s audio=%s",
+        video_id,
+        video.get("width"),
+        video.get("height"),
+        video.get("vbr") or video.get("tbr"),
+        audio_id,
+    )
+    return f"{video_id}+{audio_id}"
+
+
+def _probe_instagram_format(source_url: str) -> str | None:
+    cmd = [
+        sys.executable,
+        "-m",
+        "yt_dlp",
+        "--no-playlist",
+        "--skip-download",
+        "--dump-single-json",
+        source_url,
+    ]
+    result = subprocess.run(cmd, capture_output=True, text=True, check=False)
+    if result.returncode != 0:
+        log.warning("Instagram format probe failed; using yt-dlp default")
+        return None
+    try:
+        return _preferred_instagram_format(json.loads(result.stdout))
+    except (json.JSONDecodeError, TypeError, ValueError):
+        log.warning("Instagram format probe returned invalid metadata; using yt-dlp default")
+        return None
+
+
 def fetch(source_url: str, workdir: Path) -> tuple[Path, dict[str, Any]]:
     """Download an Instagram video with yt-dlp."""
     if source_platform(source_url) != "instagram":
         raise ValueError("fetch() only supports Instagram URLs")
 
     workdir.mkdir(parents=True, exist_ok=True)
+    preferred_format = _probe_instagram_format(source_url)
     cmd = [
         sys.executable,
         "-m",
@@ -78,8 +168,10 @@ def fetch(source_url: str, workdir: Path) -> tuple[Path, dict[str, Any]]:
         "--write-info-json",
         "-o", f"{workdir}/%(id)s.%(ext)s",
         "--print", "after_move:filepath",
-        source_url,
     ]
+    if preferred_format:
+        cmd.extend(["-f", preferred_format, "--merge-output-format", "mp4"])
+    cmd.append(source_url)
     result = subprocess.run(cmd, capture_output=True, text=True, check=False)
     if result.returncode != 0:
         raise RuntimeError(f"yt-dlp failed: {result.stderr.strip()[-1000:]}")
