@@ -7,10 +7,10 @@ from __future__ import annotations
 
 import json
 import logging
+import mimetypes
 import os
 import subprocess
 import sys
-import time
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
@@ -161,6 +161,11 @@ EXTRACTION_RESPONSE_SCHEMA = {
     "required": ["places"],
 }
 
+# Inline media is base64-encoded in the JSON request, which adds roughly 33%
+# overhead. Keep the source file comfortably below Gemini's 100 MB total
+# request limit so there is also room for the extraction prompt and metadata.
+MAX_INLINE_VIDEO_BYTES = 70 * 1024 * 1024
+
 
 def _extraction_prompt(
     metadata: dict[str, Any],
@@ -186,34 +191,33 @@ def extract(
     metadata: dict[str, Any],
     user_prompt: str | None = None,
 ) -> list[dict[str, Any]]:
-    """Upload mp4 to Gemini, run extraction, return places array."""
+    """Send a downloaded video inline to Gemini and return its places array."""
     client = _client()
-    uploaded = client.files.upload(file=mp4_path)
+    video_size = mp4_path.stat().st_size
+    if video_size > MAX_INLINE_VIDEO_BYTES:
+        raise ValueError(
+            "This Instagram video is too large to process safely "
+            f"({video_size / (1024 * 1024):.1f} MiB; "
+            f"limit {MAX_INLINE_VIDEO_BYTES / (1024 * 1024):.0f} MiB)"
+        )
 
-    while uploaded.state.name == "PROCESSING":
-        time.sleep(2)
-        uploaded = client.files.get(name=uploaded.name)
-
-    if uploaded.state.name != "ACTIVE":
-        raise RuntimeError(f"Gemini file upload ended in state {uploaded.state.name}")
+    mime_type = mimetypes.guess_type(mp4_path.name)[0] or "video/mp4"
+    video_part = types.Part.from_bytes(
+        data=mp4_path.read_bytes(),
+        mime_type=mime_type,
+    )
 
     prompt = _extraction_prompt(metadata, user_prompt)
 
     model = os.environ.get("GEMINI_MODEL", "gemini-3.1-flash-lite")
     response = client.models.generate_content(
         model=model,
-        contents=[uploaded, prompt],
+        contents=[video_part, prompt],
         config=types.GenerateContentConfig(
             response_mime_type="application/json",
             response_schema=EXTRACTION_RESPONSE_SCHEMA,
         ),
     )
-
-    # Cleanup the uploaded file
-    try:
-        client.files.delete(name=uploaded.name)
-    except Exception:
-        pass
 
     parsed = json.loads(response.text)
     return parsed.get("places", [])

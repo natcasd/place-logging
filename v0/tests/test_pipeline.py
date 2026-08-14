@@ -75,6 +75,51 @@ class InstagramFetcherTests(unittest.TestCase):
         self.assertEqual(command[:3], [sys.executable, "-m", "yt_dlp"])
 
 
+class InstagramExtractionTests(unittest.TestCase):
+    @patch("pipeline.types.Part.from_bytes")
+    @patch("pipeline._client")
+    def test_sends_video_inline_to_gemini(
+        self,
+        mock_client: MagicMock,
+        mock_from_bytes: MagicMock,
+    ) -> None:
+        video_part = object()
+        mock_from_bytes.return_value = video_part
+        mock_client.return_value.models.generate_content.return_value = SimpleNamespace(
+            text=json.dumps({"places": [{"extracted_name": "Test Place"}]})
+        )
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            video = Path(temp_dir) / "post.mp4"
+            video.write_bytes(b"test-video")
+
+            places = pipeline.extract(video, {"webpage_url": "instagram"})
+
+        mock_from_bytes.assert_called_once_with(
+            data=b"test-video",
+            mime_type="video/mp4",
+        )
+        call = mock_client.return_value.models.generate_content.call_args.kwargs
+        self.assertIs(call["contents"][0], video_part)
+        self.assertEqual(places[0]["extracted_name"], "Test Place")
+        mock_client.return_value.files.upload.assert_not_called()
+
+    @patch("pipeline._client")
+    def test_rejects_video_above_safe_inline_limit(
+        self,
+        mock_client: MagicMock,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            video = Path(temp_dir) / "large.mp4"
+            with video.open("wb") as handle:
+                handle.truncate(pipeline.MAX_INLINE_VIDEO_BYTES + 1)
+
+            with self.assertRaisesRegex(ValueError, "too large"):
+                pipeline.extract(video, {})
+
+        mock_client.return_value.models.generate_content.assert_not_called()
+
+
 class ProcessIngestTests(unittest.TestCase):
     @patch("pipeline.resolve")
     @patch("pipeline.extract_youtube_url")
