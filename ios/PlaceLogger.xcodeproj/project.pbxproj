@@ -15,6 +15,7 @@
 		6B9118EB245C5AE58643E039 /* PlaceLoggerApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3966F5FA07BE13D9F432C431 /* PlaceLoggerApp.swift */; };
 		A13AC3B8A041213A9CBDC4AE /* APIConfig.swift in Sources */ = {isa = PBXBuildFile; fileRef = DEC84888F492275FE45F6B68 /* APIConfig.swift */; };
 		ADDA8920EC727782B0A39DBB /* Models.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9065EE50C75A067C2E5FDFAF /* Models.swift */; };
+		C55C77A4144D37D643617FE9 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = AFD08F150E5FA09C074BB8E5 /* Assets.xcassets */; };
 		D8CD16D2D03261DA49C75A82 /* PlacesView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 84E6A5828324B0E8949325D2 /* PlacesView.swift */; };
 		F95C56977278060D2DB4E2A0 /* APIConfig.swift in Sources */ = {isa = PBXBuildFile; fileRef = DEC84888F492275FE45F6B68 /* APIConfig.swift */; };
 /* End PBXBuildFile section */
@@ -50,6 +51,7 @@
 		4A0D76B916EFF821B9BED9A7 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		84E6A5828324B0E8949325D2 /* PlacesView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlacesView.swift; sourceTree = "<group>"; };
 		9065EE50C75A067C2E5FDFAF /* Models.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models.swift; sourceTree = "<group>"; };
+		AFD08F150E5FA09C074BB8E5 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		C3073F44E078202B89E6435C /* PlaceLogger.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = PlaceLogger.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		CD439B1B2B56ED9548B3A7D6 /* PlaceLoggerAPI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlaceLoggerAPI.swift; sourceTree = "<group>"; };
 		DEC84888F492275FE45F6B68 /* APIConfig.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = APIConfig.swift; sourceTree = "<group>"; };
@@ -108,6 +110,7 @@
 		FB63A3EE4D7AC875E86CFFAA /* PlaceLogger */ = {
 			isa = PBXGroup;
 			children = (
+				AFD08F150E5FA09C074BB8E5 /* Assets.xcassets */,
 				4A0D76B916EFF821B9BED9A7 /* Info.plist */,
 				3966F5FA07BE13D9F432C431 /* PlaceLoggerApp.swift */,
 				84E6A5828324B0E8949325D2 /* PlacesView.swift */,
@@ -123,6 +126,7 @@
 			buildConfigurationList = 40542E9B837239A42417045E /* Build configuration list for PBXNativeTarget "PlaceLogger" */;
 			buildPhases = (
 				DFD40B99E744E4815DB5F0F3 /* Sources */,
+				379049A1C1D7CD1DCEECB03F /* Resources */,
 				8C40EAAE648B6B9418AAA3E1 /* Embed Foundation Extensions */,
 			);
 			buildRules = (
@@ -164,11 +168,11 @@
 				LastUpgradeCheck = 1430;
 				TargetAttributes = {
 					13BE591597807113153FD45F = {
-						DevelopmentTeam = "";
+						DevelopmentTeam = 92QRZ5S66S;
 						ProvisioningStyle = Automatic;
 					};
 					4A4FDC9086C664F184DE03A4 = {
-						DevelopmentTeam = "";
+						DevelopmentTeam = 92QRZ5S66S;
 						ProvisioningStyle = Automatic;
 					};
 				};
@@ -192,6 +196,17 @@
 			);
 		};
 /* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		379049A1C1D7CD1DCEECB03F /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				C55C77A4144D37D643617FE9 /* Assets.xcassets in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
 		CDF95454C3FCB063CCDDB5CF /* Sources */ = {
@@ -305,7 +320,7 @@
 				COPY_PHASE_STRIP = NO;
 				CURRENT_PROJECT_VERSION = 1;
 				DEBUG_INFORMATION_FORMAT = dwarf;
-				DEVELOPMENT_TEAM = "";
+				DEVELOPMENT_TEAM = 92QRZ5S66S;
 				ENABLE_STRICT_OBJC_MSGSEND = YES;
 				ENABLE_TESTABILITY = YES;
 				GCC_C_LANGUAGE_STANDARD = gnu11;
@@ -372,7 +387,7 @@
 				COPY_PHASE_STRIP = NO;
 				CURRENT_PROJECT_VERSION = 1;
 				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
-				DEVELOPMENT_TEAM = "";
+				DEVELOPMENT_TEAM = 92QRZ5S66S;
 				ENABLE_NS_ASSERTIONS = NO;
 				ENABLE_STRICT_OBJC_MSGSEND = YES;
 				GCC_C_LANGUAGE_STANDARD = gnu11;

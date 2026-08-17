@@ -19,6 +19,8 @@ logs/
 # Local iOS credentials and generated build state
 ios/Config/Secrets.xcconfig
 ios/DerivedData/
+ios/DeviceDerivedData/
+ios/Branding/
 ios/build/
 *.xcuserstate
 xcuserdata/

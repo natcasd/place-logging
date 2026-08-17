@@ -36,10 +36,43 @@ struct SavedPlace: Decodable, Identifiable, Sendable {
 
 struct IngestResponse: Decodable, Sendable {
   let itemID: Int
+  let resolvedPlaces: [IngestResolvedPlace]
+
+  var savedPlaceNames: [String] {
+    resolvedPlaces.compactMap(\.displayName)
+  }
 
   enum CodingKeys: String, CodingKey {
     case itemID = "item_id"
+    case resolvedPlaces = "resolved_places"
   }
+}
+
+struct IngestResolvedPlace: Decodable, Sendable {
+  let extracted: IngestExtractedPlace?
+  let place: IngestGooglePlace?
+
+  var displayName: String? {
+    let name = place?.displayName?.text ?? extracted?.extractedName
+    guard let name, !name.isEmpty else { return nil }
+    return name
+  }
+}
+
+struct IngestExtractedPlace: Decodable, Sendable {
+  let extractedName: String?
+
+  enum CodingKeys: String, CodingKey {
+    case extractedName = "extracted_name"
+  }
+}
+
+struct IngestGooglePlace: Decodable, Sendable {
+  let displayName: IngestGoogleDisplayName?
+}
+
+struct IngestGoogleDisplayName: Decodable, Sendable {
+  let text: String?
 }
 
 struct APIErrorEnvelope: Decodable {

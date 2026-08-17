@@ -23,10 +23,13 @@ final class PlacesModel: ObservableObject {
 }
 
 struct PlacesView: View {
+  @ObservedObject var router: PlaceLoggerRouter
   @StateObject private var model = PlacesModel()
+  @Environment(\.scenePhase) private var scenePhase
+  @State private var path: [Int] = []
 
   var body: some View {
-    NavigationStack {
+    NavigationStack(path: $path) {
       Group {
         if model.isLoading && model.places.isEmpty {
           ProgressView("Loading saved places…")
@@ -64,8 +67,50 @@ struct PlacesView: View {
           }
         }
       }
+      .navigationDestination(for: Int.self) { itemID in
+        SavedItemView(
+          places: model.places.filter { $0.itemID == itemID },
+          isLoading: model.isLoading
+        )
+      }
     }
     .task { await model.load() }
+    .task(id: router.selectedItemID) {
+      guard let itemID = router.selectedItemID else { return }
+      await model.load()
+      path = [itemID]
+      router.selectedItemID = nil
+    }
+    .onChange(of: scenePhase) { _, phase in
+      guard phase == .active else { return }
+      Task { await model.load() }
+    }
+  }
+}
+
+private struct SavedItemView: View {
+  let places: [SavedPlace]
+  let isLoading: Bool
+
+  var body: some View {
+    Group {
+      if places.isEmpty && isLoading {
+        ProgressView("Loading saved place…")
+      } else if places.isEmpty {
+        ContentUnavailableView(
+          "Saved Place Not Found",
+          systemImage: "mappin.slash",
+          description: Text("Try returning to the list and refreshing.")
+        )
+      } else {
+        List(places) { place in
+          PlaceRow(place: place)
+        }
+        .listStyle(.plain)
+      }
+    }
+    .navigationTitle(places.count == 1 ? places[0].name : "Saved Places")
+    .navigationBarTitleDisplayMode(.inline)
   }
 }
 
