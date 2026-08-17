@@ -9,8 +9,11 @@ import json
 import logging
 import mimetypes
 import os
+import shutil
 import subprocess
 import sys
+import tempfile
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
@@ -53,6 +56,13 @@ TIKTOK_HOSTS = {
 
 INSTAGRAM_MAX_VIDEO_HEIGHT = 720
 INSTAGRAM_TARGET_VIDEO_KBPS = 2500
+
+
+@dataclass(frozen=True)
+class InstagramFetch:
+    media_paths: list[Path]
+    metadata: dict[str, Any]
+    cleanup_dir: Path
 
 
 def source_platform(source_url: str) -> str:
@@ -132,76 +142,174 @@ def _preferred_instagram_format(info: dict[str, Any]) -> str | None:
     return f"{video_id}+{audio_id}"
 
 
-def _probe_instagram_format(source_url: str) -> str | None:
+def _probe_instagram(source_url: str) -> dict[str, Any]:
     cmd = [
         sys.executable,
         "-m",
         "yt_dlp",
-        "--no-playlist",
+        "--ignore-no-formats-error",
         "--skip-download",
         "--dump-single-json",
         source_url,
     ]
     result = subprocess.run(cmd, capture_output=True, text=True, check=False)
     if result.returncode != 0:
-        log.warning("Instagram format probe failed; using yt-dlp default")
-        return None
+        raise RuntimeError(f"yt-dlp metadata probe failed: {result.stderr.strip()[-1000:]}")
     try:
-        return _preferred_instagram_format(json.loads(result.stdout))
+        info = json.loads(result.stdout)
     except (json.JSONDecodeError, TypeError, ValueError):
-        log.warning("Instagram format probe returned invalid metadata; using yt-dlp default")
-        return None
+        raise RuntimeError("yt-dlp metadata probe returned invalid JSON")
+    if not isinstance(info, dict):
+        raise RuntimeError("yt-dlp metadata probe returned an invalid payload")
+    return info
 
 
-def fetch(source_url: str, workdir: Path) -> tuple[Path, dict[str, Any]]:
-    """Download an Instagram video with yt-dlp."""
+def _instagram_entries(info: dict[str, Any]) -> list[dict[str, Any]]:
+    if info.get("_type") != "playlist":
+        return [info]
+    return [entry for entry in info.get("entries") or [] if isinstance(entry, dict)]
+
+
+def _instagram_metadata(
+    info: dict[str, Any],
+    source_url: str,
+    entries: list[dict[str, Any]],
+) -> dict[str, Any]:
+    media_types = ["video" if entry.get("formats") else "image" for entry in entries]
+    return {
+        "source_platform": "instagram",
+        "caption_or_description": info.get("description"),
+        "uploader": info.get("uploader") or info.get("channel"),
+        "upload_date": info.get("upload_date"),
+        "duration_seconds": info.get("duration"),
+        "native_location_tag": info.get("location"),
+        "hashtags": info.get("tags"),
+        "webpage_url": info.get("webpage_url") or source_url,
+        "media_count": len(entries),
+        "media_types": media_types,
+    }
+
+
+def _best_instagram_image_url(entry: dict[str, Any]) -> str | None:
+    # yt-dlp exposes image-only Instagram posts as ordered thumbnails, with the
+    # original/full-size rendition last. `thumbnail` points at the same choice
+    # when the extractor provides it.
+    if entry.get("thumbnail"):
+        return str(entry["thumbnail"])
+    urls = [
+        thumbnail.get("url")
+        for thumbnail in entry.get("thumbnails") or []
+        if isinstance(thumbnail, dict) and thumbnail.get("url")
+    ]
+    return str(urls[-1]) if urls else None
+
+
+def _download_instagram_image(
+    entry: dict[str, Any],
+    destination: Path,
+    source_url: str,
+) -> None:
+    image_url = _best_instagram_image_url(entry)
+    if not image_url:
+        raise RuntimeError("Instagram image did not include a downloadable image URL")
+    response = requests.get(
+        image_url,
+        headers={
+            "Referer": source_url,
+            "User-Agent": "Mozilla/5.0 (compatible; PlaceLogger/1.0)",
+        },
+        timeout=30,
+    )
+    response.raise_for_status()
+    destination.write_bytes(response.content)
+
+
+def fetch(source_url: str, workdir: Path) -> InstagramFetch:
+    """Download all media from an Instagram image, carousel, or Reel."""
     if source_platform(source_url) != "instagram":
         raise ValueError("fetch() only supports Instagram URLs")
 
     workdir.mkdir(parents=True, exist_ok=True)
-    preferred_format = _probe_instagram_format(source_url)
-    cmd = [
-        sys.executable,
-        "-m",
-        "yt_dlp",
-        "--no-playlist",
-        "--write-info-json",
-        "-o", f"{workdir}/%(id)s.%(ext)s",
-        "--print", "after_move:filepath",
-    ]
-    if preferred_format:
-        cmd.extend(["-f", preferred_format, "--merge-output-format", "mp4"])
-    cmd.append(source_url)
-    result = subprocess.run(cmd, capture_output=True, text=True, check=False)
-    if result.returncode != 0:
-        raise RuntimeError(f"yt-dlp failed: {result.stderr.strip()[-1000:]}")
+    cleanup_dir = Path(tempfile.mkdtemp(prefix="instagram-", dir=workdir))
+    try:
+        info = _probe_instagram(source_url)
+        entries = _instagram_entries(info)
+        if not entries:
+            raise RuntimeError("Instagram post did not contain any downloadable media")
 
-    mp4_path = Path(result.stdout.strip().splitlines()[-1])
-    info_path = mp4_path.with_suffix(".info.json")
+        media_paths: list[Path] = []
+        video_entries = [entry for entry in entries if entry.get("formats")]
+        if video_entries:
+            is_carousel = info.get("_type") == "playlist"
+            output_template = (
+                f"{cleanup_dir}/%(playlist_index)03d-%(id)s.%(ext)s"
+                if is_carousel
+                else f"{cleanup_dir}/%(id)s.%(ext)s"
+            )
+            cmd = [
+                sys.executable,
+                "-m",
+                "yt_dlp",
+                "--write-info-json",
+                "-o", output_template,
+                "--print", "after_move:filepath",
+            ]
+            if is_carousel:
+                # Image entries intentionally have no yt-dlp video format. Let
+                # yt-dlp continue through them; they are downloaded below.
+                cmd.extend(["--ignore-errors", "--ignore-no-formats-error"])
+            else:
+                preferred_format = _preferred_instagram_format(info)
+                if preferred_format:
+                    cmd.extend(["-f", preferred_format, "--merge-output-format", "mp4"])
+                else:
+                    cmd.append("--no-playlist")
+            cmd.append(source_url)
+            result = subprocess.run(cmd, capture_output=True, text=True, check=False)
+            downloaded_videos = [
+                path
+                for line in result.stdout.splitlines()
+                if (path := Path(line.strip())).is_file()
+            ]
+            if result.returncode != 0 and not downloaded_videos:
+                raise RuntimeError(f"yt-dlp failed: {result.stderr.strip()[-1000:]}")
+            if result.returncode != 0:
+                log.info(
+                    "yt-dlp skipped non-video Instagram carousel entries as expected"
+                )
+            media_paths.extend(downloaded_videos)
 
-    metadata: dict[str, Any] = {}
-    if info_path.exists():
-        raw = json.loads(info_path.read_text())
-        metadata = {
-            "caption_or_description": raw.get("description"),
-            "uploader": raw.get("uploader") or raw.get("channel"),
-            "upload_date": raw.get("upload_date"),
-            "duration_seconds": raw.get("duration"),
-            "native_location_tag": raw.get("location"),
-            "hashtags": raw.get("tags"),
-            "webpage_url": raw.get("webpage_url"),
-        }
+        for index, entry in enumerate(entries, start=1):
+            if entry.get("formats"):
+                continue
+            image_path = cleanup_dir / f"{index:03d}-{entry.get('id') or 'image'}.jpg"
+            _download_instagram_image(entry, image_path, source_url)
+            media_paths.append(image_path)
 
-    return mp4_path, metadata
+        media_paths.sort(key=lambda path: path.name)
+        if not media_paths:
+            raise RuntimeError("Instagram post did not produce any downloadable media")
+        metadata = _instagram_metadata(info, source_url, entries)
+        log.info(
+            "Downloaded Instagram post media_count=%d media_types=%s",
+            len(media_paths),
+            metadata["media_types"],
+        )
+        return InstagramFetch(media_paths, metadata, cleanup_dir)
+    except Exception:
+        shutil.rmtree(cleanup_dir, ignore_errors=True)
+        raise
 
 
 # ---------- Extractor ----------
 
-EXTRACTOR_PROMPT = """Analyze this video and extract every physical place (restaurant, bar, cafe, shop, hotel, landmark, attraction, market, etc.) that is discussed, shown, or recommended in the video.
+EXTRACTOR_PROMPT = """Analyze this social post and extract every physical place (restaurant, bar, cafe, shop, hotel, landmark, attraction, market, etc.) that is discussed, shown, or recommended in any supplied image, video, or caption.
+
+When multiple media items are supplied, they are the slides of one carousel in display order. Analyze all of them together. The source metadata's caption_or_description may contain the post caption or Instagram's combined carousel captions; treat that text as evidence even when an exact caption-to-slide mapping is unavailable.
 
 For each place, return an object with:
-- extracted_name: name of the place as mentioned / shown in the video
-- location_hints: object with any of { neighborhood, city, region_or_country, on_screen_text, visual_landmarks } — ONLY include fields where you have direct evidence from the video itself. Omit a field rather than guess.
+- extracted_name: name of the place as mentioned or shown in the post
+- location_hints: object with any of { neighborhood, city, region_or_country, on_screen_text, visual_landmarks } — ONLY include fields where you have direct evidence from the supplied media or caption. Omit a field rather than guess.
 - dishes: array of specific dishes, drinks, or items mentioned (empty array if none)
 - why_its_cool: one-sentence summary of why the creator recommends it (empty string if no explicit recommendation)
 - tags: array of relevant tags (cuisine, vibe, price level, meal type, etc.)
@@ -210,7 +318,7 @@ For each place, return an object with:
 Return ONLY valid JSON in this shape:
 { "places": [ ... ] }
 
-If NO physical place is discussed in the video, return { "places": [] }.
+If NO physical place is discussed in the post, return { "places": [] }.
 """
 
 EXTRACTION_RESPONSE_SCHEMA = {
@@ -254,9 +362,10 @@ EXTRACTION_RESPONSE_SCHEMA = {
 }
 
 # Inline media is base64-encoded in the JSON request, which adds roughly 33%
-# overhead. Keep the source file comfortably below Gemini's 100 MB total
+# overhead. Keep the source files comfortably below Gemini's 100 MB total
 # request limit so there is also room for the extraction prompt and metadata.
 MAX_INLINE_VIDEO_BYTES = 70 * 1024 * 1024
+MAX_INLINE_MEDIA_BYTES = MAX_INLINE_VIDEO_BYTES
 
 
 def _extraction_prompt(
@@ -279,32 +388,35 @@ def _extraction_prompt(
 
 
 def extract(
-    mp4_path: Path,
+    media_paths: Path | list[Path],
     metadata: dict[str, Any],
     user_prompt: str | None = None,
 ) -> list[dict[str, Any]]:
-    """Send a downloaded video inline to Gemini and return its places array."""
+    """Send downloaded Instagram media inline to Gemini and return its places."""
     client = _client()
-    video_size = mp4_path.stat().st_size
-    if video_size > MAX_INLINE_VIDEO_BYTES:
+    paths = [media_paths] if isinstance(media_paths, Path) else media_paths
+    media_size = sum(path.stat().st_size for path in paths)
+    if media_size > MAX_INLINE_MEDIA_BYTES:
         raise ValueError(
-            "This Instagram video is too large to process safely "
-            f"({video_size / (1024 * 1024):.1f} MiB; "
-            f"limit {MAX_INLINE_VIDEO_BYTES / (1024 * 1024):.0f} MiB)"
+            "This Instagram post is too large to process safely "
+            f"({media_size / (1024 * 1024):.1f} MiB; "
+            f"limit {MAX_INLINE_MEDIA_BYTES / (1024 * 1024):.0f} MiB)"
         )
 
-    mime_type = mimetypes.guess_type(mp4_path.name)[0] or "video/mp4"
-    video_part = types.Part.from_bytes(
-        data=mp4_path.read_bytes(),
-        mime_type=mime_type,
-    )
+    media_parts = [
+        types.Part.from_bytes(
+            data=path.read_bytes(),
+            mime_type=mimetypes.guess_type(path.name)[0] or "application/octet-stream",
+        )
+        for path in paths
+    ]
 
     prompt = _extraction_prompt(metadata, user_prompt)
 
     model = os.environ.get("GEMINI_MODEL", "gemini-3.1-flash-lite")
     response = client.models.generate_content(
         model=model,
-        contents=[video_part, prompt],
+        contents=[*media_parts, prompt],
         config=types.GenerateContentConfig(
             response_mime_type="application/json",
             response_schema=EXTRACTION_RESPONSE_SCHEMA,
@@ -517,13 +629,13 @@ def process_ingest(
         metadata = {"source_platform": "youtube", "webpage_url": source_url}
         places = extract_youtube_url(source_url, user_prompt)
     else:
-        mp4_path, metadata = fetch(source_url, workdir)
+        fetched = fetch(source_url, workdir)
+        metadata = fetched.metadata
         try:
-            places = extract(mp4_path, metadata, user_prompt)
+            places = extract(fetched.media_paths, metadata, user_prompt)
         finally:
             try:
-                mp4_path.unlink(missing_ok=True)
-                mp4_path.with_suffix(".info.json").unlink(missing_ok=True)
+                shutil.rmtree(fetched.cleanup_dir)
             except Exception:
                 log.exception("cleanup failed (non-fatal)")
 

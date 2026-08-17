@@ -183,6 +183,112 @@ class InstagramFetcherTests(unittest.TestCase):
         self.assertEqual(command[command.index("-f") + 1], "video+audio")
         self.assertIn("--merge-output-format", command)
 
+    @patch("pipeline.requests.get")
+    @patch("pipeline.subprocess.run")
+    def test_downloads_single_image_from_best_thumbnail(
+        self,
+        mock_run: MagicMock,
+        mock_get: MagicMock,
+    ) -> None:
+        mock_run.return_value = SimpleNamespace(
+            returncode=0,
+            stderr="",
+            stdout=json.dumps(
+                {
+                    "id": "image-post",
+                    "description": "Caption names Test Cafe",
+                    "webpage_url": "https://www.instagram.com/p/image-post/",
+                    "formats": [],
+                    "thumbnails": [
+                        {"url": "https://cdn.example/small.jpg"},
+                        {"url": "https://cdn.example/original.jpg"},
+                    ],
+                }
+            ),
+        )
+        mock_get.return_value.content = b"full-size-image"
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            fetched = pipeline.fetch(
+                "https://www.instagram.com/p/image-post/",
+                Path(temp_dir),
+            )
+            try:
+                self.assertEqual(len(fetched.media_paths), 1)
+                self.assertEqual(fetched.media_paths[0].read_bytes(), b"full-size-image")
+                self.assertEqual(
+                    fetched.metadata["caption_or_description"],
+                    "Caption names Test Cafe",
+                )
+                self.assertEqual(fetched.metadata["media_types"], ["image"])
+            finally:
+                pipeline.shutil.rmtree(fetched.cleanup_dir)
+
+        mock_get.assert_called_once()
+        self.assertEqual(
+            mock_get.call_args.args[0],
+            "https://cdn.example/original.jpg",
+        )
+
+    @patch("pipeline.requests.get")
+    @patch("pipeline.subprocess.run")
+    def test_downloads_mixed_carousel_in_slide_order(
+        self,
+        mock_run: MagicMock,
+        mock_get: MagicMock,
+    ) -> None:
+        probe = {
+            "_type": "playlist",
+            "id": "carousel",
+            "description": "Slide one caption\n\nSlide two caption",
+            "entries": [
+                {
+                    "id": "image-slide",
+                    "formats": [],
+                    "thumbnail": "https://cdn.example/image.jpg",
+                },
+                {
+                    "id": "video-slide",
+                    "formats": [{"format_id": "video"}],
+                },
+            ],
+        }
+
+        def run_command(command: list[str], **_: object) -> SimpleNamespace:
+            if "--skip-download" in command:
+                return SimpleNamespace(returncode=0, stderr="", stdout=json.dumps(probe))
+            template = Path(command[command.index("-o") + 1])
+            video = Path(
+                str(template)
+                .replace("%(playlist_index)03d", "002")
+                .replace("%(id)s", "video-slide")
+                .replace("%(ext)s", "mp4")
+            )
+            video.write_bytes(b"video")
+            return SimpleNamespace(
+                returncode=1,
+                stderr="No video formats found for image slide",
+                stdout=str(video),
+            )
+
+        mock_run.side_effect = run_command
+        mock_get.return_value.content = b"image"
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            fetched = pipeline.fetch(
+                "https://www.instagram.com/p/carousel/",
+                Path(temp_dir),
+            )
+            try:
+                self.assertEqual(
+                    [path.name for path in fetched.media_paths],
+                    ["001-image-slide.jpg", "002-video-slide.mp4"],
+                )
+                self.assertEqual(fetched.metadata["media_count"], 2)
+                self.assertEqual(fetched.metadata["media_types"], ["image", "video"])
+            finally:
+                pipeline.shutil.rmtree(fetched.cleanup_dir)
+
 
 class InstagramExtractionTests(unittest.TestCase):
     @patch("pipeline.types.Part.from_bytes")
@@ -212,6 +318,39 @@ class InstagramExtractionTests(unittest.TestCase):
         self.assertIs(call["contents"][0], video_part)
         self.assertEqual(places[0]["extracted_name"], "Test Place")
         mock_client.return_value.files.upload.assert_not_called()
+
+    @patch("pipeline.types.Part.from_bytes")
+    @patch("pipeline._client")
+    def test_sends_all_carousel_media_and_combined_caption_to_gemini(
+        self,
+        mock_client: MagicMock,
+        mock_from_bytes: MagicMock,
+    ) -> None:
+        image_part = object()
+        video_part = object()
+        mock_from_bytes.side_effect = [image_part, video_part]
+        mock_client.return_value.models.generate_content.return_value = SimpleNamespace(
+            text=json.dumps({"places": []})
+        )
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            image = Path(temp_dir) / "001-slide.jpg"
+            video = Path(temp_dir) / "002-slide.mp4"
+            image.write_bytes(b"image")
+            video.write_bytes(b"video")
+            pipeline.extract(
+                [image, video],
+                {
+                    "caption_or_description": "First caption\n\nSecond caption",
+                    "media_types": ["image", "video"],
+                },
+            )
+
+        call = mock_client.return_value.models.generate_content.call_args.kwargs
+        self.assertEqual(call["contents"][:2], [image_part, video_part])
+        self.assertIn("First caption", call["contents"][2])
+        self.assertIn("Second caption", call["contents"][2])
+        self.assertIn("combined carousel captions", call["contents"][2])
 
     @patch("pipeline._client")
     def test_rejects_video_above_safe_inline_limit(
@@ -272,11 +411,17 @@ class ProcessIngestTests(unittest.TestCase):
         mock_resolve: MagicMock,
     ) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
-            video = Path(temp_dir) / "post.mp4"
+            cleanup_dir = Path(temp_dir) / "instagram-ingest"
+            cleanup_dir.mkdir()
+            video = cleanup_dir / "post.mp4"
             info = video.with_suffix(".info.json")
             video.touch()
             info.touch()
-            mock_fetch.return_value = (video, {"webpage_url": "instagram"})
+            mock_fetch.return_value = pipeline.InstagramFetch(
+                [video],
+                {"webpage_url": "instagram"},
+                cleanup_dir,
+            )
             mock_extract.return_value = [{"extracted_name": "Test Place"}]
             mock_resolve.return_value = {"status": "unresolved", "reason": "test"}
 
@@ -287,7 +432,8 @@ class ProcessIngestTests(unittest.TestCase):
             )
 
             self.assertFalse(video.exists())
-            self.assertFalse(info.exists())
+            self.assertFalse(cleanup_dir.exists())
+            self.assertTrue(Path(temp_dir).exists())
 
 
 if __name__ == "__main__":

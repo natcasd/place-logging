@@ -9,7 +9,7 @@ Minimal working v0: clients → shared ingest service → Extractor → Resolver
 - `ingest_service.py` — shared process-and-persist application service
 - `pipeline.py` — platform-aware `ingest → extract → resolve` pipeline
 - `store.py` — SQLite schema + `save_ingest()`
-- `data/` — mp4 download cache + `places.db` (both gitignored)
+- `data/` — temporary Instagram media cache + `places.db` (both gitignored)
 
 ## First-time setup
 
@@ -46,7 +46,7 @@ source .venv/bin/activate
 uvicorn app:app --host 0.0.0.0 --port 8000
 ```
 
-Then share a public Instagram Reel or YouTube video to your bot via the iOS share sheet → Telegram → pick your bot. Or type a message containing a URL. YouTube URLs are sent directly to Gemini; Instagram media is fetched with `yt-dlp`.
+Then share a public Instagram image, carousel, Reel, or YouTube video to your bot via the iOS share sheet → Telegram → pick your bot. Or type a message containing a URL. YouTube URLs are sent directly to Gemini. Instagram videos are fetched with `yt-dlp`; image URLs exposed by the same metadata are downloaded directly. All carousel media and the available combined caption text are analyzed together.
 
 The bot replies "🔎 Working on it…", then edits that message with the final result once the pipeline finishes (~10–30s).
 
