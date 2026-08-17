@@ -5,7 +5,13 @@ The native MVP contains two targets:
 - `PlaceLogger`: a SwiftUI list of saved restaurants.
 - `PlaceLoggerShare`: a native share extension that accepts links and media
   shared by Instagram or YouTube and sends the extracted URL to the existing
-  ingest API.
+  ingest API. The extension can close while the synchronous request continues;
+  on completion, it schedules a local notification naming the saved place.
+
+Tapping a successful notification opens the containing app, refreshes the
+saved-place list, and navigates to the places created by that ingest. Native
+shares use response-only API delivery, so they do not also send Telegram
+progress or result messages.
 
 ## Generate and build
 

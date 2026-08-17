@@ -1,5 +1,6 @@
 import SwiftUI
 import UniformTypeIdentifiers
+import UserNotifications
 
 final class ShareViewController: UIViewController {
   override func viewDidLoad() {
@@ -123,7 +124,7 @@ private struct ShareStatusView: View {
         Text(url.host() ?? url.absoluteString)
           .font(.caption)
           .foregroundStyle(.secondary)
-        Text("This can take about a minute. You’ll get the result in Telegram.")
+        Text("You can close this and keep scrolling. Place Logger will notify you when it’s done.")
           .font(.caption)
           .multilineTextAlignment(.center)
           .foregroundStyle(.secondary)
@@ -144,11 +145,60 @@ private struct ShareStatusView: View {
       do {
         let url = try await loadURL()
         state = .saving(url)
-        _ = try await PlaceLoggerAPI().ingest(sourceURL: url)
+        let result = try await PlaceLoggerAPI().ingest(sourceURL: url)
+        let title: String
+        let body: String
+        if result.savedPlaceNames.count == 1, let name = result.savedPlaceNames.first {
+          title = "\(name) was saved"
+          body = "Tap to view it in Place Logger."
+        } else if result.savedPlaceNames.count > 1 {
+          title = "\(result.savedPlaceNames.count) places were saved"
+          body = "Tap to view them in Place Logger."
+        } else {
+          title = "No places found"
+          body = "Place Logger finished processing the shared post."
+        }
+        await LocalNotification.send(
+          title: title,
+          body: body,
+          itemID: result.itemID
+        )
         complete()
       } catch {
+        await LocalNotification.send(
+          title: "Couldn't save place",
+          body: error.localizedDescription,
+          itemID: nil
+        )
         state = .failed(error.localizedDescription)
       }
     }
+  }
+}
+
+private enum LocalNotification {
+  static func send(title: String, body: String, itemID: Int?) async {
+    let center = UNUserNotificationCenter.current()
+    let settings = await center.notificationSettings()
+    guard settings.authorizationStatus == .authorized
+      || settings.authorizationStatus == .provisional
+    else {
+      return
+    }
+
+    let content = UNMutableNotificationContent()
+    content.title = title
+    content.body = body
+    content.sound = .default
+    if let itemID {
+      content.userInfo = ["item_id": itemID]
+    }
+
+    let request = UNNotificationRequest(
+      identifier: UUID().uuidString,
+      content: content,
+      trigger: UNTimeIntervalNotificationTrigger(timeInterval: 1, repeats: false)
+    )
+    try? await center.add(request)
   }
 }
