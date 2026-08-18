@@ -22,6 +22,18 @@ log = logging.getLogger("bot")
 logging.getLogger("httpx").setLevel(logging.WARNING)
 
 
+def _format_timestamp(value: object) -> str | None:
+    try:
+        seconds = max(0, int(round(float(value))))
+    except (TypeError, ValueError):
+        return None
+    hours, remainder = divmod(seconds, 3600)
+    minutes, seconds = divmod(remainder, 60)
+    if hours:
+        return f"{hours}:{minutes:02d}:{seconds:02d}"
+    return f"{minutes}:{seconds:02d}"
+
+
 def _format_result(result: dict) -> str:
     resolved = result.get("resolved_places", [])
     if not resolved:
@@ -34,6 +46,8 @@ def _format_result(result: dict) -> str:
         name = extracted.get("extracted_name", "?")
         dishes = extracted.get("dishes") or []
         dishes_str = ", ".join(dishes[:3]) + ("…" if len(dishes) > 3 else "")
+        timestamp = _format_timestamp(extracted.get("timestamp_seconds"))
+        slide_index = extracted.get("slide_index")
 
         if status == "auto":
             place = r["place"]
@@ -45,6 +59,10 @@ def _format_result(result: dict) -> str:
                 lines.append(f"📍 {addr}")
             if dishes:
                 lines.append(f"🍽 {dishes_str}")
+            if slide_index:
+                lines.append(f"🖼 Slide {slide_index}")
+            if timestamp:
+                lines.append(f"🎬 Appears at {timestamp}")
             if url:
                 lines.append(f"🗺 [view on Google Maps]({url})")
         elif status == "needs_review":

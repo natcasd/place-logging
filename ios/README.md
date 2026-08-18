@@ -18,6 +18,12 @@ same Google Place ID share one pin while retaining every recommendation and
 original source post in the detail sheet. Places without resolved coordinates
 remain available in the list.
 
+New saves retain where each place appears in its source. Reel and YouTube
+results show the start of the place's main section as a timestamp. Instagram
+carousels show a 1-based slide number and open the original post with
+Instagram's `img_index` parameter. Caption-only matches leave the media
+reference empty rather than guessing.
+
 ## Generate and build
 
 1. Copy `Config/Secrets.xcconfig.example` to `Config/Secrets.xcconfig` and set

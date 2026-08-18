@@ -41,6 +41,8 @@ class YouTubeExtractionTests(unittest.TestCase):
         )
 
         self.assertEqual(places[0]["extracted_name"], "Mission Sandwich Social")
+        properties = pipeline.EXTRACTION_RESPONSE_SCHEMA["properties"]["places"]["items"]["properties"]
+        self.assertIn("timestamp_seconds", properties)
         call = mock_client.return_value.interactions.create.call_args.kwargs
         self.assertEqual(
             call["input"][1],
@@ -291,6 +293,39 @@ class InstagramFetcherTests(unittest.TestCase):
 
 
 class InstagramExtractionTests(unittest.TestCase):
+    def test_normalizes_media_references_against_carousel_shape(self) -> None:
+        places = [
+            {
+                "extracted_name": "Video Place",
+                "slide_index": 2,
+                "timestamp_seconds": 4.5,
+            },
+            {
+                "extracted_name": "Image Place",
+                "slide_index": 1,
+                "timestamp_seconds": 9,
+            },
+            {
+                "extracted_name": "Bad Slide",
+                "slide_index": 8,
+                "timestamp_seconds": -2,
+            },
+        ]
+
+        normalized = pipeline._normalize_media_references(
+            places,
+            {
+                "source_platform": "instagram",
+                "media_types": ["image", "video"],
+            },
+        )
+
+        self.assertEqual(normalized[0]["slide_index"], 2)
+        self.assertEqual(normalized[0]["timestamp_seconds"], 4.5)
+        self.assertNotIn("timestamp_seconds", normalized[1])
+        self.assertNotIn("slide_index", normalized[2])
+        self.assertNotIn("timestamp_seconds", normalized[2])
+
     @patch("pipeline.types.Part.from_bytes")
     @patch("pipeline._client")
     def test_sends_video_inline_to_gemini(
@@ -351,6 +386,8 @@ class InstagramExtractionTests(unittest.TestCase):
         self.assertIn("First caption", call["contents"][2])
         self.assertIn("Second caption", call["contents"][2])
         self.assertIn("combined carousel captions", call["contents"][2])
+        self.assertIn("slide_index", call["contents"][2])
+        self.assertIn("1-based slide number", call["contents"][2])
 
     @patch("pipeline._client")
     def test_rejects_video_above_safe_inline_limit(

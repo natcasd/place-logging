@@ -314,6 +314,16 @@ For each place, return an object with:
 - why_its_cool: one-sentence summary of why the creator recommends it (empty string if no explicit recommendation)
 - tags: array of relevant tags (cuisine, vibe, price level, meal type, etc.)
 - extraction_confidence: "high" | "medium" | "low"
+- timestamp_seconds: for a Reel, YouTube video, or video carousel slide, the
+  non-negative number of seconds from the start of that video to the beginning
+  of the place's main section. Omit this field when the place cannot be tied to
+  a specific moment. Do not invent a timestamp from caption-only evidence.
+- slide_index: for an Instagram carousel, the 1-based slide number that most
+  clearly identifies or discusses the place. The first supplied media item is
+  slide 1, the second is slide 2, and so on. Omit this field for non-carousel
+  posts or when caption text cannot be tied to a specific slide. A video inside
+  a carousel may have both slide_index and timestamp_seconds; in that case the
+  timestamp is relative to the start of that slide's video.
 
 Return ONLY valid JSON in this shape:
 { "places": [ ... ] }
@@ -346,6 +356,12 @@ EXTRACTION_RESPONSE_SCHEMA = {
                     "extraction_confidence": {
                         "type": "string",
                         "enum": ["high", "medium", "low"],
+                    },
+                    "timestamp_seconds": {
+                        "type": "number",
+                    },
+                    "slide_index": {
+                        "type": "integer",
                     },
                 },
                 "required": [
@@ -387,6 +403,45 @@ def _extraction_prompt(
     return prompt
 
 
+def _normalize_media_references(
+    places: list[dict[str, Any]],
+    metadata: dict[str, Any],
+) -> list[dict[str, Any]]:
+    """Drop impossible timestamps and slide indexes before persistence."""
+    media_types = metadata.get("media_types") or []
+    is_instagram = metadata.get("source_platform") == "instagram"
+    is_carousel = is_instagram and len(media_types) > 1
+
+    for place in places:
+        timestamp = place.get("timestamp_seconds")
+        if (
+            isinstance(timestamp, bool)
+            or not isinstance(timestamp, (int, float))
+            or timestamp < 0
+        ):
+            place.pop("timestamp_seconds", None)
+
+        slide_index = place.get("slide_index")
+        if (
+            not is_carousel
+            or isinstance(slide_index, bool)
+            or not isinstance(slide_index, int)
+            or not 1 <= slide_index <= len(media_types)
+        ):
+            place.pop("slide_index", None)
+            slide_index = None
+
+        if not is_instagram or "timestamp_seconds" not in place:
+            continue
+        if is_carousel:
+            if slide_index is None or media_types[slide_index - 1] != "video":
+                place.pop("timestamp_seconds", None)
+        elif media_types and media_types[0] != "video":
+            place.pop("timestamp_seconds", None)
+
+    return places
+
+
 def extract(
     media_paths: Path | list[Path],
     metadata: dict[str, Any],
@@ -424,7 +479,7 @@ def extract(
     )
 
     parsed = json.loads(response.text)
-    return parsed.get("places", [])
+    return _normalize_media_references(parsed.get("places", []), metadata)
 
 
 def extract_youtube_url(
@@ -447,7 +502,7 @@ def extract_youtube_url(
         store=False,
     )
     parsed = json.loads(response.output_text)
-    return parsed.get("places", [])
+    return _normalize_media_references(parsed.get("places", []), metadata)
 
 
 # ---------- Resolver ----------

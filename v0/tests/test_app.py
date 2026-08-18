@@ -87,6 +87,8 @@ class ApiTests(unittest.TestCase):
                 "dishes": ["cream soda"],
                 "why_its_cool": "A classic.",
                 "tags": ["deli"],
+                "timestamp_seconds": 13.2,
+                "slide_index": None,
                 "resolution_status": "resolved",
                 "source_url": "https://youtu.be/test",
                 "saved_at": "2026-08-13 12:00:00",
@@ -100,6 +102,8 @@ class ApiTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["places"][0]["name"], "Test Place")
+        self.assertEqual(response.json()["places"][0]["timestamp_seconds"], 13.2)
+        self.assertIsNone(response.json()["places"][0]["slide_index"])
         self.service.places.assert_called_once_with(25)
 
     def test_places_rejects_excessive_limit(self) -> None:
