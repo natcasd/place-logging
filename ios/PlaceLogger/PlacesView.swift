@@ -201,10 +201,6 @@ private struct PlacesMap: View {
     MappedPlaceGroup.make(from: places)
   }
 
-  private var selectedGroup: MappedPlaceGroup? {
-    groups.first { $0.id == selectedGroupID }
-  }
-
   var body: some View {
     if groups.isEmpty {
       ContentUnavailableView(
@@ -240,6 +236,12 @@ private struct PlacesMap: View {
         if cameraPosition.positionedByUser {
           hasChosenInitialCamera = true
         }
+      }
+      .onChange(of: selectedGroupID) { _, groupID in
+        guard let groupID, let group = groups.first(where: { $0.id == groupID }) else {
+          return
+        }
+        detailGroup = group
       }
       .onChange(of: searchText) { _, query in
         searchModel.updateQuery(query, region: visibleRegion)
@@ -373,22 +375,15 @@ private struct PlacesMap: View {
         .padding(.top, 8)
         .padding(.bottom, 6)
       }
-      .safeAreaInset(edge: .bottom) {
-        if let selectedGroup {
-          MapPlaceCard(group: selectedGroup) {
-            detailGroup = selectedGroup
-          } onDismiss: {
-            selectedGroupID = nil
-          }
-          .padding(.horizontal)
-          .padding(.bottom, 8)
-        }
-      }
-      .sheet(item: $detailGroup) { group in
+      .sheet(item: $detailGroup, onDismiss: {
+        selectedGroupID = nil
+      }) { group in
         NavigationStack {
-          MapPlaceDetail(group: group)
+          PlaceDetailSheet(group: group)
         }
-        .presentationDetents([.medium, .large])
+        .presentationDetents([.fraction(0.58), .large])
+        .presentationDragIndicator(.visible)
+        .presentationContentInteraction(.scrolls)
       }
     }
   }
@@ -422,123 +417,79 @@ private struct PlacesMap: View {
   }
 }
 
-private struct MapPlaceCard: View {
-  let group: MappedPlaceGroup
-  let showDetails: () -> Void
-  let onDismiss: () -> Void
-
-  var body: some View {
-    VStack(alignment: .leading, spacing: 8) {
-      HStack(alignment: .firstTextBaseline) {
-        Text(group.name)
-          .font(.headline)
-        Spacer()
-        Button("Close", systemImage: "xmark.circle.fill", action: onDismiss)
-          .labelStyle(.iconOnly)
-          .foregroundStyle(.secondary)
-      }
-
-      if let address = group.primary.formattedAddress, !address.isEmpty {
-        Text(address)
-          .font(.subheadline)
-          .foregroundStyle(.secondary)
-          .lineLimit(2)
-      }
-
-      if group.sourceCount > 1 {
-        Label("Saved from \(group.sourceCount) posts", systemImage: "square.stack")
-          .font(.caption.weight(.semibold))
-          .foregroundStyle(.secondary)
-      }
-
-      if !group.primary.whyItsCool.isEmpty {
-        Text(group.primary.whyItsCool)
-          .font(.subheadline)
-          .lineLimit(2)
-      }
-
-      if !group.dishes.isEmpty {
-        Text(group.dishes.joined(separator: " · "))
-          .font(.caption)
-          .foregroundStyle(.orange)
-          .lineLimit(2)
-      }
-
-      if let mediaReference = group.primary.mediaReferenceText {
-        Label(mediaReference, systemImage: group.primary.mediaReferenceSystemImage)
-          .font(.caption.weight(.semibold))
-          .foregroundStyle(.secondary)
-      }
-
-      HStack {
-        Button("More Info", systemImage: "info.circle", action: showDetails)
-          .buttonStyle(.borderedProminent)
-        if let mapsURL = group.primary.googleMapsURL {
-          Link("Open in Maps", destination: mapsURL)
-            .buttonStyle(.bordered)
-        }
-      }
-      .font(.subheadline.weight(.semibold))
-    }
-    .padding()
-    .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 18))
-    .shadow(radius: 8, y: 3)
-  }
-}
-
-private struct MapPlaceDetail: View {
+private struct PlaceDetailSheet: View {
   let group: MappedPlaceGroup
   @Environment(\.dismiss) private var dismiss
 
   var body: some View {
-    List {
-      Section {
-        if let address = group.primary.formattedAddress, !address.isEmpty {
-          Label(address, systemImage: "mappin.and.ellipse")
-        }
-        if let mapsURL = group.primary.googleMapsURL {
-          Link("Open in Maps", destination: mapsURL)
-        }
-      }
+    ScrollView {
+      LazyVStack(alignment: .leading, spacing: 20) {
+        VStack(alignment: .leading, spacing: 6) {
+          Text(group.name)
+            .font(.title2.bold())
 
-      if !group.dishes.isEmpty {
-        Section("Things to Try") {
-          Text(group.dishes.joined(separator: " · "))
-            .foregroundStyle(.orange)
-        }
-      }
-
-      if !group.tags.isEmpty {
-        Section("Tags") {
-          Text(group.tags.joined(separator: " · "))
-            .foregroundStyle(.secondary)
-        }
-      }
-
-      Section(group.sourceCount == 1 ? "Saved Post" : "Saved from \(group.sourceCount) Posts") {
-        ForEach(group.places) { place in
-          VStack(alignment: .leading, spacing: 8) {
-            if !place.whyItsCool.isEmpty {
-              Text(place.whyItsCool)
-            }
-            if !place.dishes.isEmpty {
-              Text(place.dishes.joined(separator: " · "))
-                .font(.caption)
-                .foregroundStyle(.orange)
-            }
-            if let mediaReference = place.mediaReferenceText {
-              Label(mediaReference, systemImage: place.mediaReferenceSystemImage)
-                .font(.caption.weight(.semibold))
-                .foregroundStyle(.secondary)
-            }
-            Link(place.sourceLinkText, destination: place.linkedSourceURL)
-              .font(.subheadline.weight(.semibold))
+          if let address = group.primary.formattedAddress, !address.isEmpty {
+            Label(address, systemImage: "mappin.and.ellipse")
+              .font(.subheadline)
+              .foregroundStyle(.secondary)
           }
-          .padding(.vertical, 4)
         }
+
+        if let mapsURL = group.primary.appleMapsURL {
+          Link(destination: mapsURL) {
+            Label("Open in Apple Maps", systemImage: "map.fill")
+              .frame(maxWidth: .infinity)
+          }
+          .buttonStyle(.borderedProminent)
+          .controlSize(.large)
+        }
+
+        VStack(alignment: .leading, spacing: 12) {
+          Text(group.sourceCount == 1 ? "Saved Post" : "Saved from \(group.sourceCount) Posts")
+            .font(.headline)
+
+          ForEach(group.places) { place in
+            SourceDetailCard(
+              place: place,
+              showsDetails: group.places.count > 1
+            )
+          }
+        }
+
+        if !group.primary.whyItsCool.isEmpty {
+          VStack(alignment: .leading, spacing: 6) {
+            Text("Why It’s Cool")
+              .font(.headline)
+            Text(group.primary.whyItsCool)
+              .font(.subheadline)
+          }
+        }
+
+        if !group.dishes.isEmpty {
+          VStack(alignment: .leading, spacing: 6) {
+            Text("Things to Try")
+              .font(.headline)
+            Text(group.dishes.joined(separator: " · "))
+              .font(.subheadline)
+              .foregroundStyle(.orange)
+          }
+        }
+
+        if !group.tags.isEmpty {
+          VStack(alignment: .leading, spacing: 6) {
+            Text("Tags")
+              .font(.headline)
+            Text(group.tags.joined(separator: " · "))
+              .font(.subheadline)
+              .foregroundStyle(.secondary)
+          }
+        }
+
       }
+      .padding(.horizontal)
+      .padding(.bottom, 28)
     }
-    .navigationTitle(group.name)
+    .navigationTitle("Place Details")
     .navigationBarTitleDisplayMode(.inline)
     .toolbar {
       ToolbarItem(placement: .confirmationAction) {
@@ -546,6 +497,54 @@ private struct MapPlaceDetail: View {
       }
     }
   }
+}
+
+private struct SourceDetailCard: View {
+  let place: SavedPlace
+  let showsDetails: Bool
+
+  var body: some View {
+    VStack(alignment: .leading, spacing: 12) {
+      Link(destination: place.linkedSourceURL) {
+        HStack(spacing: 12) {
+          Image(systemName: place.sourceSystemImage)
+            .font(.title3)
+            .frame(width: 28)
+
+          VStack(alignment: .leading, spacing: 3) {
+            Text(place.sourceLinkText)
+              .font(.subheadline.weight(.semibold))
+            if let mediaReference = place.mediaReferenceText {
+              Text(mediaReference)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            }
+          }
+
+          Spacer()
+          Image(systemName: "arrow.up.right")
+            .font(.caption.weight(.bold))
+        }
+        .contentShape(Rectangle())
+      }
+      .buttonStyle(.plain)
+      .foregroundStyle(.tint)
+
+      if showsDetails, !place.whyItsCool.isEmpty {
+        Text(place.whyItsCool)
+          .font(.subheadline)
+      }
+
+      if showsDetails, !place.dishes.isEmpty {
+        Text(place.dishes.joined(separator: " · "))
+          .font(.caption)
+          .foregroundStyle(.orange)
+      }
+    }
+    .padding(14)
+    .background(.secondary.opacity(0.1), in: RoundedRectangle(cornerRadius: 14))
+  }
+
 }
 
 private struct SavedItemView: View {
@@ -607,7 +606,7 @@ private struct PlaceRow: View {
       }
 
       HStack {
-        if let mapsURL = place.googleMapsURL {
+        if let mapsURL = place.appleMapsURL {
           Link("Maps", destination: mapsURL)
         }
         Link(place.sourceLinkText, destination: place.linkedSourceURL)
