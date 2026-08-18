@@ -169,14 +169,52 @@ def _updates_from_references(
     return updates, unresolved
 
 
-def create_plan(db_path: Path, workdir: Path, plan_path: Path) -> dict[str, Any]:
+def _write_plan(plan_path: Path, plan: dict[str, Any]) -> None:
+    plan_path.parent.mkdir(parents=True, exist_ok=True)
+    temporary_path = plan_path.with_suffix(plan_path.suffix + ".tmp")
+    temporary_path.write_text(json.dumps(plan, indent=2, ensure_ascii=False) + "\n")
+    temporary_path.replace(plan_path)
+
+
+def create_plan(
+    db_path: Path,
+    workdir: Path,
+    plan_path: Path,
+    *,
+    resume: bool = False,
+) -> dict[str, Any]:
     con = sqlite3.connect(db_path)
     try:
         candidates = find_candidates(con)
-        results = []
-        for index, candidate in enumerate(candidates, start=1):
+        if plan_path.exists():
+            if not resume:
+                raise FileExistsError(f"Refusing to overwrite existing plan: {plan_path}")
+            plan = json.loads(plan_path.read_text())
+            if plan.get("version") != 1 or plan.get("database") != str(db_path):
+                raise ValueError("Existing plan does not match this database or plan version")
+            plan["complete"] = False
+        else:
+            plan = {
+                "version": 1,
+                "created_at": datetime.now(UTC).isoformat(),
+                "database": str(db_path),
+                "candidate_count": len(candidates),
+                "complete": False,
+                "results": [],
+            }
+            _write_plan(plan_path, plan)
+
+        completed_item_ids = {
+            result["item_id"] for result in plan.get("results", [])
+        }
+        pending = [
+            candidate
+            for candidate in candidates
+            if candidate["item_id"] not in completed_item_ids
+        ]
+        for index, candidate in enumerate(pending, start=1):
             print(
-                f"[{index}/{len(candidates)}] item {candidate['item_id']} "
+                f"[{index}/{len(pending)} remaining] item {candidate['item_id']} "
                 f"({len(candidate['places'])} places)",
                 flush=True,
             )
@@ -193,7 +231,7 @@ def create_plan(db_path: Path, workdir: Path, plan_path: Path) -> dict[str, Any]
                     }
                     method = "gemini_extraction"
                 updates, unresolved = _updates_from_references(candidate, references)
-                results.append(
+                result = (
                     {
                         "item_id": candidate["item_id"],
                         "source_url": candidate["source_url"],
@@ -203,7 +241,7 @@ def create_plan(db_path: Path, workdir: Path, plan_path: Path) -> dict[str, Any]
                     }
                 )
             except Exception as exc:  # Continue so one unavailable post is reviewable.
-                results.append(
+                result = (
                     {
                         "item_id": candidate["item_id"],
                         "source_url": candidate["source_url"],
@@ -213,15 +251,11 @@ def create_plan(db_path: Path, workdir: Path, plan_path: Path) -> dict[str, Any]
                         "error": f"{type(exc).__name__}: {exc}",
                     }
                 )
-        plan = {
-            "version": 1,
-            "created_at": datetime.now(UTC).isoformat(),
-            "database": str(db_path),
-            "candidate_count": len(candidates),
-            "results": results,
-        }
-        plan_path.parent.mkdir(parents=True, exist_ok=True)
-        plan_path.write_text(json.dumps(plan, indent=2, ensure_ascii=False) + "\n")
+            plan["results"].append(result)
+            _write_plan(plan_path, plan)
+        plan["complete"] = True
+        plan["completed_at"] = datetime.now(UTC).isoformat()
+        _write_plan(plan_path, plan)
         return plan
     finally:
         con.close()
@@ -305,6 +339,11 @@ def main() -> int:
     parser.add_argument("--plan", type=Path, required=True)
     parser.add_argument("--backup-dir", type=Path)
     parser.add_argument("--apply", action="store_true")
+    parser.add_argument(
+        "--resume",
+        action="store_true",
+        help="Resume plan generation, skipping every checkpointed item",
+    )
     args = parser.parse_args()
 
     if args.apply:
@@ -318,10 +357,15 @@ def main() -> int:
         print(json.dumps({"applied": applied, "backup": str(backup_path)}, indent=2))
         return 0
 
-    if args.plan.exists():
+    if args.plan.exists() and not args.resume:
         print(f"Refusing to overwrite existing plan: {args.plan}", file=sys.stderr)
         return 2
-    plan = create_plan(args.db_path, args.workdir, args.plan)
+    plan = create_plan(
+        args.db_path,
+        args.workdir,
+        args.plan,
+        resume=args.resume,
+    )
     print(json.dumps(_summary(plan), indent=2))
     return 0
 

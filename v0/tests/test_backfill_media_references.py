@@ -5,6 +5,7 @@ import sqlite3
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 import backfill_media_references as backfill
 from store import init_db
@@ -85,6 +86,43 @@ class BackfillMediaReferencesTests(unittest.TestCase):
             ).fetchone()
             con.close()
             self.assertEqual(row, ("First Place", 8.0, None))
+
+    @patch("backfill_media_references._extract_for_candidate")
+    def test_resume_skips_checkpointed_items(self, extract_mock) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            db_path = self._database(root)
+            plan_path = root / "plan.json"
+            plan_path.write_text(
+                json.dumps(
+                    {
+                        "version": 1,
+                        "database": str(db_path),
+                        "candidate_count": 1,
+                        "complete": False,
+                        "results": [
+                            {
+                                "item_id": 1,
+                                "source_url": "https://www.instagram.com/reel/example/",
+                                "method": "gemini_extraction",
+                                "updates": [],
+                                "unresolved": ["First Place", "Second Place"],
+                            }
+                        ],
+                    }
+                )
+            )
+
+            plan = backfill.create_plan(
+                db_path,
+                root / "downloads",
+                plan_path,
+                resume=True,
+            )
+
+            extract_mock.assert_not_called()
+            self.assertTrue(plan["complete"])
+            self.assertEqual(len(plan["results"]), 1)
 
 
 if __name__ == "__main__":
