@@ -96,6 +96,27 @@ sqlite3 data/places.db 'select id, source_url, created_at from items order by id
 sqlite3 data/places.db 'select p.id, p.extracted_name, p.resolution_status, p.formatted_address from places p order by p.id desc limit 10;'
 ```
 
+## Media-reference backfill
+
+`backfill_media_references.py` fills timestamps and carousel slide indexes for
+older multi-place posts without rerunning Google Places resolution. Its default
+mode writes a reviewable plan and makes no database changes. `--apply` consumes
+that exact plan, creates a SQLite backup, verifies every target row is unchanged,
+and updates only `timestamp_seconds` and `slide_index`.
+
+```bash
+python backfill_media_references.py \
+  --db-path data/places.db \
+  --workdir data/downloads \
+  --plan data/media-reference-backfill-plan.json
+
+python backfill_media_references.py \
+  --db-path data/places.db \
+  --workdir data/downloads \
+  --plan data/media-reference-backfill-plan.json \
+  --apply
+```
+
 ## Known gaps (intentional for v0)
 
 - No viewer yet — disambiguation of `needs_review` items currently isn't possible through a UI.
