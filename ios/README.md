@@ -24,6 +24,12 @@ carousels show a 1-based slide number and open the original post with
 Instagram's `img_index` parameter. Caption-only matches leave the media
 reference empty rather than guessing.
 
+The map requests foreground-only location access when first opened and starts
+at a neighborhood-level view around the device. The standard location control
+recenters after browsing elsewhere. Map search provides Apple Maps suggestions
+for cities, neighborhoods, addresses, and points of interest; selecting a result
+moves the camera while leaving saved-place pins visible.
+
 ## Generate and build
 
 1. Copy `Config/Secrets.xcconfig.example` to `Config/Secrets.xcconfig` and set

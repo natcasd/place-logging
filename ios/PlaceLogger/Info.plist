@@ -24,6 +24,8 @@
 	<string>1.0</string>
 	<key>CFBundleVersion</key>
 	<string>1</string>
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>Place Logger uses your location to open the saved-place map near you and recenter it when requested.</string>
 	<key>UILaunchScreen</key>
 	<dict/>
 </dict>
