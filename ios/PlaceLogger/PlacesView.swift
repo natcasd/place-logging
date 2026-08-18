@@ -59,7 +59,12 @@ struct PlacesView: View {
             }
             .tag(PlacesTab.list)
 
-            PlacesMap(places: model.places)
+            PlacesMap(
+              places: model.places,
+              isRefreshing: model.isLoading
+            ) {
+              await model.load()
+            }
               .tabItem {
                 Label("Map", systemImage: "map")
               }
@@ -69,13 +74,16 @@ struct PlacesView: View {
       }
       .navigationTitle(selectedTab == .map ? "" : "Place Logger")
       .navigationBarTitleDisplayMode(selectedTab == .map ? .inline : .automatic)
+      .toolbar(selectedTab == .map ? .hidden : .visible, for: .navigationBar)
       .toolbar {
         ToolbarItem(placement: .topBarTrailing) {
-          if model.isLoading && !model.places.isEmpty {
-            ProgressView()
-          } else {
-            Button("Refresh", systemImage: "arrow.clockwise") {
-              Task { await model.load() }
+          if selectedTab == .list {
+            if model.isLoading && !model.places.isEmpty {
+              ProgressView()
+            } else {
+              Button("Refresh", systemImage: "arrow.clockwise") {
+                Task { await model.load() }
+              }
             }
           }
         }
@@ -175,6 +183,8 @@ private struct MappedPlaceGroup: Identifiable {
 
 private struct PlacesMap: View {
   let places: [SavedPlace]
+  let isRefreshing: Bool
+  let refresh: () async -> Void
   @StateObject private var locationModel = LocationModel()
   @StateObject private var searchModel = MapSearchModel()
   @State private var cameraPosition: MapCameraPosition = .automatic
@@ -184,6 +194,7 @@ private struct PlacesMap: View {
   @State private var searchResult: MKMapItem?
   @State private var visibleRegion: MKCoordinateRegion?
   @State private var hasChosenInitialCamera = false
+  @State private var isSearchExpanded = false
   @FocusState private var searchIsFocused: Bool
 
   private var groups: [MappedPlaceGroup] {
@@ -242,8 +253,8 @@ private struct PlacesMap: View {
         cameraPosition = .region(
           MKCoordinateRegion(
             center: location.coordinate,
-            latitudinalMeters: 12_000,
-            longitudinalMeters: 12_000
+            latitudinalMeters: 4_000,
+            longitudinalMeters: 4_000
           )
         )
       }
@@ -262,62 +273,97 @@ private struct PlacesMap: View {
         Text(searchModel.errorMessage ?? "MapKit could not complete that search.")
       }
       .safeAreaInset(edge: .top, spacing: 0) {
-        VStack(spacing: 0) {
-          HStack(spacing: 10) {
-            Image(systemName: "magnifyingglass")
-              .foregroundStyle(.secondary)
+        VStack(spacing: 8) {
+          HStack(spacing: 8) {
+            if isSearchExpanded {
+              HStack(spacing: 10) {
+                Image(systemName: "magnifyingglass")
+                  .foregroundStyle(.secondary)
 
-            TextField(
-              "City, neighborhood, address, or place",
-              text: $searchText
-            )
-            .focused($searchIsFocused)
-            .submitLabel(.search)
-            .onSubmit {
-              searchIsFocused = false
-              Task { await submitSearch() }
-            }
+                TextField(
+                  "City, neighborhood, address, or place",
+                  text: $searchText
+                )
+                .focused($searchIsFocused)
+                .submitLabel(.search)
+                .onSubmit {
+                  searchIsFocused = false
+                  Task { await submitSearch() }
+                }
 
-            if !searchText.isEmpty {
-              Button("Clear Search", systemImage: "xmark.circle.fill") {
-                searchText = ""
-                searchModel.clearSuggestions()
-                searchIsFocused = false
+                Button("Close Search", systemImage: "xmark.circle.fill") {
+                  collapseSearch()
+                }
+                .labelStyle(.iconOnly)
+                .foregroundStyle(.secondary)
+              }
+              .padding(.horizontal, 14)
+              .frame(height: 46)
+              .background(.regularMaterial, in: Capsule())
+              .transition(.scale(scale: 0.25, anchor: .leading).combined(with: .opacity))
+            } else {
+              Button("Search Map", systemImage: "magnifyingglass") {
+                withAnimation(.snappy) {
+                  isSearchExpanded = true
+                }
+                searchIsFocused = true
               }
               .labelStyle(.iconOnly)
-              .foregroundStyle(.secondary)
+              .font(.headline)
+              .frame(width: 46, height: 46)
+              .background(.regularMaterial, in: Circle())
+              .transition(.scale.combined(with: .opacity))
+            }
+
+            Button("Refresh", systemImage: "arrow.clockwise") {
+              Task { await refresh() }
+            }
+            .labelStyle(.iconOnly)
+            .font(.headline)
+            .frame(width: 46, height: 46)
+            .background(.regularMaterial, in: Circle())
+            .disabled(isRefreshing)
+            .overlay {
+              if isRefreshing {
+                ProgressView()
+                  .controlSize(.small)
+                  .frame(width: 46, height: 46)
+                  .background(.regularMaterial, in: Circle())
+              }
             }
           }
-          .padding(.horizontal, 14)
-          .frame(minHeight: 46)
+          .frame(maxWidth: .infinity, alignment: .leading)
 
           if searchIsFocused && !searchModel.suggestions.isEmpty {
-            Divider()
-            ForEach(searchModel.suggestions.prefix(5)) { suggestion in
-              Button {
-                searchText = suggestion.title
-                searchModel.clearSuggestions()
-                searchIsFocused = false
-                Task { await selectSearchSuggestion(suggestion) }
-              } label: {
-                VStack(alignment: .leading, spacing: 2) {
-                  Text(suggestion.title)
-                    .foregroundStyle(.primary)
-                  if !suggestion.subtitle.isEmpty {
-                    Text(suggestion.subtitle)
-                      .font(.caption)
-                      .foregroundStyle(.secondary)
+            VStack(spacing: 0) {
+              ForEach(searchModel.suggestions.prefix(5)) { suggestion in
+                Button {
+                  searchText = suggestion.title
+                  searchModel.clearSuggestions()
+                  searchIsFocused = false
+                  Task { await selectSearchSuggestion(suggestion) }
+                } label: {
+                  VStack(alignment: .leading, spacing: 2) {
+                    Text(suggestion.title)
+                      .foregroundStyle(.primary)
+                    if !suggestion.subtitle.isEmpty {
+                      Text(suggestion.subtitle)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    }
                   }
+                  .frame(maxWidth: .infinity, alignment: .leading)
+                  .padding(.horizontal, 14)
+                  .padding(.vertical, 8)
                 }
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.horizontal, 14)
-                .padding(.vertical, 8)
+                .buttonStyle(.plain)
               }
-              .buttonStyle(.plain)
             }
+            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 14))
+            .padding(.trailing, 54)
           }
         }
-        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 14))
+        .animation(.snappy, value: isSearchExpanded)
         .shadow(radius: 5, y: 2)
         .padding(.horizontal)
         .padding(.top, 8)
@@ -360,6 +406,15 @@ private struct PlacesMap: View {
     selectedGroupID = nil
     searchResult = item
     cameraPosition = .item(item, allowsAutomaticPitch: false)
+  }
+
+  private func collapseSearch() {
+    searchText = ""
+    searchModel.clearSuggestions()
+    searchIsFocused = false
+    withAnimation(.snappy) {
+      isSearchExpanded = false
+    }
   }
 }
 
