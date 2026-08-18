@@ -56,21 +56,59 @@ struct SavedPlace: Decodable, Identifiable, Sendable {
   }
 
   var linkedSourceURL: URL {
-    guard let slideIndex,
-          var components = URLComponents(url: sourceURL, resolvingAgainstBaseURL: false)
-    else { return sourceURL }
+    guard var components = URLComponents(url: sourceURL, resolvingAgainstBaseURL: false) else {
+      return sourceURL
+    }
     var items = components.queryItems ?? []
-    items.removeAll { $0.name == "img_index" }
-    items.append(URLQueryItem(name: "img_index", value: String(slideIndex)))
+
+    if let slideIndex {
+      items.removeAll { $0.name == "img_index" }
+      items.append(URLQueryItem(name: "img_index", value: String(slideIndex)))
+    }
+
+    if let timestampSeconds, isYouTubeSource {
+      items.removeAll { $0.name == "t" }
+      items.append(
+        URLQueryItem(name: "t", value: "\(max(0, Int(timestampSeconds.rounded())))s")
+      )
+    }
+
     components.queryItems = items
     return components.url ?? sourceURL
   }
 
   var sourceLinkText: String {
-    if let slideIndex {
-      return "Open slide \(slideIndex)"
-    }
+    let host = sourceURL.host?.lowercased() ?? ""
+    if host.contains("instagram") { return "Open in Instagram" }
+    if isYouTubeSource { return "Watch on YouTube" }
+    if host.contains("tiktok") { return "Open in TikTok" }
     return "Open original post"
+  }
+
+  var sourceSystemImage: String {
+    let host = sourceURL.host?.lowercased() ?? ""
+    if host.contains("instagram") { return "camera" }
+    if isYouTubeSource { return "play.rectangle.fill" }
+    if host.contains("tiktok") { return "music.note" }
+    return "link"
+  }
+
+  var appleMapsURL: URL? {
+    guard latitude != nil || formattedAddress != nil else { return nil }
+    var components = URLComponents(string: "https://maps.apple.com/")
+    var items = [URLQueryItem(name: "q", value: name)]
+    if let latitude, let longitude {
+      items.append(URLQueryItem(name: "ll", value: "\(latitude),\(longitude)"))
+    } else if let formattedAddress {
+      items.append(URLQueryItem(name: "address", value: formattedAddress))
+    }
+    components?.queryItems = items
+    return components?.url
+  }
+
+  private var isYouTubeSource: Bool {
+    let host = sourceURL.host?.lowercased() ?? ""
+    return host.contains("youtube.com") || host.contains("youtu.be")
   }
 
   private static func formatTimestamp(_ value: Double) -> String {
