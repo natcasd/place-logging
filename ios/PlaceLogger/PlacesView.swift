@@ -141,10 +141,6 @@ private struct MappedPlaceGroup: Identifiable {
     )
   }
 
-  var sourceCount: Int {
-    Set(places.map(\.sourceURL)).count
-  }
-
   var dishes: [String] {
     uniqueStrings(places.flatMap(\.dishes))
   }
@@ -424,30 +420,21 @@ private struct PlaceDetailSheet: View {
   var body: some View {
     ScrollView {
       LazyVStack(alignment: .leading, spacing: 20) {
-        VStack(alignment: .leading, spacing: 6) {
+        HStack(alignment: .center, spacing: 12) {
           Text(group.name)
             .font(.title2.bold())
+            .frame(maxWidth: .infinity, alignment: .leading)
 
-          if let address = group.primary.formattedAddress, !address.isEmpty {
-            Label(address, systemImage: "mappin.and.ellipse")
-              .font(.subheadline)
-              .foregroundStyle(.secondary)
+          if let mapsURL = group.primary.appleMapsURL {
+            Link(destination: mapsURL) {
+              Label("Maps", systemImage: "map.fill")
+            }
+            .buttonStyle(.bordered)
+            .controlSize(.small)
           }
-        }
-
-        if let mapsURL = group.primary.appleMapsURL {
-          Link(destination: mapsURL) {
-            Label("Open in Apple Maps", systemImage: "map.fill")
-              .frame(maxWidth: .infinity)
-          }
-          .buttonStyle(.borderedProminent)
-          .controlSize(.large)
         }
 
         VStack(alignment: .leading, spacing: 12) {
-          Text(group.sourceCount == 1 ? "Saved Post" : "Saved from \(group.sourceCount) Posts")
-            .font(.headline)
-
           ForEach(group.places) { place in
             SourceDetailCard(
               place: place,
