@@ -11,10 +11,12 @@
 		26C4D2D6EDA00B35597DCDA7 /* PlaceLoggerShare.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = ED4E058694F66A65E2067927 /* PlaceLoggerShare.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		2B3C761B0F6580623D93432B /* PlaceLoggerAPI.swift in Sources */ = {isa = PBXBuildFile; fileRef = CD439B1B2B56ED9548B3A7D6 /* PlaceLoggerAPI.swift */; };
 		35FA7C74B90CA3C91792B341 /* PlaceLoggerAPI.swift in Sources */ = {isa = PBXBuildFile; fileRef = CD439B1B2B56ED9548B3A7D6 /* PlaceLoggerAPI.swift */; };
+		4833F5F46EB68D6E8E155F54 /* LocationModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 078E98746CBF2A957EED82FC /* LocationModel.swift */; };
 		539E263B1CEE634631ADBCF8 /* Models.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9065EE50C75A067C2E5FDFAF /* Models.swift */; };
 		6B9118EB245C5AE58643E039 /* PlaceLoggerApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3966F5FA07BE13D9F432C431 /* PlaceLoggerApp.swift */; };
 		A13AC3B8A041213A9CBDC4AE /* APIConfig.swift in Sources */ = {isa = PBXBuildFile; fileRef = DEC84888F492275FE45F6B68 /* APIConfig.swift */; };
 		ADDA8920EC727782B0A39DBB /* Models.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9065EE50C75A067C2E5FDFAF /* Models.swift */; };
+		AF36821F8C8A81B54B088279 /* MapSearchModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = F78E9211232784677A89E816 /* MapSearchModel.swift */; };
 		C55C77A4144D37D643617FE9 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = AFD08F150E5FA09C074BB8E5 /* Assets.xcassets */; };
 		D8CD16D2D03261DA49C75A82 /* PlacesView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 84E6A5828324B0E8949325D2 /* PlacesView.swift */; };
 		F95C56977278060D2DB4E2A0 /* APIConfig.swift in Sources */ = {isa = PBXBuildFile; fileRef = DEC84888F492275FE45F6B68 /* APIConfig.swift */; };
@@ -45,6 +47,7 @@
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
+		078E98746CBF2A957EED82FC /* LocationModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocationModel.swift; sourceTree = "<group>"; };
 		117409D5429477A36432D246 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		14F9A82FE76648FCA9EB4AE7 /* ShareViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShareViewController.swift; sourceTree = "<group>"; };
 		3966F5FA07BE13D9F432C431 /* PlaceLoggerApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlaceLoggerApp.swift; sourceTree = "<group>"; };
@@ -56,6 +59,7 @@
 		CD439B1B2B56ED9548B3A7D6 /* PlaceLoggerAPI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlaceLoggerAPI.swift; sourceTree = "<group>"; };
 		DEC84888F492275FE45F6B68 /* APIConfig.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = APIConfig.swift; sourceTree = "<group>"; };
 		ED4E058694F66A65E2067927 /* PlaceLoggerShare.appex */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = "wrapper.app-extension"; path = PlaceLoggerShare.appex; sourceTree = BUILT_PRODUCTS_DIR; };
+		F78E9211232784677A89E816 /* MapSearchModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MapSearchModel.swift; sourceTree = "<group>"; };
 		FB99F6D2DFD3814F7A9E74CF /* Base.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Base.xcconfig; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
@@ -112,6 +116,8 @@
 			children = (
 				AFD08F150E5FA09C074BB8E5 /* Assets.xcassets */,
 				4A0D76B916EFF821B9BED9A7 /* Info.plist */,
+				078E98746CBF2A957EED82FC /* LocationModel.swift */,
+				F78E9211232784677A89E816 /* MapSearchModel.swift */,
 				3966F5FA07BE13D9F432C431 /* PlaceLoggerApp.swift */,
 				84E6A5828324B0E8949325D2 /* PlacesView.swift */,
 			);
@@ -225,6 +231,8 @@
 			buildActionMask = 2147483647;
 			files = (
 				F95C56977278060D2DB4E2A0 /* APIConfig.swift in Sources */,
+				4833F5F46EB68D6E8E155F54 /* LocationModel.swift in Sources */,
+				AF36821F8C8A81B54B088279 /* MapSearchModel.swift in Sources */,
 				539E263B1CEE634631ADBCF8 /* Models.swift in Sources */,
 				2B3C761B0F6580623D93432B /* PlaceLoggerAPI.swift in Sources */,
 				6B9118EB245C5AE58643E039 /* PlaceLoggerApp.swift in Sources */,

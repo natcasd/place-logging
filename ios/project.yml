@@ -30,6 +30,7 @@ targets:
         UILaunchScreen: {}
         APIBaseURL: https://place-logging.fly.dev
         APIToken: $(PLACE_LOGGER_API_TOKEN)
+        NSLocationWhenInUseUsageDescription: Place Logger uses your location to open the saved-place map near you and recenter it when requested.
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.natcasd.placelogger

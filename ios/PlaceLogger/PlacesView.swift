@@ -174,9 +174,15 @@ private struct MappedPlaceGroup: Identifiable {
 
 private struct PlacesMap: View {
   let places: [SavedPlace]
+  @StateObject private var locationModel = LocationModel()
+  @StateObject private var searchModel = MapSearchModel()
   @State private var cameraPosition: MapCameraPosition = .automatic
   @State private var selectedGroupID: String?
   @State private var detailGroup: MappedPlaceGroup?
+  @State private var searchText = ""
+  @State private var searchResult: MKMapItem?
+  @State private var visibleRegion: MKCoordinateRegion?
+  @State private var hasChosenInitialCamera = false
 
   private var groups: [MappedPlaceGroup] {
     MappedPlaceGroup.make(from: places)
@@ -195,15 +201,89 @@ private struct PlacesMap: View {
       )
     } else {
       Map(position: $cameraPosition, selection: $selectedGroupID) {
+        UserAnnotation()
+
         ForEach(groups) { group in
           Marker(group.name, coordinate: group.coordinate)
             .tint(.red)
             .tag(group.id)
         }
+
+        if let searchResult {
+          Marker(
+            searchResult.name ?? "Search Result",
+            coordinate: searchResult.placemark.coordinate
+          )
+          .tint(.blue)
+        }
       }
       .mapControls {
+        MapUserLocationButton()
         MapCompass()
         MapScaleView()
+      }
+      .onMapCameraChange(frequency: .onEnd) { context in
+        visibleRegion = context.region
+        if cameraPosition.positionedByUser {
+          hasChosenInitialCamera = true
+        }
+      }
+      .searchable(
+        text: $searchText,
+        placement: .navigationBarDrawer(displayMode: .always),
+        prompt: "City, neighborhood, address, or place"
+      )
+      .searchSuggestions {
+        ForEach(searchModel.suggestions) { suggestion in
+          Button {
+            searchText = suggestion.title
+            searchModel.clearSuggestions()
+            Task { await selectSearchSuggestion(suggestion) }
+          } label: {
+            VStack(alignment: .leading, spacing: 2) {
+              Text(suggestion.title)
+              if !suggestion.subtitle.isEmpty {
+                Text(suggestion.subtitle)
+                  .font(.caption)
+                  .foregroundStyle(.secondary)
+              }
+            }
+          }
+        }
+      }
+      .onSubmit(of: .search) {
+        Task { await submitSearch() }
+      }
+      .onChange(of: searchText) { _, query in
+        searchModel.updateQuery(query, region: visibleRegion)
+        if query.isEmpty {
+          searchResult = nil
+        }
+      }
+      .onReceive(locationModel.$location.compactMap { $0 }) { location in
+        guard !hasChosenInitialCamera else { return }
+        hasChosenInitialCamera = true
+        cameraPosition = .region(
+          MKCoordinateRegion(
+            center: location.coordinate,
+            latitudinalMeters: 12_000,
+            longitudinalMeters: 12_000
+          )
+        )
+      }
+      .task {
+        locationModel.requestCurrentLocation()
+      }
+      .alert(
+        "Search Failed",
+        isPresented: Binding(
+          get: { searchModel.errorMessage != nil },
+          set: { if !$0 { searchModel.errorMessage = nil } }
+        )
+      ) {
+        Button("OK", role: .cancel) { searchModel.errorMessage = nil }
+      } message: {
+        Text(searchModel.errorMessage ?? "MapKit could not complete that search.")
       }
       .safeAreaInset(edge: .bottom) {
         if let selectedGroup {
@@ -223,6 +303,25 @@ private struct PlacesMap: View {
         .presentationDetents([.medium, .large])
       }
     }
+  }
+
+  private func selectSearchSuggestion(_ suggestion: MapSearchSuggestion) async {
+    guard let item = await searchModel.resolve(suggestion) else { return }
+    showSearchResult(item)
+  }
+
+  private func submitSearch() async {
+    searchModel.clearSuggestions()
+    guard let item = await searchModel.search(searchText, region: visibleRegion) else { return }
+    searchText = item.name ?? searchText
+    showSearchResult(item)
+  }
+
+  private func showSearchResult(_ item: MKMapItem) {
+    hasChosenInitialCamera = true
+    selectedGroupID = nil
+    searchResult = item
+    cameraPosition = .item(item, allowsAutomaticPitch: false)
   }
 }
 
