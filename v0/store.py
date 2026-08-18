@@ -184,3 +184,56 @@ def list_places(db_path: Path, limit: int = 200) -> list[dict[str, Any]]:
         ]
     finally:
         con.close()
+
+
+def delete_place(db_path: Path, place_id: int) -> dict[str, int] | None:
+    """Delete one logical place and remove any newly orphaned ingest items.
+
+    Resolved places are matched by Google Place ID so every saved reference to
+    that restaurant is removed. An unresolved place has no stable identity, so
+    only the selected row is removed. Other places extracted from the same
+    source item are always preserved.
+    """
+    con = sqlite3.connect(db_path)
+    try:
+        row = con.execute(
+            "SELECT id, item_id, google_place_id FROM places WHERE id = ?",
+            (place_id,),
+        ).fetchone()
+        if row is None:
+            return None
+
+        google_place_id = row[2]
+        if google_place_id:
+            affected_rows = con.execute(
+                "SELECT DISTINCT item_id FROM places WHERE google_place_id = ?",
+                (google_place_id,),
+            ).fetchall()
+            cursor = con.execute(
+                "DELETE FROM places WHERE google_place_id = ?",
+                (google_place_id,),
+            )
+        else:
+            affected_rows = [(row[1],)]
+            cursor = con.execute("DELETE FROM places WHERE id = ?", (place_id,))
+
+        deleted_places = cursor.rowcount
+        deleted_items = 0
+        for (item_id,) in affected_rows:
+            cursor = con.execute(
+                """DELETE FROM items
+                   WHERE id = ?
+                     AND NOT EXISTS (
+                       SELECT 1 FROM places WHERE places.item_id = items.id
+                     )""",
+                (item_id,),
+            )
+            deleted_items += cursor.rowcount
+
+        con.commit()
+        return {
+            "deleted_places": deleted_places,
+            "deleted_items": deleted_items,
+        }
+    finally:
+        con.close()

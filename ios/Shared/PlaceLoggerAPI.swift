@@ -32,6 +32,13 @@ struct PlaceLoggerAPI: Sendable {
     return try JSONDecoder().decode(IngestResponse.self, from: data)
   }
 
+  func deletePlace(id: Int) async throws {
+    let url = APIConfig.baseURL.appending(path: "/api/v1/places/\(id)")
+    var request = URLRequest(url: url)
+    request.httpMethod = "DELETE"
+    _ = try await perform(request)
+  }
+
   private func perform(_ originalRequest: URLRequest) async throws -> Data {
     guard !APIConfig.token.isEmpty else { throw PlaceLoggerError.missingToken }
     var request = originalRequest

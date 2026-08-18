@@ -5,10 +5,18 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from store import init_db, list_places, save_ingest
+from store import delete_place, init_db, list_places, save_ingest
 
 
 class StoreTests(unittest.TestCase):
+    @staticmethod
+    def resolved_place(name: str, google_place_id: str) -> dict:
+        return {
+            "status": "resolved",
+            "extracted": {"extracted_name": name},
+            "place": {"id": google_place_id},
+        }
+
     def test_lists_saved_places_newest_first(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             db_path = Path(temp_dir) / "places.db"
@@ -82,6 +90,63 @@ class StoreTests(unittest.TestCase):
                 con.close()
             self.assertIn("timestamp_seconds", columns)
             self.assertIn("slide_index", columns)
+
+    def test_delete_place_removes_all_references_but_preserves_post_siblings(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            db_path = Path(temp_dir) / "places.db"
+            init_db(db_path)
+            save_ingest(
+                db_path,
+                {
+                    "source_url": "https://www.instagram.com/reel/multiple/",
+                    "metadata": {},
+                    "places_extracted": [],
+                    "resolved_places": [
+                        self.resolved_place("Delete Me", "places/delete"),
+                        self.resolved_place("Keep Me", "places/keep"),
+                    ],
+                },
+            )
+            save_ingest(
+                db_path,
+                {
+                    "source_url": "https://www.instagram.com/reel/delete-only/",
+                    "metadata": {},
+                    "places_extracted": [],
+                    "resolved_places": [
+                        self.resolved_place("Delete Me", "places/delete"),
+                    ],
+                },
+            )
+            selected = next(
+                place
+                for place in list_places(db_path, 10)
+                if place["google_place_id"] == "places/delete"
+            )
+
+            result = delete_place(db_path, selected["id"])
+
+            self.assertEqual(result, {"deleted_places": 2, "deleted_items": 1})
+            remaining = list_places(db_path, 10)
+            self.assertEqual([place["name"] for place in remaining], ["Keep Me"])
+            self.assertEqual(
+                remaining[0]["source_url"],
+                "https://www.instagram.com/reel/multiple/",
+            )
+            con = sqlite3.connect(db_path)
+            try:
+                self.assertEqual(con.execute("SELECT COUNT(*) FROM items").fetchone()[0], 1)
+            finally:
+                con.close()
+
+    def test_delete_place_returns_none_for_unknown_id(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            db_path = Path(temp_dir) / "places.db"
+            init_db(db_path)
+
+            self.assertIsNone(delete_place(db_path, 999))
 
 
 if __name__ == "__main__":
