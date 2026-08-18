@@ -8,6 +8,27 @@ import bot
 
 
 class TelegramAdapterTests(unittest.IsolatedAsyncioTestCase):
+    def test_formats_timestamp_and_slide_reference(self) -> None:
+        result = {
+            "resolved_places": [
+                {
+                    "status": "auto",
+                    "extracted": {
+                        "extracted_name": "Test Place",
+                        "dishes": [],
+                        "timestamp_seconds": 73.6,
+                        "slide_index": 4,
+                    },
+                    "place": {"displayName": {"text": "Test Place"}},
+                }
+            ]
+        }
+
+        formatted = bot._format_result(result)
+
+        self.assertIn("🖼 Slide 4", formatted)
+        self.assertIn("🎬 Appears at 1:14", formatted)
+
     @patch("bot.send_ingest_result", new_callable=AsyncMock)
     async def test_url_message_calls_shared_ingest_service(
         self,

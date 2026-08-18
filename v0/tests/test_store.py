@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import sqlite3
 import tempfile
 import unittest
 from pathlib import Path
@@ -27,6 +28,8 @@ class StoreTests(unittest.TestCase):
                                 "dishes": ["sandwich"],
                                 "why_its_cool": "Great bread.",
                                 "tags": ["bakery"],
+                                "timestamp_seconds": 12.5,
+                                "slide_index": 3,
                             },
                             "place": {
                                 "id": "places/abc",
@@ -50,6 +53,35 @@ class StoreTests(unittest.TestCase):
             self.assertEqual(places[0]["tags"], ["bakery"])
             self.assertEqual(places[0]["source_url"], "https://www.instagram.com/reel/test/")
             self.assertEqual(places[0]["latitude"], 19.42)
+            self.assertEqual(places[0]["timestamp_seconds"], 12.5)
+            self.assertEqual(places[0]["slide_index"], 3)
+
+    def test_init_db_migrates_existing_places_table(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            db_path = Path(temp_dir) / "places.db"
+            con = sqlite3.connect(db_path)
+            con.execute(
+                """CREATE TABLE places (
+                     id INTEGER PRIMARY KEY,
+                     item_id INTEGER NOT NULL,
+                     google_place_id TEXT
+                   )"""
+            )
+            con.commit()
+            con.close()
+
+            init_db(db_path)
+
+            con = sqlite3.connect(db_path)
+            try:
+                columns = {
+                    row[1]
+                    for row in con.execute("PRAGMA table_info(places)").fetchall()
+                }
+            finally:
+                con.close()
+            self.assertIn("timestamp_seconds", columns)
+            self.assertIn("slide_index", columns)
 
 
 if __name__ == "__main__":

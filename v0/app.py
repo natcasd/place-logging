@@ -93,6 +93,8 @@ class SavedPlace(BaseModel):
     dishes: list[str]
     why_its_cool: str
     tags: list[str]
+    timestamp_seconds: float | None = Field(default=None, ge=0)
+    slide_index: int | None = Field(default=None, ge=1)
     resolution_status: str
     source_url: str
     saved_at: str

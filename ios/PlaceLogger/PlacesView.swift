@@ -268,6 +268,12 @@ private struct MapPlaceCard: View {
           .lineLimit(2)
       }
 
+      if let mediaReference = group.primary.mediaReferenceText {
+        Label(mediaReference, systemImage: group.primary.mediaReferenceSystemImage)
+          .font(.caption.weight(.semibold))
+          .foregroundStyle(.secondary)
+      }
+
       HStack {
         Button("More Info", systemImage: "info.circle", action: showDetails)
           .buttonStyle(.borderedProminent)
@@ -324,7 +330,12 @@ private struct MapPlaceDetail: View {
                 .font(.caption)
                 .foregroundStyle(.orange)
             }
-            Link("Open original post", destination: place.sourceURL)
+            if let mediaReference = place.mediaReferenceText {
+              Label(mediaReference, systemImage: place.mediaReferenceSystemImage)
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.secondary)
+            }
+            Link(place.sourceLinkText, destination: place.linkedSourceURL)
               .font(.subheadline.weight(.semibold))
           }
           .padding(.vertical, 4)
@@ -393,11 +404,17 @@ private struct PlaceRow: View {
           .foregroundStyle(.orange)
       }
 
+      if let mediaReference = place.mediaReferenceText {
+        Label(mediaReference, systemImage: place.mediaReferenceSystemImage)
+          .font(.caption.weight(.semibold))
+          .foregroundStyle(.secondary)
+      }
+
       HStack {
         if let mapsURL = place.googleMapsURL {
           Link("Maps", destination: mapsURL)
         }
-        Link("Original post", destination: place.sourceURL)
+        Link(place.sourceLinkText, destination: place.linkedSourceURL)
       }
       .font(.caption.weight(.semibold))
     }
