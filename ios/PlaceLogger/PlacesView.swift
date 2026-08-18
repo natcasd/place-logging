@@ -553,20 +553,23 @@ private struct PlaceDetailSheet: View {
       .padding(.horizontal)
       .padding(.bottom, 28)
     }
-    .navigationTitle("Place Details")
-    .navigationBarTitleDisplayMode(.inline)
-    .toolbar {
-      ToolbarItem(placement: .topBarLeading) {
+    .safeAreaInset(edge: .bottom, spacing: 0) {
+      HStack {
         if isDeleting {
           ProgressView()
         } else {
           Button("Delete Place", systemImage: "trash", role: .destructive) {
             isConfirmingDeletion = true
           }
-          .labelStyle(.iconOnly)
+          .buttonStyle(.bordered)
           .tint(.red)
         }
+
+        Spacer()
       }
+      .padding(.horizontal)
+      .padding(.vertical, 10)
+      .background(.bar)
     }
     .confirmationDialog(
       "Delete \(group.name)?",
