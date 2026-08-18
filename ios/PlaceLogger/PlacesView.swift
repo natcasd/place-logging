@@ -509,6 +509,27 @@ private struct PlaceDetailSheet: View {
             .buttonStyle(.bordered)
             .controlSize(.small)
           }
+
+          Spacer(minLength: 8)
+
+          if isDeleting {
+            ProgressView()
+              .controlSize(.small)
+          } else {
+            Menu {
+              Button("Delete Place", systemImage: "trash", role: .destructive) {
+                isConfirmingDeletion = true
+              }
+            } label: {
+              Image(systemName: "ellipsis")
+                .font(.headline)
+                .frame(width: 32, height: 32)
+                .contentShape(Circle())
+            }
+            .buttonStyle(.bordered)
+            .buttonBorderShape(.circle)
+            .accessibilityLabel("More Options")
+          }
         }
 
         VStack(alignment: .leading, spacing: 12) {
@@ -552,24 +573,6 @@ private struct PlaceDetailSheet: View {
       }
       .padding(.horizontal)
       .padding(.bottom, 28)
-    }
-    .safeAreaInset(edge: .bottom, spacing: 0) {
-      HStack {
-        if isDeleting {
-          ProgressView()
-        } else {
-          Button("Delete Place", systemImage: "trash", role: .destructive) {
-            isConfirmingDeletion = true
-          }
-          .buttonStyle(.bordered)
-          .tint(.red)
-        }
-
-        Spacer()
-      }
-      .padding(.horizontal)
-      .padding(.vertical, 10)
-      .background(.bar)
     }
     .confirmationDialog(
       "Delete \(group.name)?",
