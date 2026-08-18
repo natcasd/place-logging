@@ -21,6 +21,16 @@ final class PlacesModel: ObservableObject {
       errorMessage = error.localizedDescription
     }
   }
+
+  func delete(_ place: SavedPlace) async throws {
+    try await api.deletePlace(id: place.id)
+    places.removeAll { candidate in
+      if let googlePlaceID = place.googlePlaceID, !googlePlaceID.isEmpty {
+        return candidate.googlePlaceID == googlePlaceID
+      }
+      return candidate.id == place.id
+    }
+  }
 }
 
 struct PlacesView: View {
@@ -51,9 +61,11 @@ struct PlacesView: View {
           )
         } else {
           TabView(selection: $selectedTab) {
-            PlacesList(places: model.places) {
-              await model.load()
-            }
+            PlacesList(
+              places: model.places,
+              refresh: { await model.load() },
+              deletePlace: { place in try await model.delete(place) }
+            )
             .tabItem {
               Label("List", systemImage: "list.bullet")
             }
@@ -61,10 +73,10 @@ struct PlacesView: View {
 
             PlacesMap(
               places: model.places,
-              isRefreshing: model.isLoading
-            ) {
-              await model.load()
-            }
+              isRefreshing: model.isLoading,
+              refresh: { await model.load() },
+              deletePlace: { place in try await model.delete(place) }
+            )
               .tabItem {
                 Label("Map", systemImage: "map")
               }
@@ -118,13 +130,72 @@ private enum PlacesTab: Hashable {
 private struct PlacesList: View {
   let places: [SavedPlace]
   let refresh: () async -> Void
+  let deletePlace: (SavedPlace) async throws -> Void
+  @State private var pendingDeletion: SavedPlace?
+  @State private var deletionError: String?
 
   var body: some View {
     List(places) { place in
       PlaceRow(place: place)
+        .swipeActions {
+          Button("Delete", systemImage: "trash", role: .destructive) {
+            pendingDeletion = place
+          }
+        }
     }
     .listStyle(.plain)
     .refreshable { await refresh() }
+    .confirmationDialog(
+      pendingDeletion.map { "Delete \($0.name)?" } ?? "Delete Place?",
+      isPresented: Binding(
+        get: { pendingDeletion != nil },
+        set: { if !$0 { pendingDeletion = nil } }
+      ),
+      titleVisibility: .visible
+    ) {
+      if let place = pendingDeletion {
+        Button("Delete Place", role: .destructive) {
+          pendingDeletion = nil
+          Task {
+            do {
+              try await deletePlace(place)
+            } catch {
+              deletionError = error.localizedDescription
+            }
+          }
+        }
+      }
+      Button("Cancel", role: .cancel) {
+        pendingDeletion = nil
+      }
+    } message: {
+      if let place = pendingDeletion {
+        let count = savedReferenceCount(for: place)
+        Text(deleteMessage(name: place.name, referenceCount: count))
+      }
+    }
+    .alert(
+      "Couldn’t Delete Place",
+      isPresented: Binding(
+        get: { deletionError != nil },
+        set: { if !$0 { deletionError = nil } }
+      )
+    ) {
+      Button("OK", role: .cancel) { deletionError = nil }
+    } message: {
+      Text(deletionError ?? "Please try again.")
+    }
+  }
+
+  private func savedReferenceCount(for place: SavedPlace) -> Int {
+    guard let googlePlaceID = place.googlePlaceID, !googlePlaceID.isEmpty else {
+      return 1
+    }
+    return Set(
+      places
+        .filter { $0.googlePlaceID == googlePlaceID }
+        .map(\.sourceURL)
+    ).count
   }
 }
 
@@ -181,6 +252,7 @@ private struct PlacesMap: View {
   let places: [SavedPlace]
   let isRefreshing: Bool
   let refresh: () async -> Void
+  let deletePlace: (SavedPlace) async throws -> Void
   @StateObject private var locationModel = LocationModel()
   @StateObject private var searchModel = MapSearchModel()
   @State private var cameraPosition: MapCameraPosition = .automatic
@@ -375,7 +447,9 @@ private struct PlacesMap: View {
         selectedGroupID = nil
       }) { group in
         NavigationStack {
-          PlaceDetailSheet(group: group)
+          PlaceDetailSheet(group: group) {
+            try await deletePlace(group.primary)
+          }
         }
         .presentationDetents([.fraction(0.58), .large])
         .presentationDragIndicator(.visible)
@@ -415,15 +489,18 @@ private struct PlacesMap: View {
 
 private struct PlaceDetailSheet: View {
   let group: MappedPlaceGroup
+  let deletePlace: () async throws -> Void
   @Environment(\.dismiss) private var dismiss
+  @State private var isConfirmingDeletion = false
+  @State private var isDeleting = false
+  @State private var deletionError: String?
 
   var body: some View {
     ScrollView {
       LazyVStack(alignment: .leading, spacing: 20) {
-        HStack(alignment: .center, spacing: 12) {
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
           Text(group.name)
             .font(.title2.bold())
-            .frame(maxWidth: .infinity, alignment: .leading)
 
           if let mapsURL = group.primary.appleMapsURL {
             Link(destination: mapsURL) {
@@ -479,11 +556,63 @@ private struct PlaceDetailSheet: View {
     .navigationTitle("Place Details")
     .navigationBarTitleDisplayMode(.inline)
     .toolbar {
-      ToolbarItem(placement: .confirmationAction) {
-        Button("Done") { dismiss() }
+      ToolbarItem(placement: .topBarLeading) {
+        if isDeleting {
+          ProgressView()
+        } else {
+          Button("Delete Place", systemImage: "trash", role: .destructive) {
+            isConfirmingDeletion = true
+          }
+          .labelStyle(.iconOnly)
+          .tint(.red)
+        }
       }
     }
+    .confirmationDialog(
+      "Delete \(group.name)?",
+      isPresented: $isConfirmingDeletion,
+      titleVisibility: .visible
+    ) {
+      Button("Delete Place", role: .destructive) {
+        Task {
+          isDeleting = true
+          defer { isDeleting = false }
+          do {
+            try await deletePlace()
+            dismiss()
+          } catch {
+            deletionError = error.localizedDescription
+          }
+        }
+      }
+      Button("Cancel", role: .cancel) {}
+    } message: {
+      Text(
+        deleteMessage(
+          name: group.name,
+          referenceCount: Set(group.places.map(\.sourceURL)).count
+        )
+      )
+    }
+    .alert(
+      "Couldn’t Delete Place",
+      isPresented: Binding(
+        get: { deletionError != nil },
+        set: { if !$0 { deletionError = nil } }
+      )
+    ) {
+      Button("OK", role: .cancel) { deletionError = nil }
+    } message: {
+      Text(deletionError ?? "Please try again.")
+    }
   }
+}
+
+private func deleteMessage(name: String, referenceCount: Int) -> String {
+  let references = referenceCount == 1
+    ? "its saved post"
+    : "its \(referenceCount) saved posts"
+  return "This removes \(name) and \(references). Other places from those posts will remain."
 }
 
 private struct SourceDetailCard: View {

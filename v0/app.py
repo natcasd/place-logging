@@ -104,6 +104,12 @@ class PlacesResponse(BaseModel):
     places: list[SavedPlace]
 
 
+class DeletePlaceResponse(BaseModel):
+    place_id: int
+    deleted_places: int
+    deleted_items: int
+
+
 @dataclass
 class Runtime:
     service: IngestService
@@ -321,6 +327,33 @@ def create_app(injected_runtime: Runtime | None = None) -> FastAPI:
                 detail="limit must be between 1 and 500",
             )
         return {"places": await asyncio.to_thread(runtime.service.places, limit)}
+
+    @application.delete(
+        "/api/v1/places/{place_id}",
+        response_model=DeletePlaceResponse,
+    )
+    async def delete_saved_place(
+        place_id: int,
+        request: Request,
+        authorization: str | None = Header(default=None),
+    ) -> dict[str, int]:
+        runtime: Runtime = request.app.state.runtime
+        _require_ingest_auth(runtime, authorization)
+        result = await asyncio.to_thread(runtime.service.delete_place, place_id)
+        if result is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Saved place not found",
+            )
+        log.info(
+            "Saved place deleted request_id=%s place_id=%s deleted_places=%s "
+            "deleted_items=%s",
+            getattr(request.state, "request_id", "unknown"),
+            place_id,
+            result["deleted_places"],
+            result["deleted_items"],
+        )
+        return {"place_id": place_id, **result}
 
     @application.post("/webhook", include_in_schema=False)
     async def telegram_webhook(

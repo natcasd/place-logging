@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Any
 
 from pipeline import process_ingest
-from store import init_db, list_places, save_ingest
+from store import delete_place, init_db, list_places, save_ingest
 
 
 @dataclass(frozen=True)
@@ -30,3 +30,7 @@ class IngestService:
     def places(self, limit: int = 200) -> list[dict[str, Any]]:
         """Return saved places for app clients."""
         return list_places(self.db_path, limit)
+
+    def delete_place(self, place_id: int) -> dict[str, int] | None:
+        """Delete a logical place while preserving unrelated source places."""
+        return delete_place(self.db_path, place_id)

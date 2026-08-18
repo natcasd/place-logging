@@ -115,6 +115,41 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(response.status_code, 422)
         self.service.places.assert_not_called()
 
+    def test_delete_place_requires_bearer_token(self) -> None:
+        response = self.client.delete("/api/v1/places/7")
+
+        self.assertEqual(response.status_code, 401)
+        self.service.delete_place.assert_not_called()
+
+    def test_delete_place_returns_deleted_counts(self) -> None:
+        self.service.delete_place.return_value = {
+            "deleted_places": 2,
+            "deleted_items": 1,
+        }
+
+        response = self.client.delete(
+            "/api/v1/places/7",
+            headers={"Authorization": "Bearer api-secret"},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            response.json(),
+            {"place_id": 7, "deleted_places": 2, "deleted_items": 1},
+        )
+        self.service.delete_place.assert_called_once_with(7)
+
+    def test_delete_place_returns_not_found(self) -> None:
+        self.service.delete_place.return_value = None
+
+        response = self.client.delete(
+            "/api/v1/places/999",
+            headers={"Authorization": "Bearer api-secret"},
+        )
+
+        self.assertEqual(response.status_code, 404)
+        self.assertEqual(response.json(), {"detail": "Saved place not found"})
+
     def test_ingest_calls_shared_service_and_returns_result(self) -> None:
         response = self.client.post(
             "/api/v1/ingests",
