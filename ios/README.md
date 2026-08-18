@@ -26,9 +26,10 @@ reference empty rather than guessing.
 
 The map requests foreground-only location access when first opened and starts
 at a neighborhood-level view around the device. The standard location control
-recenters after browsing elsewhere. Map search provides Apple Maps suggestions
-for cities, neighborhoods, addresses, and points of interest; selecting a result
-moves the camera while leaving saved-place pins visible.
+recenters after browsing elsewhere. An always-visible search field above the map
+provides Apple Maps suggestions for cities, neighborhoods, addresses, and points
+of interest; selecting a result moves the camera while leaving saved-place pins
+visible.
 
 ## Generate and build
 

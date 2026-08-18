@@ -67,7 +67,8 @@ struct PlacesView: View {
           }
         }
       }
-      .navigationTitle(selectedTab == .map ? "Saved Map" : "Place Logger")
+      .navigationTitle(selectedTab == .map ? "" : "Place Logger")
+      .navigationBarTitleDisplayMode(selectedTab == .map ? .inline : .automatic)
       .toolbar {
         ToolbarItem(placement: .topBarTrailing) {
           if model.isLoading && !model.places.isEmpty {
@@ -183,6 +184,7 @@ private struct PlacesMap: View {
   @State private var searchResult: MKMapItem?
   @State private var visibleRegion: MKCoordinateRegion?
   @State private var hasChosenInitialCamera = false
+  @FocusState private var searchIsFocused: Bool
 
   private var groups: [MappedPlaceGroup] {
     MappedPlaceGroup.make(from: places)
@@ -228,32 +230,6 @@ private struct PlacesMap: View {
           hasChosenInitialCamera = true
         }
       }
-      .searchable(
-        text: $searchText,
-        placement: .navigationBarDrawer(displayMode: .always),
-        prompt: "City, neighborhood, address, or place"
-      )
-      .searchSuggestions {
-        ForEach(searchModel.suggestions) { suggestion in
-          Button {
-            searchText = suggestion.title
-            searchModel.clearSuggestions()
-            Task { await selectSearchSuggestion(suggestion) }
-          } label: {
-            VStack(alignment: .leading, spacing: 2) {
-              Text(suggestion.title)
-              if !suggestion.subtitle.isEmpty {
-                Text(suggestion.subtitle)
-                  .font(.caption)
-                  .foregroundStyle(.secondary)
-              }
-            }
-          }
-        }
-      }
-      .onSubmit(of: .search) {
-        Task { await submitSearch() }
-      }
       .onChange(of: searchText) { _, query in
         searchModel.updateQuery(query, region: visibleRegion)
         if query.isEmpty {
@@ -284,6 +260,68 @@ private struct PlacesMap: View {
         Button("OK", role: .cancel) { searchModel.errorMessage = nil }
       } message: {
         Text(searchModel.errorMessage ?? "MapKit could not complete that search.")
+      }
+      .safeAreaInset(edge: .top, spacing: 0) {
+        VStack(spacing: 0) {
+          HStack(spacing: 10) {
+            Image(systemName: "magnifyingglass")
+              .foregroundStyle(.secondary)
+
+            TextField(
+              "City, neighborhood, address, or place",
+              text: $searchText
+            )
+            .focused($searchIsFocused)
+            .submitLabel(.search)
+            .onSubmit {
+              searchIsFocused = false
+              Task { await submitSearch() }
+            }
+
+            if !searchText.isEmpty {
+              Button("Clear Search", systemImage: "xmark.circle.fill") {
+                searchText = ""
+                searchModel.clearSuggestions()
+                searchIsFocused = false
+              }
+              .labelStyle(.iconOnly)
+              .foregroundStyle(.secondary)
+            }
+          }
+          .padding(.horizontal, 14)
+          .frame(minHeight: 46)
+
+          if searchIsFocused && !searchModel.suggestions.isEmpty {
+            Divider()
+            ForEach(searchModel.suggestions.prefix(5)) { suggestion in
+              Button {
+                searchText = suggestion.title
+                searchModel.clearSuggestions()
+                searchIsFocused = false
+                Task { await selectSearchSuggestion(suggestion) }
+              } label: {
+                VStack(alignment: .leading, spacing: 2) {
+                  Text(suggestion.title)
+                    .foregroundStyle(.primary)
+                  if !suggestion.subtitle.isEmpty {
+                    Text(suggestion.subtitle)
+                      .font(.caption)
+                      .foregroundStyle(.secondary)
+                  }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 14)
+                .padding(.vertical, 8)
+              }
+              .buttonStyle(.plain)
+            }
+          }
+        }
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 14))
+        .shadow(radius: 5, y: 2)
+        .padding(.horizontal)
+        .padding(.top, 8)
+        .padding(.bottom, 6)
       }
       .safeAreaInset(edge: .bottom) {
         if let selectedGroup {
