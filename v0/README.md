@@ -102,7 +102,9 @@ sqlite3 data/places.db 'select p.id, p.extracted_name, p.resolution_status, p.fo
 older multi-place posts without rerunning Google Places resolution. Its default
 mode writes a reviewable plan and makes no database changes. `--apply` consumes
 that exact plan, creates a SQLite backup, verifies every target row is unchanged,
-and updates only `timestamp_seconds` and `slide_index`.
+and updates only `timestamp_seconds` and `slide_index`. Plan generation writes
+an atomic checkpoint after every post; rerun it with `--resume` after an
+interruption to skip completed posts.
 
 ```bash
 python backfill_media_references.py \
