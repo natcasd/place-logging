@@ -299,6 +299,7 @@ private struct PlacesMap: View {
               }
               .padding(.horizontal, 14)
               .frame(height: 46)
+              .frame(maxWidth: .infinity)
               .background(.regularMaterial, in: Capsule())
               .transition(.scale(scale: 0.25, anchor: .leading).combined(with: .opacity))
             } else {
@@ -309,16 +310,20 @@ private struct PlacesMap: View {
                 searchIsFocused = true
               }
               .labelStyle(.iconOnly)
+              .buttonStyle(.plain)
               .font(.headline)
               .frame(width: 46, height: 46)
               .background(.regularMaterial, in: Circle())
               .transition(.scale.combined(with: .opacity))
             }
 
+            Spacer(minLength: 0)
+
             Button("Refresh", systemImage: "arrow.clockwise") {
               Task { await refresh() }
             }
             .labelStyle(.iconOnly)
+            .buttonStyle(.plain)
             .font(.headline)
             .frame(width: 46, height: 46)
             .background(.regularMaterial, in: Circle())
@@ -328,7 +333,6 @@ private struct PlacesMap: View {
                 ProgressView()
                   .controlSize(.small)
                   .frame(width: 46, height: 46)
-                  .background(.regularMaterial, in: Circle())
               }
             }
           }
