@@ -505,9 +505,10 @@ private struct PlaceDetailSheet: View {
           if let mapsURL = group.primary.appleMapsURL {
             Link(destination: mapsURL) {
               Label("Maps", systemImage: "map.fill")
+                .font(.subheadline.weight(.semibold))
             }
-            .buttonStyle(.bordered)
-            .controlSize(.small)
+            .buttonStyle(.plain)
+            .foregroundStyle(.tint)
           }
 
           Spacer(minLength: 8)
@@ -523,11 +524,11 @@ private struct PlaceDetailSheet: View {
             } label: {
               Image(systemName: "ellipsis")
                 .font(.headline)
-                .frame(width: 32, height: 32)
+                .frame(width: 36, height: 36)
                 .contentShape(Circle())
             }
-            .buttonStyle(.bordered)
-            .buttonBorderShape(.circle)
+            .buttonStyle(.plain)
+            .foregroundStyle(.primary)
             .accessibilityLabel("More Options")
           }
         }
@@ -572,6 +573,7 @@ private struct PlaceDetailSheet: View {
 
       }
       .padding(.horizontal)
+      .padding(.top, 18)
       .padding(.bottom, 28)
     }
     .confirmationDialog(

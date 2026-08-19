@@ -79,7 +79,7 @@ struct SavedPlace: Decodable, Identifiable, Sendable {
 
   var sourceLinkText: String {
     let host = sourceURL.host?.lowercased() ?? ""
-    if host.contains("instagram") { return "Open in Instagram" }
+    if host.contains("instagram") { return "Instagram Post" }
     if isYouTubeSource { return "Watch on YouTube" }
     if host.contains("tiktok") { return "Open in TikTok" }
     return "Open original post"
