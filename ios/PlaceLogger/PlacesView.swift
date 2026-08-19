@@ -502,15 +502,6 @@ private struct PlaceDetailSheet: View {
           Text(group.name)
             .font(.title2.bold())
 
-          if let mapsURL = group.primary.appleMapsURL {
-            Link(destination: mapsURL) {
-              Label("Maps", systemImage: "map.fill")
-                .font(.subheadline.weight(.semibold))
-            }
-            .buttonStyle(.plain)
-            .foregroundStyle(.tint)
-          }
-
           Spacer(minLength: 8)
 
           if isDeleting {
@@ -518,6 +509,14 @@ private struct PlaceDetailSheet: View {
               .controlSize(.small)
           } else {
             Menu {
+              if let mapsURL = group.primary.appleMapsURL {
+                Link(destination: mapsURL) {
+                  Label("Open in Maps", systemImage: "map")
+                }
+
+                Divider()
+              }
+
               Button("Delete Place", systemImage: "trash", role: .destructive) {
                 isConfirmingDeletion = true
               }
