@@ -43,7 +43,7 @@ struct PlacesView: View {
   @StateObject private var model = PlacesModel()
   @Environment(\.scenePhase) private var scenePhase
   @State private var path: [Int] = []
-  @State private var selectedTab: PlacesTab = .saved
+  @State private var selectedTab: PlacesTab = .aroundMe
 
   var body: some View {
     NavigationStack(path: $path) {
@@ -61,16 +61,6 @@ struct PlacesView: View {
           }
         } else {
           TabView(selection: $selectedTab) {
-            PlacesList(
-              places: model.places,
-              refresh: { await model.load() },
-              deletePlace: { place in try await model.delete(place) }
-            )
-            .tabItem {
-              Label("Saved", systemImage: "tray.full")
-            }
-            .tag(PlacesTab.saved)
-
             PlacesMap(
               places: model.places,
               isRefreshing: model.isLoading,
@@ -81,6 +71,16 @@ struct PlacesView: View {
                 Label("Around Me", systemImage: "location")
               }
               .tag(PlacesTab.aroundMe)
+
+            PlacesList(
+              places: model.places,
+              refresh: { await model.load() },
+              deletePlace: { place in try await model.delete(place) }
+            )
+            .tabItem {
+              Label("Saved", systemImage: "tray.full")
+            }
+            .tag(PlacesTab.saved)
 
             SourcesList(sources: model.sources)
               .tabItem {
