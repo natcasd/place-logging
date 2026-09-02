@@ -9,9 +9,11 @@ optionally resolves physical locations through Google Places.
 - Instagram media is archived under `WORKDIR/sources` on the mounted Fly volume.
 - Each extracted thing has an open-ended type, detailed description, optional
   availability dates, and optional Google location.
-- Existing place rows migrate in place with `Place` as their default type. Before
+- Existing place rows migrate in place with `Unknown` as their temporary type. Before
   the first additive migration, the service creates a timestamped SQLite backup
   beside the database.
+- New extraction never emits the generic `Place` category. It saves only the
+  post's principal recommendations and chooses the most specific supported type.
 - `/api/v1/things` and `/api/v1/sources` power new clients. `/api/v1/places`
   remains available for released clients.
 
@@ -129,6 +131,25 @@ python backfill_media_references.py \
   --db-path data/places.db \
   --workdir data/downloads \
   --plan data/media-reference-backfill-plan.json \
+  --apply
+```
+
+## Generic-type backfill
+
+`backfill_thing_types.py` reclassifies every legacy `Place` row using its saved
+source context and description. Its default mode creates a checkpointed,
+reviewable plan. Applying a complete plan backs up SQLite, verifies each target
+is still generic, updates only `thing_type`, and refuses to commit if any
+`Place` rows would remain.
+
+```bash
+python backfill_thing_types.py \
+  --db-path data/places.db \
+  --plan data/type-backfill-plan.json
+
+python backfill_thing_types.py \
+  --db-path data/places.db \
+  --plan data/type-backfill-plan.json \
   --apply
 ```
 

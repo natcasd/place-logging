@@ -340,7 +340,26 @@ def archive_media(
 
 # ---------- Extractor ----------
 
-EXTRACTOR_PROMPT = """Analyze this social post and extract every distinct thing that is discussed, shown, or recommended and that someone may want to save for later. Things include physical places, temporary events, books, movies, articles, songs, products, routes, and other useful recommendations.
+TYPE_NAME_GUIDANCE = """Choose the most specific short singular noun category supported by the source, such as Restaurant, Bakery, Coffee Shop, Bar, Spa, Movie Theater, Park, Hiking Trail, Museum, Store, Bike Route, Art Gallery, Concert, Food Pop-up, Exhibit, Book, Movie, Article, Song, or Skincare Product. Never use the generic category Place. Reuse a specific existing type whenever it reasonably fits. If none fits, create a concise new type. Use Unknown only when the kind of thing is genuinely unclear."""
+
+
+def specific_type_names(type_names: list[str] | None) -> list[str]:
+    """Return stable, reusable categories without generic fallback values."""
+    return [
+        type_name
+        for type_name in dict.fromkeys(type_names or [])
+        if type_name.strip().casefold() not in {"place", "unknown"}
+    ]
+
+
+EXTRACTOR_PROMPT = """Analyze this social post and extract the distinct recommendations that are part of the post's main intent and that someone may want to save for later. Recommendations can include physical places, temporary events, books, movies, articles, songs, products, routes, and other useful things.
+
+Be selective about what becomes a saved thing:
+- A thing must be independently recommended, endorsed, or presented as a principal subject of the post. For a list post, each intended list entry is a principal recommendation.
+- Do not create separate things for incidental mentions, scenery, background signs or posters, examples, ingredients, products merely being used, or places that only establish where the main recommendation happens.
+- A host venue can be important context. Preserve it in the main recommendation's description and use it in location_query when it anchors the recommendation. Do not also save the host venue as a separate thing unless the post independently recommends the venue itself.
+- Likewise, a movie poster visible in the background is not a movie recommendation, and a city shown as a story's setting is not a travel recommendation.
+- When the evidence is ambiguous, prefer preserving the information in source_content or a recommendation's description instead of creating an extra thing.
 
 When multiple media items are supplied, they are the slides of one carousel in display order. Analyze all of them together. The source metadata's caption_or_description may contain the post caption or Instagram's combined carousel captions; treat that text as evidence even when an exact caption-to-slide mapping is unavailable.
 
@@ -353,7 +372,7 @@ Return one object per individual thing. Do not combine a list of restaurants, bo
 
 For each thing, return an object with:
 - extracted_name: concise name of the thing as mentioned or shown
-- type_name: a short singular noun category, such as Restaurant, Coffee Shop, Park, Hiking Trail, Museum, Store, Bike Route, Art Gallery, Concert, Food Pop-up, Exhibit, Book, Movie, Article, Song, or Skincare Product. Reuse an existing type supplied below whenever it reasonably fits. If none fits, create a concise new type. Use Unknown only when the kind of thing is genuinely unclear.
+- type_name: """ + TYPE_NAME_GUIDANCE + """
 - description: a detailed, source-grounded explanation containing the useful information conveyed about this thing. Do not add facts that are not in the source.
 - location_query: only when the thing has a physical place, area, anchor, or venue that Google Places could resolve. Use the venue for an event or exhibit. Include the name plus directly evidenced neighborhood/city/region hints. Omit this field for non-location things and when there is not enough location evidence.
 - location_hints: object with any of { neighborhood, city, region_or_country, on_screen_text, visual_landmarks } — ONLY include fields where you have direct evidence from the supplied media or caption. Omit a field rather than guess.
@@ -459,10 +478,11 @@ def _extraction_prompt(
             "what you'd otherwise infer from the content):\n"
             + user_prompt
         )
-    if existing_types:
+    reusable_types = specific_type_names(existing_types)
+    if reusable_types:
         prompt += (
-            "\n\nExisting type names (reuse one when it reasonably fits):\n"
-            + json.dumps(existing_types, ensure_ascii=False)
+            "\n\nExisting specific type names (reuse one when it reasonably fits):\n"
+            + json.dumps(reusable_types, ensure_ascii=False)
         )
     return prompt
 

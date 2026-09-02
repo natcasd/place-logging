@@ -35,7 +35,7 @@ CREATE TABLE IF NOT EXISTS places (
   slide_index                INTEGER,
   resolution_status          TEXT NOT NULL,
   resolution_candidates_json TEXT,
-  thing_type                 TEXT NOT NULL DEFAULT 'Place',
+  thing_type                 TEXT NOT NULL DEFAULT 'Unknown',
   description                TEXT NOT NULL DEFAULT '',
   starts_at                  TEXT,
   ends_at                    TEXT,
@@ -50,7 +50,7 @@ CREATE INDEX IF NOT EXISTS idx_places_google_id ON places(google_place_id);
 PLACE_COLUMN_MIGRATIONS = {
     "timestamp_seconds": "REAL",
     "slide_index": "INTEGER",
-    "thing_type": "TEXT NOT NULL DEFAULT 'Place'",
+    "thing_type": "TEXT NOT NULL DEFAULT 'Unknown'",
     "description": "TEXT NOT NULL DEFAULT ''",
     "starts_at": "TEXT",
     "ends_at": "TEXT",
@@ -181,8 +181,10 @@ def save_ingest(db_path: Path, result: dict[str, Any]) -> int:
 
 
 def _normalize_type_name(value: Any) -> str:
-    name = " ".join(str(value or "Place").split()).strip()
+    name = " ".join(str(value or "Unknown").split()).strip()
     if not name:
+        return "Unknown"
+    if name.casefold() == "place":
         return "Unknown"
     return name[:80].title()
 
