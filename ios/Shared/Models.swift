@@ -4,6 +4,14 @@ struct PlacesEnvelope: Decodable {
   let places: [SavedPlace]
 }
 
+struct ThingsEnvelope: Decodable {
+  let things: [SavedPlace]
+}
+
+struct SourcesEnvelope: Decodable {
+  let sources: [SavedSource]
+}
+
 struct SavedPlace: Decodable, Identifiable, Sendable {
   let id: Int
   let itemID: Int
@@ -20,6 +28,11 @@ struct SavedPlace: Decodable, Identifiable, Sendable {
   let timestampSeconds: Double?
   let slideIndex: Int?
   let resolutionStatus: String
+  let type: String?
+  let description: String?
+  let startsAt: String?
+  let endsAt: String?
+  let recurrenceText: String?
   let sourceURL: URL
   let savedAt: String
 
@@ -33,6 +46,10 @@ struct SavedPlace: Decodable, Identifiable, Sendable {
     case timestampSeconds = "timestamp_seconds"
     case slideIndex = "slide_index"
     case resolutionStatus = "resolution_status"
+    case type, description
+    case startsAt = "starts_at"
+    case endsAt = "ends_at"
+    case recurrenceText = "recurrence_text"
     case sourceURL = "source_url"
     case savedAt = "saved_at"
   }
@@ -106,6 +123,35 @@ struct SavedPlace: Decodable, Identifiable, Sendable {
     return components?.url
   }
 
+  var displayType: String {
+    guard let type, !type.isEmpty else { return "Place" }
+    return type
+  }
+
+  var detailedDescription: String {
+    guard let description, !description.isEmpty else { return whyItsCool }
+    return description
+  }
+
+  var isCurrentlyRelevant: Bool {
+    guard let endsAt, let endDate = Self.parseFlexibleDate(endsAt) else { return true }
+    return endDate >= Calendar.current.startOfDay(for: Date())
+  }
+
+  var availabilityText: String? {
+    if let recurrenceText, !recurrenceText.isEmpty { return recurrenceText }
+    switch (startsAt, endsAt) {
+    case let (.some(start), .some(end)):
+      return "\(start) – \(end)"
+    case let (.some(start), .none):
+      return "Starts \(start)"
+    case let (.none, .some(end)):
+      return "Through \(end)"
+    case (.none, .none):
+      return nil
+    }
+  }
+
   private var isYouTubeSource: Bool {
     let host = sourceURL.host?.lowercased() ?? ""
     return host.contains("youtube.com") || host.contains("youtu.be")
@@ -120,6 +166,44 @@ struct SavedPlace: Decodable, Identifiable, Sendable {
       return String(format: "%d:%02d:%02d", hours, minutes, seconds)
     }
     return String(format: "%d:%02d", minutes, seconds)
+  }
+
+  private static func parseFlexibleDate(_ value: String) -> Date? {
+    if let date = ISO8601DateFormatter().date(from: value) { return date }
+    let formatter = DateFormatter()
+    formatter.locale = Locale(identifier: "en_US_POSIX")
+    formatter.dateFormat = "yyyy-MM-dd"
+    return formatter.date(from: value)
+  }
+}
+
+struct SavedSource: Decodable, Identifiable, Sendable {
+  let id: Int
+  let sourceURL: URL
+  let sourcePlatform: String
+  let creator: String?
+  let caption: String?
+  let summary: String?
+  let mediaCount: Int
+  let mediaPreserved: Bool
+  let thingCount: Int
+  let needsReview: Bool
+  let savedAt: String
+
+  enum CodingKeys: String, CodingKey {
+    case id, creator, caption, summary
+    case sourceURL = "source_url"
+    case sourcePlatform = "source_platform"
+    case mediaCount = "media_count"
+    case mediaPreserved = "media_preserved"
+    case thingCount = "thing_count"
+    case needsReview = "needs_review"
+    case savedAt = "saved_at"
+  }
+
+  var title: String {
+    if let creator, !creator.isEmpty { return creator }
+    return sourcePlatform.capitalized
   }
 }
 

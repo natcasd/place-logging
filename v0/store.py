@@ -1,8 +1,9 @@
-"""SQLite persistence. One ingest → one items row + N places rows."""
+"""SQLite persistence. One source ingest → one items row + N saved things."""
 from __future__ import annotations
 
 import json
 import sqlite3
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -33,7 +34,13 @@ CREATE TABLE IF NOT EXISTS places (
   timestamp_seconds          REAL,
   slide_index                INTEGER,
   resolution_status          TEXT NOT NULL,
-  resolution_candidates_json TEXT
+  resolution_candidates_json TEXT,
+  thing_type                 TEXT NOT NULL DEFAULT 'Place',
+  description                TEXT NOT NULL DEFAULT '',
+  starts_at                  TEXT,
+  ends_at                    TEXT,
+  recurrence_text            TEXT,
+  location_query             TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_places_item      ON places(item_id);
@@ -43,6 +50,12 @@ CREATE INDEX IF NOT EXISTS idx_places_google_id ON places(google_place_id);
 PLACE_COLUMN_MIGRATIONS = {
     "timestamp_seconds": "REAL",
     "slide_index": "INTEGER",
+    "thing_type": "TEXT NOT NULL DEFAULT 'Place'",
+    "description": "TEXT NOT NULL DEFAULT ''",
+    "starts_at": "TEXT",
+    "ends_at": "TEXT",
+    "recurrence_text": "TEXT",
+    "location_query": "TEXT",
 }
 
 
@@ -56,11 +69,33 @@ def _migrate_places(con: sqlite3.Connection) -> None:
             con.execute(f"ALTER TABLE places ADD COLUMN {column} {declaration}")
 
 
+def _backup_before_thing_migration(
+    con: sqlite3.Connection,
+    db_path: Path,
+) -> Path | None:
+    existing = {
+        row[1]
+        for row in con.execute("PRAGMA table_info(places)").fetchall()
+    }
+    if not existing or set(PLACE_COLUMN_MIGRATIONS).issubset(existing):
+        return None
+
+    timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    backup_path = db_path.with_name(f"{db_path.name}.pre-things-{timestamp}.bak")
+    backup = sqlite3.connect(backup_path)
+    try:
+        con.backup(backup)
+    finally:
+        backup.close()
+    return backup_path
+
+
 def init_db(db_path: Path) -> None:
     db_path.parent.mkdir(parents=True, exist_ok=True)
     con = sqlite3.connect(db_path)
     try:
         con.executescript(SCHEMA)
+        _backup_before_thing_migration(con, db_path)
         _migrate_places(con)
         con.commit()
     finally:
@@ -77,16 +112,23 @@ def save_ingest(db_path: Path, result: dict[str, Any]) -> int:
                (vertical, source_url, user_prompt, raw_payload_json, llm_output_json)
                VALUES (?, ?, ?, ?, ?)""",
             (
-                "place",
+                "thing",
                 result["source_url"],
                 result.get("user_prompt"),
                 json.dumps(result.get("metadata", {}), ensure_ascii=False),
-                json.dumps(result.get("places_extracted", []), ensure_ascii=False),
+                json.dumps(
+                    result.get("things_extracted", result.get("places_extracted", [])),
+                    ensure_ascii=False,
+                ),
             ),
         )
         item_id = cur.lastrowid
 
-        for ordinal, r in enumerate(result.get("resolved_places", [])):
+        resolved_things = result.get(
+            "resolved_things",
+            result.get("resolved_places", []),
+        )
+        for ordinal, r in enumerate(resolved_things):
             extracted = r.get("extracted", {}) or {}
             status = r.get("status", "unresolved")
             place = r.get("place", {}) or {}
@@ -102,8 +144,10 @@ def save_ingest(db_path: Path, result: dict[str, Any]) -> int:
                     formatted_address, google_maps_url,
                     dishes_json, why_its_cool, tags_json,
                     timestamp_seconds, slide_index,
-                    resolution_status, resolution_candidates_json
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    resolution_status, resolution_candidates_json,
+                    thing_type, description,
+                    starts_at, ends_at, recurrence_text, location_query
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
                     item_id,
                     ordinal,
@@ -120,6 +164,13 @@ def save_ingest(db_path: Path, result: dict[str, Any]) -> int:
                     extracted.get("slide_index"),
                     status,
                     json.dumps(candidates, ensure_ascii=False) if candidates else None,
+                    _normalize_type_name(extracted.get("type_name")),
+                    extracted.get("description")
+                    or extracted.get("why_its_cool", ""),
+                    extracted.get("starts_at"),
+                    extracted.get("ends_at"),
+                    extracted.get("recurrence_text"),
+                    extracted.get("location_query"),
                 ),
             )
 
@@ -129,8 +180,15 @@ def save_ingest(db_path: Path, result: dict[str, Any]) -> int:
         con.close()
 
 
-def list_places(db_path: Path, limit: int = 200) -> list[dict[str, Any]]:
-    """Return saved places newest-first for read-only clients."""
+def _normalize_type_name(value: Any) -> str:
+    name = " ".join(str(value or "Place").split()).strip()
+    if not name:
+        return "Unknown"
+    return name[:80].title()
+
+
+def list_things(db_path: Path, limit: int = 200) -> list[dict[str, Any]]:
+    """Return all saved things newest-first, including non-location things."""
     con = sqlite3.connect(db_path)
     con.row_factory = sqlite3.Row
     try:
@@ -151,6 +209,12 @@ def list_places(db_path: Path, limit: int = 200) -> list[dict[str, Any]]:
                  p.timestamp_seconds,
                  p.slide_index,
                  p.resolution_status,
+                 p.thing_type,
+                 p.description,
+                 p.starts_at,
+                 p.ends_at,
+                 p.recurrence_text,
+                 p.location_query,
                  i.source_url,
                  i.created_at
                FROM places AS p
@@ -177,11 +241,108 @@ def list_places(db_path: Path, limit: int = 200) -> list[dict[str, Any]]:
                 "timestamp_seconds": row["timestamp_seconds"],
                 "slide_index": row["slide_index"],
                 "resolution_status": row["resolution_status"],
+                "type": row["thing_type"] or "Place",
+                "description": row["description"] or row["why_its_cool"] or "",
+                "starts_at": row["starts_at"],
+                "ends_at": row["ends_at"],
+                "recurrence_text": row["recurrence_text"],
+                "location_query": row["location_query"],
                 "source_url": row["source_url"],
                 "saved_at": row["created_at"],
             }
             for row in rows
         ]
+    finally:
+        con.close()
+
+
+def list_places(db_path: Path, limit: int = 200) -> list[dict[str, Any]]:
+    """Compatibility alias for released clients."""
+    return list_things(db_path, limit)
+
+
+def list_thing_types(db_path: Path) -> list[str]:
+    """Return the open vocabulary currently used by saved things."""
+    con = sqlite3.connect(db_path)
+    try:
+        try:
+            rows = con.execute(
+                """SELECT DISTINCT thing_type
+                   FROM places
+                   WHERE thing_type IS NOT NULL AND trim(thing_type) != ''
+                   ORDER BY thing_type COLLATE NOCASE"""
+            ).fetchall()
+        except sqlite3.OperationalError:
+            return []
+        return [row[0] for row in rows]
+    finally:
+        con.close()
+
+
+def list_sources(db_path: Path, limit: int = 200) -> list[dict[str, Any]]:
+    """Return every preserved source, including sources with zero extracted things."""
+    con = sqlite3.connect(db_path)
+    con.row_factory = sqlite3.Row
+    try:
+        rows = con.execute(
+            """SELECT i.id, i.source_url, i.user_prompt, i.raw_payload_json,
+                      i.created_at, COUNT(p.id) AS thing_count
+               FROM items AS i
+               LEFT JOIN places AS p ON p.item_id = i.id
+               GROUP BY i.id
+               ORDER BY i.created_at DESC, i.id DESC
+               LIMIT ?""",
+            (limit,),
+        ).fetchall()
+        sources = []
+        for row in rows:
+            try:
+                metadata = json.loads(row["raw_payload_json"] or "{}")
+            except (json.JSONDecodeError, TypeError):
+                metadata = {}
+            archived_media = metadata.get("archived_media") or []
+            sources.append(
+                {
+                    "id": row["id"],
+                    "source_url": row["source_url"],
+                    "user_prompt": row["user_prompt"],
+                    "source_platform": metadata.get("source_platform") or "other",
+                    "creator": metadata.get("uploader"),
+                    "caption": metadata.get("caption_or_description"),
+                    "summary": (metadata.get("source_content") or {}).get("summary"),
+                    "media_count": metadata.get("media_count") or len(archived_media),
+                    "media_preserved": bool(metadata.get("media_preserved")),
+                    "thing_count": row["thing_count"],
+                    "needs_review": row["thing_count"] == 0,
+                    "saved_at": row["created_at"],
+                }
+            )
+        return sources
+    finally:
+        con.close()
+
+
+def delete_thing(db_path: Path, thing_id: int) -> dict[str, int] | None:
+    """Delete a logical thing while retaining every preserved source record."""
+    con = sqlite3.connect(db_path)
+    try:
+        row = con.execute(
+            "SELECT id, google_place_id FROM places WHERE id = ?",
+            (thing_id,),
+        ).fetchone()
+        if row is None:
+            return None
+
+        google_place_id = row[1]
+        if google_place_id:
+            cursor = con.execute(
+                "DELETE FROM places WHERE google_place_id = ?",
+                (google_place_id,),
+            )
+        else:
+            cursor = con.execute("DELETE FROM places WHERE id = ?", (thing_id,))
+        con.commit()
+        return {"deleted_things": cursor.rowcount, "deleted_sources": 0}
     finally:
         con.close()
 

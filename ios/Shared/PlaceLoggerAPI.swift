@@ -18,6 +18,28 @@ struct PlaceLoggerAPI: Sendable {
     return try JSONDecoder().decode(PlacesEnvelope.self, from: data).places
   }
 
+  func fetchThings(limit: Int = 200) async throws -> [SavedPlace] {
+    var components = URLComponents(
+      url: APIConfig.baseURL.appending(path: "/api/v1/things"),
+      resolvingAgainstBaseURL: false
+    )
+    components?.queryItems = [URLQueryItem(name: "limit", value: String(limit))]
+    guard let url = components?.url else { throw PlaceLoggerError.invalidResponse }
+    let data = try await perform(URLRequest(url: url))
+    return try JSONDecoder().decode(ThingsEnvelope.self, from: data).things
+  }
+
+  func fetchSources(limit: Int = 200) async throws -> [SavedSource] {
+    var components = URLComponents(
+      url: APIConfig.baseURL.appending(path: "/api/v1/sources"),
+      resolvingAgainstBaseURL: false
+    )
+    components?.queryItems = [URLQueryItem(name: "limit", value: String(limit))]
+    guard let url = components?.url else { throw PlaceLoggerError.invalidResponse }
+    let data = try await perform(URLRequest(url: url))
+    return try JSONDecoder().decode(SourcesEnvelope.self, from: data).sources
+  }
+
   func ingest(sourceURL: URL) async throws -> IngestResponse {
     let url = APIConfig.baseURL.appending(path: "/api/v1/ingests")
     var request = URLRequest(url: url)
@@ -34,6 +56,13 @@ struct PlaceLoggerAPI: Sendable {
 
   func deletePlace(id: Int) async throws {
     let url = APIConfig.baseURL.appending(path: "/api/v1/places/\(id)")
+    var request = URLRequest(url: url)
+    request.httpMethod = "DELETE"
+    _ = try await perform(request)
+  }
+
+  func deleteThing(id: Int) async throws {
+    let url = APIConfig.baseURL.appending(path: "/api/v1/things/\(id)")
     var request = URLRequest(url: url)
     request.httpMethod = "DELETE"
     _ = try await perform(request)

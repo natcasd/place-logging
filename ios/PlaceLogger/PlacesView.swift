@@ -5,6 +5,7 @@ import SwiftUI
 @MainActor
 final class PlacesModel: ObservableObject {
   @Published var places: [SavedPlace] = []
+  @Published var sources: [SavedSource] = []
   @Published var isLoading = false
   @Published var errorMessage: String?
 
@@ -15,7 +16,10 @@ final class PlacesModel: ObservableObject {
     isLoading = true
     defer { isLoading = false }
     do {
-      places = try await api.fetchPlaces()
+      async let loadedThings = api.fetchThings()
+      async let loadedSources = api.fetchSources()
+      places = try await loadedThings
+      sources = try await loadedSources
       errorMessage = nil
     } catch {
       errorMessage = error.localizedDescription
@@ -23,13 +27,14 @@ final class PlacesModel: ObservableObject {
   }
 
   func delete(_ place: SavedPlace) async throws {
-    try await api.deletePlace(id: place.id)
+    try await api.deleteThing(id: place.id)
     places.removeAll { candidate in
       if let googlePlaceID = place.googlePlaceID, !googlePlaceID.isEmpty {
         return candidate.googlePlaceID == googlePlaceID
       }
       return candidate.id == place.id
     }
+    sources = try await api.fetchSources()
   }
 }
 
@@ -38,27 +43,22 @@ struct PlacesView: View {
   @StateObject private var model = PlacesModel()
   @Environment(\.scenePhase) private var scenePhase
   @State private var path: [Int] = []
-  @State private var selectedTab: PlacesTab = .list
+  @State private var selectedTab: PlacesTab = .saved
 
   var body: some View {
     NavigationStack(path: $path) {
       Group {
-        if model.isLoading && model.places.isEmpty {
-          ProgressView("Loading saved places…")
-        } else if let error = model.errorMessage, model.places.isEmpty {
+        if model.isLoading && model.places.isEmpty && model.sources.isEmpty {
+          ProgressView("Loading saved things…")
+        } else if let error = model.errorMessage,
+                  model.places.isEmpty && model.sources.isEmpty {
           ContentUnavailableView {
-            Label("Couldn’t Load Places", systemImage: "wifi.exclamationmark")
+            Label("Couldn’t Load Saves", systemImage: "wifi.exclamationmark")
           } description: {
             Text(error)
           } actions: {
             Button("Try Again") { Task { await model.load() } }
           }
-        } else if model.places.isEmpty {
-          ContentUnavailableView(
-            "No Saved Places",
-            systemImage: "fork.knife",
-            description: Text("Share an Instagram Reel or YouTube video to Place Logger.")
-          )
         } else {
           TabView(selection: $selectedTab) {
             PlacesList(
@@ -67,9 +67,9 @@ struct PlacesView: View {
               deletePlace: { place in try await model.delete(place) }
             )
             .tabItem {
-              Label("List", systemImage: "list.bullet")
+              Label("Saved", systemImage: "tray.full")
             }
-            .tag(PlacesTab.list)
+            .tag(PlacesTab.saved)
 
             PlacesMap(
               places: model.places,
@@ -78,18 +78,24 @@ struct PlacesView: View {
               deletePlace: { place in try await model.delete(place) }
             )
               .tabItem {
-                Label("Map", systemImage: "map")
+                Label("Around Me", systemImage: "location")
               }
-              .tag(PlacesTab.map)
+              .tag(PlacesTab.aroundMe)
+
+            SourcesList(sources: model.sources)
+              .tabItem {
+                Label("Sources", systemImage: "rectangle.stack")
+              }
+              .tag(PlacesTab.sources)
           }
         }
       }
-      .navigationTitle(selectedTab == .map ? "" : "Place Logger")
-      .navigationBarTitleDisplayMode(selectedTab == .map ? .inline : .automatic)
-      .toolbar(selectedTab == .map ? .hidden : .visible, for: .navigationBar)
+      .navigationTitle(selectedTab == .aroundMe ? "" : "Place Logger")
+      .navigationBarTitleDisplayMode(selectedTab == .aroundMe ? .inline : .automatic)
+      .toolbar(selectedTab == .aroundMe ? .hidden : .visible, for: .navigationBar)
       .toolbar {
         ToolbarItem(placement: .topBarTrailing) {
-          if selectedTab == .list {
+          if selectedTab != .aroundMe {
             if model.isLoading && !model.places.isEmpty {
               ProgressView()
             } else {
@@ -111,7 +117,7 @@ struct PlacesView: View {
     .task(id: router.selectedItemID) {
       guard let itemID = router.selectedItemID else { return }
       await model.load()
-      selectedTab = .list
+      selectedTab = .saved
       path = [itemID]
       router.selectedItemID = nil
     }
@@ -123,8 +129,9 @@ struct PlacesView: View {
 }
 
 private enum PlacesTab: Hashable {
-  case list
-  case map
+  case saved
+  case aroundMe
+  case sources
 }
 
 private struct PlacesList: View {
@@ -133,20 +140,61 @@ private struct PlacesList: View {
   let deletePlace: (SavedPlace) async throws -> Void
   @State private var pendingDeletion: SavedPlace?
   @State private var deletionError: String?
+  @State private var searchText = ""
+  @State private var selectedType = "All"
+
+  private var types: [String] {
+    Array(Set(places.map(\.displayType))).sorted()
+  }
+
+  private var filteredPlaces: [SavedPlace] {
+    places.filter { place in
+      let matchesType = selectedType == "All" || place.displayType == selectedType
+      let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+      let matchesSearch = query.isEmpty
+        || place.name.localizedCaseInsensitiveContains(query)
+        || place.detailedDescription.localizedCaseInsensitiveContains(query)
+        || place.displayType.localizedCaseInsensitiveContains(query)
+      return matchesType && matchesSearch
+    }
+  }
 
   var body: some View {
-    List(places) { place in
-      PlaceRow(place: place)
-        .swipeActions {
-          Button("Delete", systemImage: "trash", role: .destructive) {
-            pendingDeletion = place
+    Group {
+      if places.isEmpty {
+        ContentUnavailableView(
+          "No Saved Things",
+          systemImage: "tray",
+          description: Text("Share an Instagram Reel or YouTube video to get started.")
+        )
+      } else {
+        List {
+          if !types.isEmpty {
+            Picker("Type", selection: $selectedType) {
+              Text("All").tag("All")
+              ForEach(types, id: \.self) { type in
+                Text(type).tag(type)
+              }
+            }
+            .pickerStyle(.menu)
+          }
+
+          ForEach(filteredPlaces) { place in
+            PlaceRow(place: place)
+              .swipeActions {
+                Button("Delete", systemImage: "trash", role: .destructive) {
+                  pendingDeletion = place
+                }
+              }
           }
         }
+        .listStyle(.plain)
+        .searchable(text: $searchText, prompt: "Search saved things")
+        .refreshable { await refresh() }
+      }
     }
-    .listStyle(.plain)
-    .refreshable { await refresh() }
     .confirmationDialog(
-      pendingDeletion.map { "Delete \($0.name)?" } ?? "Delete Place?",
+      pendingDeletion.map { "Delete \($0.name)?" } ?? "Delete Thing?",
       isPresented: Binding(
         get: { pendingDeletion != nil },
         set: { if !$0 { pendingDeletion = nil } }
@@ -154,7 +202,7 @@ private struct PlacesList: View {
       titleVisibility: .visible
     ) {
       if let place = pendingDeletion {
-        Button("Delete Place", role: .destructive) {
+        Button("Delete Thing", role: .destructive) {
           pendingDeletion = nil
           Task {
             do {
@@ -175,7 +223,7 @@ private struct PlacesList: View {
       }
     }
     .alert(
-      "Couldn’t Delete Place",
+      "Couldn’t Delete Thing",
       isPresented: Binding(
         get: { deletionError != nil },
         set: { if !$0 { deletionError = nil } }
@@ -248,6 +296,61 @@ private struct MappedPlaceGroup: Identifiable {
   }
 }
 
+private struct SourcesList: View {
+  let sources: [SavedSource]
+
+  var body: some View {
+    if sources.isEmpty {
+      ContentUnavailableView(
+        "No Saved Sources",
+        systemImage: "rectangle.stack",
+        description: Text("Original posts will appear here after they are saved.")
+      )
+    } else {
+      List(sources) { source in
+        Link(destination: source.sourceURL) {
+          VStack(alignment: .leading, spacing: 6) {
+            HStack {
+              Text(source.title)
+                .font(.headline)
+                .foregroundStyle(.primary)
+              Spacer()
+              if source.needsReview {
+                Label("Needs Review", systemImage: "exclamationmark.circle")
+                  .font(.caption.weight(.semibold))
+                  .foregroundStyle(.orange)
+              }
+            }
+
+            if let caption = source.caption, !caption.isEmpty {
+              Text(caption)
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+                .lineLimit(3)
+            } else if let summary = source.summary, !summary.isEmpty {
+              Text(summary)
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+                .lineLimit(3)
+            }
+
+            HStack(spacing: 12) {
+              Label("\(source.thingCount) things", systemImage: "tray.full")
+              if source.mediaPreserved {
+                Label("Media preserved", systemImage: "checkmark.circle")
+              }
+            }
+            .font(.caption)
+            .foregroundStyle(.secondary)
+          }
+          .padding(.vertical, 5)
+        }
+      }
+      .listStyle(.plain)
+    }
+  }
+}
+
 private struct PlacesMap: View {
   let places: [SavedPlace]
   let isRefreshing: Bool
@@ -266,15 +369,15 @@ private struct PlacesMap: View {
   @FocusState private var searchIsFocused: Bool
 
   private var groups: [MappedPlaceGroup] {
-    MappedPlaceGroup.make(from: places)
+    MappedPlaceGroup.make(from: places.filter(\.isCurrentlyRelevant))
   }
 
   var body: some View {
     if groups.isEmpty {
       ContentUnavailableView(
-        "No Mapped Places",
+        "Nothing Nearby Yet",
         systemImage: "mappin.slash",
-        description: Text("Places will appear here after their locations are resolved.")
+        description: Text("Current things appear here after their locations are resolved.")
       )
     } else {
       Map(position: $cameraPosition, selection: $selectedGroupID) {
@@ -532,6 +635,17 @@ private struct PlaceDetailSheet: View {
           }
         }
 
+        HStack(spacing: 10) {
+          Text(group.primary.displayType)
+            .font(.caption.weight(.semibold))
+            .foregroundStyle(.secondary)
+          if let availability = group.primary.availabilityText {
+            Label(availability, systemImage: "calendar")
+              .font(.caption)
+              .foregroundStyle(.secondary)
+          }
+        }
+
         VStack(alignment: .leading, spacing: 12) {
           ForEach(group.places) { place in
             SourceDetailCard(
@@ -541,11 +655,11 @@ private struct PlaceDetailSheet: View {
           }
         }
 
-        if !group.primary.whyItsCool.isEmpty {
+        if !group.primary.detailedDescription.isEmpty {
           VStack(alignment: .leading, spacing: 6) {
-            Text("Why It’s Cool")
+            Text("About")
               .font(.headline)
-            Text(group.primary.whyItsCool)
+            Text(group.primary.detailedDescription)
               .font(.subheadline)
           }
         }
@@ -653,8 +767,8 @@ private struct SourceDetailCard: View {
       .buttonStyle(.plain)
       .foregroundStyle(.tint)
 
-      if showsDetails, !place.whyItsCool.isEmpty {
-        Text(place.whyItsCool)
+      if showsDetails, !place.detailedDescription.isEmpty {
+        Text(place.detailedDescription)
           .font(.subheadline)
       }
 
@@ -704,14 +818,25 @@ private struct PlaceRow: View {
       Text(place.name)
         .font(.headline)
 
+      HStack(spacing: 10) {
+        Text(place.displayType)
+          .font(.caption.weight(.semibold))
+          .foregroundStyle(.secondary)
+        if let availability = place.availabilityText {
+          Label(availability, systemImage: "calendar")
+            .font(.caption)
+            .foregroundStyle(.secondary)
+        }
+      }
+
       if let address = place.formattedAddress, !address.isEmpty {
         Label(address, systemImage: "mappin.and.ellipse")
           .font(.subheadline)
           .foregroundStyle(.secondary)
       }
 
-      if !place.whyItsCool.isEmpty {
-        Text(place.whyItsCool)
+      if !place.detailedDescription.isEmpty {
+        Text(place.detailedDescription)
           .font(.subheadline)
           .lineLimit(3)
       }

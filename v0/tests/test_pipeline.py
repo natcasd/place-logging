@@ -41,8 +41,11 @@ class YouTubeExtractionTests(unittest.TestCase):
         )
 
         self.assertEqual(places[0]["extracted_name"], "Mission Sandwich Social")
-        properties = pipeline.EXTRACTION_RESPONSE_SCHEMA["properties"]["places"]["items"]["properties"]
+        properties = pipeline.EXTRACTION_RESPONSE_SCHEMA["properties"]["things"]["items"]["properties"]
         self.assertIn("timestamp_seconds", properties)
+        self.assertIn("type_name", properties)
+        self.assertIn("description", properties)
+        self.assertIn("location_query", properties)
         call = mock_client.return_value.interactions.create.call_args.kwargs
         self.assertEqual(
             call["input"][1],
@@ -407,13 +410,16 @@ class InstagramExtractionTests(unittest.TestCase):
 
 class ProcessIngestTests(unittest.TestCase):
     @patch("pipeline.resolve")
-    @patch("pipeline.extract_youtube_url")
+    @patch("pipeline.extract_youtube_bundle")
     def test_youtube_bypasses_downloader(
         self,
         mock_extract: MagicMock,
         mock_resolve: MagicMock,
     ) -> None:
-        mock_extract.return_value = [{"extracted_name": "Test Place"}]
+        mock_extract.return_value = {
+            "source_content": {"summary": "A test post."},
+            "things": [{"extracted_name": "Test Place"}],
+        }
         mock_resolve.return_value = {"status": "unresolved", "reason": "test"}
 
         with patch("pipeline.fetch") as mock_fetch:
@@ -425,6 +431,7 @@ class ProcessIngestTests(unittest.TestCase):
 
         mock_fetch.assert_not_called()
         self.assertEqual(result["metadata"]["source_platform"], "youtube")
+        self.assertEqual(result["metadata"]["source_content"]["summary"], "A test post.")
         self.assertEqual(
             result["places_extracted"][0]["extracted_name"],
             "Test Place",
@@ -438,8 +445,35 @@ class ProcessIngestTests(unittest.TestCase):
                 Path("/unused"),
             )
 
+    def test_non_location_thing_skips_google_places(self) -> None:
+        thing = {
+            "extracted_name": "The Creative Act",
+            "type_name": "Book",
+            "description": "A book to read.",
+            "location_query": "",
+        }
+
+        with patch("pipeline.requests.post") as mock_post:
+            result = pipeline.resolve(thing)
+
+        self.assertEqual(result["status"], "not_applicable")
+        mock_post.assert_not_called()
+
+    def test_new_thing_without_location_query_skips_google_places(self) -> None:
+        thing = {
+            "extracted_name": "A Song",
+            "type_name": "Song",
+            "description": "A song from the Reel.",
+        }
+
+        with patch("pipeline.requests.post") as mock_post:
+            result = pipeline.resolve(thing)
+
+        self.assertEqual(result["status"], "not_applicable")
+        mock_post.assert_not_called()
+
     @patch("pipeline.resolve")
-    @patch("pipeline.extract")
+    @patch("pipeline.extract_bundle")
     @patch("pipeline.fetch")
     def test_instagram_cleans_up_downloaded_files(
         self,
@@ -459,7 +493,10 @@ class ProcessIngestTests(unittest.TestCase):
                 {"webpage_url": "instagram"},
                 cleanup_dir,
             )
-            mock_extract.return_value = [{"extracted_name": "Test Place"}]
+            mock_extract.return_value = {
+                "source_content": {"summary": "A test post."},
+                "things": [{"extracted_name": "Test Place"}],
+            }
             mock_resolve.return_value = {"status": "unresolved", "reason": "test"}
 
             pipeline.process_ingest(
@@ -471,6 +508,50 @@ class ProcessIngestTests(unittest.TestCase):
             self.assertFalse(video.exists())
             self.assertFalse(cleanup_dir.exists())
             self.assertTrue(Path(temp_dir).exists())
+            source_dirs = list((Path(temp_dir) / "sources").iterdir())
+            self.assertEqual(len(source_dirs), 1)
+            self.assertTrue((source_dirs[0] / "001-post.mp4").exists())
+
+    @patch("pipeline.resolve")
+    @patch("pipeline.archive_media", side_effect=OSError("disk full"))
+    @patch("pipeline.extract_bundle")
+    @patch("pipeline.fetch")
+    def test_archive_failure_still_preserves_source_record_payload(
+        self,
+        mock_fetch: MagicMock,
+        mock_extract: MagicMock,
+        _mock_archive: MagicMock,
+        mock_resolve: MagicMock,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            cleanup_dir = Path(temp_dir) / "instagram-ingest"
+            cleanup_dir.mkdir()
+            video = cleanup_dir / "post.mp4"
+            video.touch()
+            mock_fetch.return_value = pipeline.InstagramFetch(
+                [video],
+                {"source_platform": "instagram"},
+                cleanup_dir,
+            )
+            mock_extract.return_value = {
+                "source_content": {"summary": "Preserved analysis"},
+                "things": [{"extracted_name": "Test Thing"}],
+            }
+            mock_resolve.return_value = {"status": "not_applicable"}
+
+            with self.assertLogs("pipeline", level="ERROR"):
+                result = pipeline.process_ingest(
+                    "https://www.instagram.com/reel/abc/",
+                    None,
+                    Path(temp_dir),
+                )
+
+            self.assertFalse(result["metadata"]["media_preserved"])
+            self.assertEqual(
+                result["metadata"]["source_content"]["summary"],
+                "Preserved analysis",
+            )
+            self.assertFalse(cleanup_dir.exists())
 
 
 if __name__ == "__main__":

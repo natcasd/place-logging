@@ -1,10 +1,11 @@
 """
-Ingest pipeline: source URL → platform ingest → Gemini extract → Places resolve.
+Ingest pipeline: source URL → platform ingest → Gemini extract → optional location resolve.
 
 Stays synchronous for simplicity; bot.py offloads to a thread via asyncio.to_thread.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import mimetypes
@@ -13,6 +14,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import uuid
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -301,22 +303,67 @@ def fetch(source_url: str, workdir: Path) -> InstagramFetch:
         raise
 
 
+# ---------- Source archive ----------
+
+
+def archive_media(
+    media_paths: list[Path],
+    workdir: Path,
+    source_url: str,
+) -> list[dict[str, Any]]:
+    """Persist source media outside the temporary extractor directory."""
+    archive_root = workdir / "sources"
+    archive_root.mkdir(parents=True, exist_ok=True)
+    source_key = hashlib.sha256(source_url.encode("utf-8")).hexdigest()[:16]
+    destination = archive_root / f"{source_key}-{uuid.uuid4().hex[:8]}"
+    destination.mkdir()
+
+    manifest = []
+    try:
+        for index, path in enumerate(media_paths, start=1):
+            archived = destination / f"{index:03d}-{path.name}"
+            shutil.copy2(path, archived)
+            manifest.append(
+                {
+                    "path": str(archived),
+                    "filename": archived.name,
+                    "mime_type": mimetypes.guess_type(archived.name)[0]
+                    or "application/octet-stream",
+                    "bytes": archived.stat().st_size,
+                }
+            )
+    except Exception:
+        shutil.rmtree(destination, ignore_errors=True)
+        raise
+    return manifest
+
+
 # ---------- Extractor ----------
 
-EXTRACTOR_PROMPT = """Analyze this social post and extract every physical place (restaurant, bar, cafe, shop, hotel, landmark, attraction, market, etc.) that is discussed, shown, or recommended in any supplied image, video, or caption.
+EXTRACTOR_PROMPT = """Analyze this social post and extract every distinct thing that is discussed, shown, or recommended and that someone may want to save for later. Things include physical places, temporary events, books, movies, articles, songs, products, routes, and other useful recommendations.
 
 When multiple media items are supplied, they are the slides of one carousel in display order. Analyze all of them together. The source metadata's caption_or_description may contain the post caption or Instagram's combined carousel captions; treat that text as evidence even when an exact caption-to-slide mapping is unavailable.
 
-For each place, return an object with:
-- extracted_name: name of the place as mentioned or shown in the post
+Also preserve a source_content object with:
+- summary: a compact but complete summary of the post
+- transcript: all meaningful intelligible speech, in order; use an empty string when there is none
+- on_screen_text: all meaningful visible text, in order; use an empty string when there is none
+
+Return one object per individual thing. Do not combine a list of restaurants, books, products, or events into one record.
+
+For each thing, return an object with:
+- extracted_name: concise name of the thing as mentioned or shown
+- type_name: a short singular noun category, such as Restaurant, Coffee Shop, Park, Hiking Trail, Museum, Store, Bike Route, Art Gallery, Concert, Food Pop-up, Exhibit, Book, Movie, Article, Song, or Skincare Product. Reuse an existing type supplied below whenever it reasonably fits. If none fits, create a concise new type. Use Unknown only when the kind of thing is genuinely unclear.
+- description: a detailed, source-grounded explanation containing the useful information conveyed about this thing. Do not add facts that are not in the source.
+- location_query: only when the thing has a physical place, area, anchor, or venue that Google Places could resolve. Use the venue for an event or exhibit. Include the name plus directly evidenced neighborhood/city/region hints. Omit this field for non-location things and when there is not enough location evidence.
 - location_hints: object with any of { neighborhood, city, region_or_country, on_screen_text, visual_landmarks } — ONLY include fields where you have direct evidence from the supplied media or caption. Omit a field rather than guess.
-- dishes: array of specific dishes, drinks, or items mentioned (empty array if none)
-- why_its_cool: one-sentence summary of why the creator recommends it (empty string if no explicit recommendation)
-- tags: array of relevant tags (cuisine, vibe, price level, meal type, etc.)
+- starts_at: ISO 8601 date or datetime when a temporary thing begins, only when directly supported by the source
+- ends_at: ISO 8601 date or datetime when a temporary thing ends, only when directly supported by the source
+- recurrence_text: the source's human-readable recurring schedule when relevant, such as "Sundays through October"
 - extraction_confidence: "high" | "medium" | "low"
 - timestamp_seconds: for a Reel, YouTube video, or video carousel slide, the
   non-negative number of seconds from the start of that video to the beginning
-  of the place's main section. Omit this field when the place cannot be tied to
+  of the thing's main section. Omit this field when the thing cannot be tied to
   a specific moment. Do not invent a timestamp from caption-only evidence.
 - slide_index: for an Instagram carousel, the 1-based slide number that most
   clearly identifies or discusses the place. The first supplied media item is
@@ -326,20 +373,32 @@ For each place, return an object with:
   timestamp is relative to the start of that slide's video.
 
 Return ONLY valid JSON in this shape:
-{ "places": [ ... ] }
+{ "source_content": { "summary": "...", "transcript": "...", "on_screen_text": "..." }, "things": [ ... ] }
 
-If NO physical place is discussed in the post, return { "places": [] }.
+If NO distinct save-worthy thing is identifiable, still return source_content and use an empty things array. The source post will still be preserved.
 """
 
 EXTRACTION_RESPONSE_SCHEMA = {
     "type": "object",
     "properties": {
-        "places": {
+        "source_content": {
+            "type": "object",
+            "properties": {
+                "summary": {"type": "string"},
+                "transcript": {"type": "string"},
+                "on_screen_text": {"type": "string"},
+            },
+            "required": ["summary", "transcript", "on_screen_text"],
+        },
+        "things": {
             "type": "array",
             "items": {
                 "type": "object",
                 "properties": {
                     "extracted_name": {"type": "string"},
+                    "type_name": {"type": "string"},
+                    "description": {"type": "string"},
+                    "location_query": {"type": "string"},
                     "location_hints": {
                         "type": "object",
                         "properties": {
@@ -350,9 +409,9 @@ EXTRACTION_RESPONSE_SCHEMA = {
                             "visual_landmarks": {"type": "string"},
                         },
                     },
-                    "dishes": {"type": "array", "items": {"type": "string"}},
-                    "why_its_cool": {"type": "string"},
-                    "tags": {"type": "array", "items": {"type": "string"}},
+                    "starts_at": {"type": "string"},
+                    "ends_at": {"type": "string"},
+                    "recurrence_text": {"type": "string"},
                     "extraction_confidence": {
                         "type": "string",
                         "enum": ["high", "medium", "low"],
@@ -366,15 +425,14 @@ EXTRACTION_RESPONSE_SCHEMA = {
                 },
                 "required": [
                     "extracted_name",
-                    "dishes",
-                    "why_its_cool",
-                    "tags",
+                    "type_name",
+                    "description",
                     "extraction_confidence",
                 ],
             },
         }
     },
-    "required": ["places"],
+    "required": ["source_content", "things"],
 }
 
 # Inline media is base64-encoded in the JSON request, which adds roughly 33%
@@ -387,6 +445,7 @@ MAX_INLINE_MEDIA_BYTES = MAX_INLINE_VIDEO_BYTES
 def _extraction_prompt(
     metadata: dict[str, Any],
     user_prompt: str | None = None,
+    existing_types: list[str] | None = None,
 ) -> str:
     prompt = (
         EXTRACTOR_PROMPT
@@ -400,11 +459,16 @@ def _extraction_prompt(
             "what you'd otherwise infer from the content):\n"
             + user_prompt
         )
+    if existing_types:
+        prompt += (
+            "\n\nExisting type names (reuse one when it reasonably fits):\n"
+            + json.dumps(existing_types, ensure_ascii=False)
+        )
     return prompt
 
 
 def _normalize_media_references(
-    places: list[dict[str, Any]],
+    things: list[dict[str, Any]],
     metadata: dict[str, Any],
 ) -> list[dict[str, Any]]:
     """Drop impossible timestamps and slide indexes before persistence."""
@@ -412,42 +476,43 @@ def _normalize_media_references(
     is_instagram = metadata.get("source_platform") == "instagram"
     is_carousel = is_instagram and len(media_types) > 1
 
-    for place in places:
-        timestamp = place.get("timestamp_seconds")
+    for thing in things:
+        timestamp = thing.get("timestamp_seconds")
         if (
             isinstance(timestamp, bool)
             or not isinstance(timestamp, (int, float))
             or timestamp < 0
         ):
-            place.pop("timestamp_seconds", None)
+            thing.pop("timestamp_seconds", None)
 
-        slide_index = place.get("slide_index")
+        slide_index = thing.get("slide_index")
         if (
             not is_carousel
             or isinstance(slide_index, bool)
             or not isinstance(slide_index, int)
             or not 1 <= slide_index <= len(media_types)
         ):
-            place.pop("slide_index", None)
+            thing.pop("slide_index", None)
             slide_index = None
 
-        if not is_instagram or "timestamp_seconds" not in place:
+        if not is_instagram or "timestamp_seconds" not in thing:
             continue
         if is_carousel:
             if slide_index is None or media_types[slide_index - 1] != "video":
-                place.pop("timestamp_seconds", None)
+                thing.pop("timestamp_seconds", None)
         elif media_types and media_types[0] != "video":
-            place.pop("timestamp_seconds", None)
+            thing.pop("timestamp_seconds", None)
 
-    return places
+    return things
 
 
-def extract(
+def extract_bundle(
     media_paths: Path | list[Path],
     metadata: dict[str, Any],
     user_prompt: str | None = None,
-) -> list[dict[str, Any]]:
-    """Send downloaded Instagram media inline to Gemini and return its places."""
+    existing_types: list[str] | None = None,
+) -> dict[str, Any]:
+    """Analyze downloaded Instagram media and return source content plus things."""
     client = _client()
     paths = [media_paths] if isinstance(media_paths, Path) else media_paths
     media_size = sum(path.stat().st_size for path in paths)
@@ -466,7 +531,7 @@ def extract(
         for path in paths
     ]
 
-    prompt = _extraction_prompt(metadata, user_prompt)
+    prompt = _extraction_prompt(metadata, user_prompt, existing_types)
 
     model = os.environ.get("GEMINI_MODEL", "gemini-3.1-flash-lite")
     response = client.models.generate_content(
@@ -479,14 +544,34 @@ def extract(
     )
 
     parsed = json.loads(response.text)
-    return _normalize_media_references(parsed.get("places", []), metadata)
+    extracted = parsed.get("things", parsed.get("places", []))
+    return {
+        "source_content": parsed.get("source_content") or {},
+        "things": _normalize_media_references(extracted, metadata),
+    }
 
 
-def extract_youtube_url(
+def extract(
+    media_paths: Path | list[Path],
+    metadata: dict[str, Any],
+    user_prompt: str | None = None,
+    existing_types: list[str] | None = None,
+) -> list[dict[str, Any]]:
+    """Compatibility wrapper returning only individual saved things."""
+    return extract_bundle(
+        media_paths,
+        metadata,
+        user_prompt,
+        existing_types,
+    )["things"]
+
+
+def extract_youtube_bundle(
     source_url: str,
     user_prompt: str | None = None,
-) -> list[dict[str, Any]]:
-    """Have Gemini analyze a public YouTube URL without downloading it."""
+    existing_types: list[str] | None = None,
+) -> dict[str, Any]:
+    """Analyze a public YouTube URL and return source content plus things."""
     metadata = {"source_platform": "youtube", "webpage_url": source_url}
     model = os.environ.get(
         "GEMINI_YOUTUBE_MODEL",
@@ -495,14 +580,30 @@ def extract_youtube_url(
     response = _client().interactions.create(
         model=model,
         input=[
-            {"type": "text", "text": _extraction_prompt(metadata, user_prompt)},
+            {
+                "type": "text",
+                "text": _extraction_prompt(metadata, user_prompt, existing_types),
+            },
             {"type": "video", "uri": source_url},
         ],
         response_format=EXTRACTION_RESPONSE_SCHEMA,
         store=False,
     )
     parsed = json.loads(response.output_text)
-    return _normalize_media_references(parsed.get("places", []), metadata)
+    extracted = parsed.get("things", parsed.get("places", []))
+    return {
+        "source_content": parsed.get("source_content") or {},
+        "things": _normalize_media_references(extracted, metadata),
+    }
+
+
+def extract_youtube_url(
+    source_url: str,
+    user_prompt: str | None = None,
+    existing_types: list[str] | None = None,
+) -> list[dict[str, Any]]:
+    """Compatibility wrapper returning only individual saved things."""
+    return extract_youtube_bundle(source_url, user_prompt, existing_types)["things"]
 
 
 # ---------- Resolver ----------
@@ -548,8 +649,9 @@ Google Places API returned these candidates:
 Pick the best match by index. Consider:
 - Name similarity (including bilingual/multilingual names — e.g. English name alongside Chinese characters still counts as a match)
 - Neighborhood / city / region match vs location_hints
-- Type alignment (e.g., an extracted "bakery" tag matches candidate types including "bakery")
-- Dishes context (if dishes suggest a specific cuisine, a matching candidate is more likely)
+- Type alignment between type_name and the candidate's Google place types
+- Details in the source-grounded description that distinguish the venue
+- Legacy tags or dishes when they are available on an older saved place
 
 Return JSON of this shape:
 {{ "pick": <int|null>, "confidence": "high"|"medium"|"low", "reasoning": "<one sentence>" }}
@@ -585,6 +687,12 @@ def resolve(place: dict[str, Any]) -> dict[str, Any]:
 
     For multi-candidate results, runs an LLM tiebreaker to pick the best match.
     """
+    explicit_location_query = place.get("location_query")
+    if "location_query" in place and not str(explicit_location_query or "").strip():
+        return {"status": "not_applicable", "reason": "no physical location"}
+    if "type_name" in place and "location_query" not in place:
+        return {"status": "not_applicable", "reason": "no resolvable location"}
+
     name = place.get("extracted_name") or ""
     hints = place.get("location_hints") or {}
     parts = [name]
@@ -592,7 +700,7 @@ def resolve(place: dict[str, Any]) -> dict[str, Any]:
         v = hints.get(key)
         if v:
             parts.append(v)
-    query = " ".join(p for p in parts if p).strip()
+    query = str(explicit_location_query or " ".join(p for p in parts if p)).strip()
 
     if not query:
         return {"status": "unresolved", "reason": "no query text"}
@@ -666,6 +774,7 @@ def process_ingest(
     source_url: str | None,
     user_prompt: str | None,
     workdir: Path,
+    existing_types: list[str] | None = None,
 ) -> dict[str, Any]:
     """Full pipeline: returns a dict with source, metadata, extracted, resolved."""
     if not source_url:
@@ -682,24 +791,48 @@ def process_ingest(
 
     if platform == "youtube":
         metadata = {"source_platform": "youtube", "webpage_url": source_url}
-        places = extract_youtube_url(source_url, user_prompt)
+        bundle = extract_youtube_bundle(source_url, user_prompt, existing_types)
+        things = bundle["things"]
+        metadata["source_content"] = bundle["source_content"]
     else:
         fetched = fetch(source_url, workdir)
         metadata = fetched.metadata
         try:
-            places = extract(fetched.media_paths, metadata, user_prompt)
+            bundle = extract_bundle(
+                fetched.media_paths,
+                metadata,
+                user_prompt,
+                existing_types,
+            )
+            things = bundle["things"]
+            metadata["source_content"] = bundle["source_content"]
+            try:
+                metadata["archived_media"] = archive_media(
+                    fetched.media_paths,
+                    workdir,
+                    source_url,
+                )
+                metadata["media_preserved"] = True
+            except Exception:
+                # The URL, caption, source analysis, and extracted things are
+                # still worth preserving if archival storage is unavailable.
+                metadata["media_preserved"] = False
+                log.exception("source media archive failed (non-fatal)")
         finally:
             try:
                 shutil.rmtree(fetched.cleanup_dir)
             except Exception:
                 log.exception("cleanup failed (non-fatal)")
 
-    resolved = [{"extracted": p, **resolve(p)} for p in places]
+    resolved = [{"extracted": thing, **resolve(thing)} for thing in things]
 
     return {
         "source_url": source_url,
         "user_prompt": user_prompt,
         "metadata": metadata,
-        "places_extracted": places,
+        "things_extracted": things,
+        "resolved_things": resolved,
+        # Compatibility aliases for the Telegram bot and released iOS clients.
+        "places_extracted": things,
         "resolved_places": resolved,
     }

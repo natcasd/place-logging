@@ -1,6 +1,19 @@
-# v0 — shared place-ingest API and Telegram bot
+# v0 — shared recommendation-ingest API and Telegram bot
 
-Minimal working v0: clients → shared ingest service → Extractor → Resolver → SQLite.
+The service preserves each source post, extracts individual saved things, and
+optionally resolves physical locations through Google Places.
+
+## Saved-things model
+
+- Every ingest creates a source record, even when extraction returns no things.
+- Instagram media is archived under `WORKDIR/sources` on the mounted Fly volume.
+- Each extracted thing has an open-ended type, detailed description, optional
+  availability dates, and optional Google location.
+- Existing place rows migrate in place with `Place` as their default type. Before
+  the first additive migration, the service creates a timestamped SQLite backup
+  beside the database.
+- `/api/v1/things` and `/api/v1/sources` power new clients. `/api/v1/places`
+  remains available for released clients.
 
 ## Layout
 
@@ -119,13 +132,14 @@ python backfill_media_references.py \
   --apply
 ```
 
-## Known gaps (intentional for v0)
+## Known gaps
 
-- No viewer yet — disambiguation of `needs_review` items currently isn't possible through a UI.
+- Disambiguation of `needs_review` location candidates is not yet available in the UI.
 - TikTok is temporarily unsupported while its upstream downloader support is unstable.
 - No retry / error recovery for Instagram rate limits.
 - URL-only ingest (pure-text + article/tweet URLs are the v0.5 expansion in doc 09).
-- No nearby-search, filters, or map yet.
+- Routes use resolvable anchors such as a trailhead or venue; custom route
+  geometry is intentionally not synthesized from a post.
 
 ## Delivery
 
