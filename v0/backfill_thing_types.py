@@ -10,7 +10,6 @@ import argparse
 import json
 import os
 import sqlite3
-import time
 from collections import Counter
 from datetime import UTC, datetime
 from pathlib import Path
@@ -18,7 +17,12 @@ from typing import Any
 
 from google.genai import types
 
-from pipeline import TYPE_NAME_GUIDANCE, _client, specific_type_names
+from pipeline import (
+    TYPE_NAME_GUIDANCE,
+    _call_gemini_with_retry,
+    _client,
+    specific_type_names,
+)
 
 
 PLAN_VERSION = 1
@@ -138,13 +142,16 @@ Existing specific categories:
 Saved source groups and records:
 {json.dumps(groups, ensure_ascii=False)}
 """
-    response = _client().models.generate_content(
-        model=os.environ.get("GEMINI_MODEL", "gemini-3.1-flash-lite"),
-        contents=[prompt],
-        config=types.GenerateContentConfig(
-            response_mime_type="application/json",
-            response_schema=CLASSIFICATION_SCHEMA,
+    response = _call_gemini_with_retry(
+        lambda: _client().models.generate_content(
+            model=os.environ.get("GEMINI_MODEL", "gemini-3.1-flash-lite"),
+            contents=[prompt],
+            config=types.GenerateContentConfig(
+                response_mime_type="application/json",
+                response_schema=CLASSIFICATION_SCHEMA,
+            ),
         ),
+        "type backfill",
     )
     parsed = json.loads(response.text)
     classifications = parsed.get("classifications") or []
@@ -168,21 +175,6 @@ Saved source groups and records:
         missing = sorted(expected_ids - set(by_id))
         raise ValueError(f"Gemini omitted thing ids: {missing}")
     return [by_id[thing_id] for thing_id in sorted(by_id)]
-
-
-def _classify_with_retries(
-    groups: list[dict[str, Any]],
-    existing_types: list[str],
-    attempts: int = 3,
-) -> list[dict[str, Any]]:
-    for attempt in range(1, attempts + 1):
-        try:
-            return _classify_batch(groups, existing_types)
-        except Exception:
-            if attempt == attempts:
-                raise
-            time.sleep(2 ** attempt)
-    raise AssertionError("unreachable")
 
 
 def _write_plan(plan_path: Path, plan: dict[str, Any]) -> None:
@@ -252,7 +244,7 @@ def create_plan(
             ids = [thing["thing_id"] for group in batch for thing in group["things"]]
             print(f"[{index}/{len(batches)}] classifying {len(ids)} things", flush=True)
             try:
-                updates = _classify_with_retries(batch, existing_types)
+                updates = _classify_batch(batch, existing_types)
                 result = {"method": "gemini_classification", "updates": updates}
             except Exception as exc:
                 result = {

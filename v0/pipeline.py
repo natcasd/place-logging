@@ -14,7 +14,9 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 import uuid
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -25,6 +27,10 @@ from google import genai
 from google.genai import types
 
 log = logging.getLogger(__name__)
+
+GEMINI_MAX_ATTEMPTS = 3
+GEMINI_BACKOFF_SECONDS = 3.0
+TRANSIENT_GEMINI_STATUS_CODES = {429, 500, 502, 503, 504}
 
 
 # ---------- Gemini client (lazy) ----------
@@ -37,6 +43,48 @@ def _client() -> genai.Client:
     if _CLIENT is None:
         _CLIENT = genai.Client(api_key=os.environ["GEMINI_API_KEY"])
     return _CLIENT
+
+
+def _gemini_status_code(exc: Exception) -> int | None:
+    for value in (
+        getattr(exc, "code", None),
+        getattr(exc, "status_code", None),
+        getattr(getattr(exc, "response", None), "status_code", None),
+    ):
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            continue
+    return None
+
+
+def _call_gemini_with_retry(
+    operation: Callable[[], Any],
+    operation_name: str,
+) -> Any:
+    """Retry only temporary Gemini capacity/service failures with backoff."""
+    for attempt in range(1, GEMINI_MAX_ATTEMPTS + 1):
+        try:
+            return operation()
+        except Exception as exc:
+            status_code = _gemini_status_code(exc)
+            if (
+                status_code not in TRANSIENT_GEMINI_STATUS_CODES
+                or attempt == GEMINI_MAX_ATTEMPTS
+            ):
+                raise
+            delay = GEMINI_BACKOFF_SECONDS * (2 ** (attempt - 1))
+            log.warning(
+                "Gemini %s temporarily unavailable status=%s attempt=%d/%d; "
+                "retrying in %.1fs",
+                operation_name,
+                status_code,
+                attempt,
+                GEMINI_MAX_ATTEMPTS,
+                delay,
+            )
+            time.sleep(delay)
+    raise AssertionError("unreachable")
 
 
 # ---------- Fetcher ----------
@@ -554,13 +602,16 @@ def extract_bundle(
     prompt = _extraction_prompt(metadata, user_prompt, existing_types)
 
     model = os.environ.get("GEMINI_MODEL", "gemini-3.1-flash-lite")
-    response = client.models.generate_content(
-        model=model,
-        contents=[*media_parts, prompt],
-        config=types.GenerateContentConfig(
-            response_mime_type="application/json",
-            response_schema=EXTRACTION_RESPONSE_SCHEMA,
+    response = _call_gemini_with_retry(
+        lambda: client.models.generate_content(
+            model=model,
+            contents=[*media_parts, prompt],
+            config=types.GenerateContentConfig(
+                response_mime_type="application/json",
+                response_schema=EXTRACTION_RESPONSE_SCHEMA,
+            ),
         ),
+        "Instagram extraction",
     )
 
     parsed = json.loads(response.text)
@@ -597,17 +648,20 @@ def extract_youtube_bundle(
         "GEMINI_YOUTUBE_MODEL",
         os.environ.get("GEMINI_MODEL", "gemini-3.1-flash-lite"),
     )
-    response = _client().interactions.create(
-        model=model,
-        input=[
-            {
-                "type": "text",
-                "text": _extraction_prompt(metadata, user_prompt, existing_types),
-            },
-            {"type": "video", "uri": source_url},
-        ],
-        response_format=EXTRACTION_RESPONSE_SCHEMA,
-        store=False,
+    response = _call_gemini_with_retry(
+        lambda: _client().interactions.create(
+            model=model,
+            input=[
+                {
+                    "type": "text",
+                    "text": _extraction_prompt(metadata, user_prompt, existing_types),
+                },
+                {"type": "video", "uri": source_url},
+            ],
+            response_format=EXTRACTION_RESPONSE_SCHEMA,
+            store=False,
+        ),
+        "YouTube extraction",
     )
     parsed = json.loads(response.output_text)
     extracted = parsed.get("things", parsed.get("places", []))
@@ -687,10 +741,13 @@ Return JSON of this shape:
         place.get("extracted_name"),
     )
     model = os.environ.get("GEMINI_MODEL", "gemini-3.1-flash-lite")
-    resp = _client().models.generate_content(
-        model=model,
-        contents=[prompt],
-        config=types.GenerateContentConfig(response_mime_type="application/json"),
+    resp = _call_gemini_with_retry(
+        lambda: _client().models.generate_content(
+            model=model,
+            contents=[prompt],
+            config=types.GenerateContentConfig(response_mime_type="application/json"),
+        ),
+        "place tiebreaker",
     )
     decision = json.loads(resp.text)
     log.info(
@@ -790,6 +847,23 @@ def resolve(place: dict[str, Any]) -> dict[str, Any]:
 
 # ---------- Orchestrator ----------
 
+
+def _preserve_extraction_failure(
+    metadata: dict[str, Any],
+    exc: Exception,
+) -> None:
+    metadata["source_content"] = {
+        "summary": "",
+        "transcript": "",
+        "on_screen_text": "",
+    }
+    metadata["extraction_status"] = "failed"
+    metadata["extraction_error"] = {
+        "type": type(exc).__name__,
+        "message": str(exc)[:1000],
+    }
+
+
 def process_ingest(
     source_url: str | None,
     user_prompt: str | None,
@@ -811,21 +885,20 @@ def process_ingest(
 
     if platform == "youtube":
         metadata = {"source_platform": "youtube", "webpage_url": source_url}
-        bundle = extract_youtube_bundle(source_url, user_prompt, existing_types)
-        things = bundle["things"]
-        metadata["source_content"] = bundle["source_content"]
+        try:
+            bundle = extract_youtube_bundle(source_url, user_prompt, existing_types)
+        except Exception as exc:
+            log.exception("YouTube extraction failed after retries; preserving source")
+            _preserve_extraction_failure(metadata, exc)
+            things = []
+        else:
+            things = bundle["things"]
+            metadata["source_content"] = bundle["source_content"]
+            metadata["extraction_status"] = "complete"
     else:
         fetched = fetch(source_url, workdir)
         metadata = fetched.metadata
         try:
-            bundle = extract_bundle(
-                fetched.media_paths,
-                metadata,
-                user_prompt,
-                existing_types,
-            )
-            things = bundle["things"]
-            metadata["source_content"] = bundle["source_content"]
             try:
                 metadata["archived_media"] = archive_media(
                     fetched.media_paths,
@@ -838,6 +911,21 @@ def process_ingest(
                 # still worth preserving if archival storage is unavailable.
                 metadata["media_preserved"] = False
                 log.exception("source media archive failed (non-fatal)")
+            try:
+                bundle = extract_bundle(
+                    fetched.media_paths,
+                    metadata,
+                    user_prompt,
+                    existing_types,
+                )
+            except Exception as exc:
+                log.exception("Instagram extraction failed after retries; preserving source")
+                _preserve_extraction_failure(metadata, exc)
+                things = []
+            else:
+                things = bundle["things"]
+                metadata["source_content"] = bundle["source_content"]
+                metadata["extraction_status"] = "complete"
         finally:
             try:
                 shutil.rmtree(fetched.cleanup_dir)

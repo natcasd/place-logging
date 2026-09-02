@@ -14,6 +14,9 @@ optionally resolves physical locations through Google Places.
   beside the database.
 - New extraction never emits the generic `Place` category. It saves only the
   post's principal recommendations and chooses the most specific supported type.
+- Temporary Gemini capacity and rate-limit errors receive bounded exponential
+  retries. If extraction still fails, the source context and downloaded Instagram
+  media are saved with zero things so the source remains visible for later review.
 - `/api/v1/things` and `/api/v1/sources` power new clients. `/api/v1/places`
   remains available for released clients.
 
@@ -157,7 +160,8 @@ python backfill_thing_types.py \
 
 - Disambiguation of `needs_review` location candidates is not yet available in the UI.
 - TikTok is temporarily unsupported while its upstream downloader support is unstable.
-- No retry / error recovery for Instagram rate limits.
+- Instagram download/rate-limit failures that happen before media archival are
+  not yet recoverable automatically.
 - URL-only ingest (pure-text + article/tweet URLs are the v0.5 expansion in doc 09).
 - Routes use resolvable anchors such as a trailhead or venue; custom route
   geometry is intentionally not synthesized from a post.

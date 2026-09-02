@@ -37,6 +37,11 @@ def _format_timestamp(value: object) -> str | None:
 def _format_result(result: dict) -> str:
     resolved = result.get("resolved_things", result.get("resolved_places", []))
     if not resolved:
+        if (result.get("metadata") or {}).get("extraction_status") == "failed":
+            return (
+                "⚠️ Source saved for review, but extraction did not complete. "
+                "It can be retried later."
+            )
         return "⚠️ Source saved, but no individual things were extracted."
 
     lines = []
