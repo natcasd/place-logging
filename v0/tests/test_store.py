@@ -124,8 +124,31 @@ class StoreTests(unittest.TestCase):
                 ).fetchone()
             finally:
                 con.close()
-            self.assertEqual(legacy, ("legacy", "Place"))
+            self.assertEqual(legacy, ("legacy", "Unknown"))
             self.assertEqual(len(list(Path(temp_dir).glob("*.pre-things-*.bak"))), 1)
+
+    def test_never_persists_generic_place_type(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            db_path = Path(temp_dir) / "places.db"
+            init_db(db_path)
+            save_ingest(
+                db_path,
+                {
+                    "source_url": "https://www.instagram.com/reel/generic/",
+                    "metadata": {},
+                    "resolved_things": [
+                        {
+                            "status": "not_applicable",
+                            "extracted": {
+                                "extracted_name": "Ambiguous recommendation",
+                                "type_name": "Place",
+                            },
+                        }
+                    ],
+                },
+            )
+
+            self.assertEqual(list_thing_types(db_path), ["Unknown"])
 
     def test_saves_non_location_thing_and_preserves_source(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

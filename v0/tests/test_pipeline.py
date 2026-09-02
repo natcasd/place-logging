@@ -26,6 +26,18 @@ class SourcePlatformTests(unittest.TestCase):
 
 
 class YouTubeExtractionTests(unittest.TestCase):
+    def test_prompt_requires_main_intent_and_excludes_generic_types(self) -> None:
+        prompt = pipeline._extraction_prompt(
+            {"caption_or_description": "An exhibit at a museum."},
+            existing_types=["Place", "Unknown", "Restaurant", "Restaurant", "Exhibit"],
+        )
+
+        self.assertIn("part of the post's main intent", prompt)
+        self.assertIn("Do not also save the host venue as a separate thing", prompt)
+        self.assertIn("Never use the generic category Place", prompt)
+        self.assertIn('["Restaurant", "Exhibit"]', prompt)
+        self.assertNotIn('["Place"', prompt)
+
     @patch("pipeline._client")
     def test_sends_youtube_url_directly_to_gemini(self, mock_client: MagicMock) -> None:
         response = SimpleNamespace(
