@@ -35,15 +35,17 @@ def _format_timestamp(value: object) -> str | None:
 
 
 def _format_result(result: dict) -> str:
-    resolved = result.get("resolved_places", [])
+    resolved = result.get("resolved_things", result.get("resolved_places", []))
     if not resolved:
-        return "⚠️ No places extracted from this source."
+        return "⚠️ Source saved, but no individual things were extracted."
 
     lines = []
     for r in resolved:
         extracted = r.get("extracted", {}) or {}
         status = r.get("status")
         name = extracted.get("extracted_name", "?")
+        thing_type = extracted.get("type_name")
+        description = extracted.get("description") or extracted.get("why_its_cool")
         dishes = extracted.get("dishes") or []
         dishes_str = ", ".join(dishes[:3]) + ("…" if len(dishes) > 3 else "")
         timestamp = _format_timestamp(extracted.get("timestamp_seconds"))
@@ -65,6 +67,16 @@ def _format_result(result: dict) -> str:
                 lines.append(f"🎬 Appears at {timestamp}")
             if url:
                 lines.append(f"🗺 [view on Google Maps]({url})")
+        elif status == "not_applicable":
+            lines.append(f"✅ *{name}*")
+            if thing_type:
+                lines.append(f"📁 {thing_type}")
+            if description:
+                lines.append(description)
+            if slide_index:
+                lines.append(f"🖼 Slide {slide_index}")
+            if timestamp:
+                lines.append(f"🎬 Appears at {timestamp}")
         elif status == "needs_review":
             count = len(r.get("candidates") or [])
             lines.append(f"⚠️ *{name}* — {count} possible matches, need to disambiguate")

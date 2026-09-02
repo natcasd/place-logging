@@ -70,6 +70,8 @@ class IngestResponse(BaseModel):
     metadata: dict[str, Any]
     places_extracted: list[dict[str, Any]]
     resolved_places: list[dict[str, Any]]
+    things_extracted: list[dict[str, Any]] = Field(default_factory=list)
+    resolved_things: list[dict[str, Any]] = Field(default_factory=list)
     delivery_status: Literal["not_requested", "sent", "failed"]
 
 
@@ -96,6 +98,12 @@ class SavedPlace(BaseModel):
     timestamp_seconds: float | None = Field(default=None, ge=0)
     slide_index: int | None = Field(default=None, ge=1)
     resolution_status: str
+    type: str = "Place"
+    description: str = ""
+    starts_at: str | None = None
+    ends_at: str | None = None
+    recurrence_text: str | None = None
+    location_query: str | None = None
     source_url: str
     saved_at: str
 
@@ -104,10 +112,39 @@ class PlacesResponse(BaseModel):
     places: list[SavedPlace]
 
 
+class ThingsResponse(BaseModel):
+    things: list[SavedPlace]
+
+
+class SavedSource(BaseModel):
+    id: int
+    source_url: str
+    user_prompt: str | None
+    source_platform: str
+    creator: str | None
+    caption: str | None
+    summary: str | None = None
+    media_count: int
+    media_preserved: bool
+    thing_count: int
+    needs_review: bool
+    saved_at: str
+
+
+class SourcesResponse(BaseModel):
+    sources: list[SavedSource]
+
+
 class DeletePlaceResponse(BaseModel):
     place_id: int
     deleted_places: int
     deleted_items: int
+
+
+class DeleteThingResponse(BaseModel):
+    thing_id: int
+    deleted_things: int
+    deleted_sources: int
 
 
 @dataclass
@@ -328,6 +365,36 @@ def create_app(injected_runtime: Runtime | None = None) -> FastAPI:
             )
         return {"places": await asyncio.to_thread(runtime.service.places, limit)}
 
+    @application.get("/api/v1/things", response_model=ThingsResponse)
+    async def get_things(
+        request: Request,
+        authorization: str | None = Header(default=None),
+        limit: int = 200,
+    ) -> dict[str, Any]:
+        runtime: Runtime = request.app.state.runtime
+        _require_ingest_auth(runtime, authorization)
+        if not 1 <= limit <= 500:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="limit must be between 1 and 500",
+            )
+        return {"things": await asyncio.to_thread(runtime.service.things, limit)}
+
+    @application.get("/api/v1/sources", response_model=SourcesResponse)
+    async def get_sources(
+        request: Request,
+        authorization: str | None = Header(default=None),
+        limit: int = 200,
+    ) -> dict[str, Any]:
+        runtime: Runtime = request.app.state.runtime
+        _require_ingest_auth(runtime, authorization)
+        if not 1 <= limit <= 500:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="limit must be between 1 and 500",
+            )
+        return {"sources": await asyncio.to_thread(runtime.service.sources, limit)}
+
     @application.delete(
         "/api/v1/places/{place_id}",
         response_model=DeletePlaceResponse,
@@ -354,6 +421,29 @@ def create_app(injected_runtime: Runtime | None = None) -> FastAPI:
             result["deleted_items"],
         )
         return {"place_id": place_id, **result}
+
+    @application.delete(
+        "/api/v1/things/{thing_id}",
+        response_model=DeleteThingResponse,
+    )
+    async def delete_saved_thing(
+        thing_id: int,
+        request: Request,
+        authorization: str | None = Header(default=None),
+    ) -> dict[str, int]:
+        runtime: Runtime = request.app.state.runtime
+        _require_ingest_auth(runtime, authorization)
+        result = await asyncio.to_thread(runtime.service.delete_thing, thing_id)
+        if result is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Saved thing not found",
+            )
+        return {
+            "thing_id": thing_id,
+            "deleted_things": result["deleted_things"],
+            "deleted_sources": result["deleted_sources"],
+        }
 
     @application.post("/webhook", include_in_schema=False)
     async def telegram_webhook(
@@ -463,7 +553,7 @@ def create_app(injected_runtime: Runtime | None = None) -> FastAPI:
             "delivery_status=%s duration_ms=%s",
             getattr(request.state, "request_id", "unknown"),
             result.get("item_id"),
-            len(result.get("places_extracted", [])),
+            len(result.get("things_extracted", result.get("places_extracted", []))),
             delivery_status,
             round((time.perf_counter() - ingest_started) * 1000, 1),
         )

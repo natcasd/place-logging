@@ -106,6 +106,69 @@ class ApiTests(unittest.TestCase):
         self.assertIsNone(response.json()["places"][0]["slide_index"])
         self.service.places.assert_called_once_with(25)
 
+    def test_things_returns_location_and_non_location_things(self) -> None:
+        self.service.things.return_value = [
+            {
+                "id": 8,
+                "item_id": 12,
+                "ordinal": 0,
+                "name": "The Creative Act",
+                "google_place_id": None,
+                "latitude": None,
+                "longitude": None,
+                "formatted_address": None,
+                "google_maps_url": None,
+                "dishes": [],
+                "why_its_cool": "",
+                "tags": [],
+                "timestamp_seconds": 3.0,
+                "slide_index": None,
+                "resolution_status": "not_applicable",
+                "type": "Book",
+                "description": "A book about creativity.",
+                "starts_at": None,
+                "ends_at": None,
+                "recurrence_text": None,
+                "location_query": None,
+                "source_url": "https://youtu.be/test",
+                "saved_at": "2026-09-02 12:00:00",
+            }
+        ]
+
+        response = self.client.get(
+            "/api/v1/things",
+            headers={"Authorization": "Bearer api-secret"},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["things"][0]["type"], "Book")
+        self.assertIsNone(response.json()["things"][0]["latitude"])
+
+    def test_sources_includes_sources_needing_review(self) -> None:
+        self.service.sources.return_value = [
+            {
+                "id": 12,
+                "source_url": "https://youtu.be/test",
+                "user_prompt": None,
+                "source_platform": "youtube",
+                "creator": None,
+                "caption": None,
+                "media_count": 0,
+                "media_preserved": False,
+                "thing_count": 0,
+                "needs_review": True,
+                "saved_at": "2026-09-02 12:00:00",
+            }
+        ]
+
+        response = self.client.get(
+            "/api/v1/sources",
+            headers={"Authorization": "Bearer api-secret"},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.json()["sources"][0]["needs_review"])
+
     def test_places_rejects_excessive_limit(self) -> None:
         response = self.client.get(
             "/api/v1/places?limit=501",
@@ -149,6 +212,21 @@ class ApiTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 404)
         self.assertEqual(response.json(), {"detail": "Saved place not found"})
+
+    def test_delete_thing_uses_compatible_store_operation(self) -> None:
+        self.service.delete_thing.return_value = {
+            "deleted_things": 1,
+            "deleted_sources": 0,
+        }
+
+        response = self.client.delete(
+            "/api/v1/things/8",
+            headers={"Authorization": "Bearer api-secret"},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["deleted_things"], 1)
+        self.service.delete_thing.assert_called_once_with(8)
 
     def test_ingest_calls_shared_service_and_returns_result(self) -> None:
         response = self.client.post(
