@@ -11,6 +11,12 @@ from unittest.mock import MagicMock, patch
 import pipeline
 
 
+class FakeGeminiError(RuntimeError):
+    def __init__(self, code: int) -> None:
+        super().__init__(f"Gemini error {code}")
+        self.code = code
+
+
 class SourcePlatformTests(unittest.TestCase):
     def test_recognizes_supported_platforms(self) -> None:
         cases = {
@@ -68,6 +74,36 @@ class YouTubeExtractionTests(unittest.TestCase):
         )
         self.assertIn("Focus on Brooklyn", call["input"][0]["text"])
         self.assertFalse(call["store"])
+
+
+class GeminiRetryTests(unittest.TestCase):
+    @patch("pipeline.time.sleep")
+    def test_retries_transient_errors_with_exponential_backoff(
+        self,
+        mock_sleep: MagicMock,
+    ) -> None:
+        operation = MagicMock(
+            side_effect=[FakeGeminiError(503), FakeGeminiError(429), "ok"]
+        )
+
+        result = pipeline._call_gemini_with_retry(operation, "test extraction")
+
+        self.assertEqual(result, "ok")
+        self.assertEqual(operation.call_count, 3)
+        self.assertEqual(
+            [call.args[0] for call in mock_sleep.call_args_list],
+            [3.0, 6.0],
+        )
+
+    @patch("pipeline.time.sleep")
+    def test_does_not_retry_permanent_errors(self, mock_sleep: MagicMock) -> None:
+        operation = MagicMock(side_effect=FakeGeminiError(400))
+
+        with self.assertRaises(FakeGeminiError):
+            pipeline._call_gemini_with_retry(operation, "test extraction")
+
+        operation.assert_called_once_with()
+        mock_sleep.assert_not_called()
 
 
 class InstagramFetcherTests(unittest.TestCase):
@@ -562,6 +598,53 @@ class ProcessIngestTests(unittest.TestCase):
             self.assertEqual(
                 result["metadata"]["source_content"]["summary"],
                 "Preserved analysis",
+            )
+            self.assertFalse(cleanup_dir.exists())
+
+    @patch("pipeline.archive_media")
+    @patch("pipeline.extract_bundle", side_effect=FakeGeminiError(503))
+    @patch("pipeline.fetch")
+    def test_exhausted_extraction_preserves_archived_source_for_review(
+        self,
+        mock_fetch: MagicMock,
+        _mock_extract: MagicMock,
+        mock_archive: MagicMock,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            cleanup_dir = Path(temp_dir) / "instagram-ingest"
+            cleanup_dir.mkdir()
+            video = cleanup_dir / "post.mp4"
+            video.touch()
+            mock_fetch.return_value = pipeline.InstagramFetch(
+                [video],
+                {
+                    "source_platform": "instagram",
+                    "caption_or_description": "Saved caption",
+                },
+                cleanup_dir,
+            )
+            mock_archive.return_value = [
+                {"path": "/data/downloads/sources/post.mp4", "bytes": 100}
+            ]
+
+            with self.assertLogs("pipeline", level="ERROR"):
+                result = pipeline.process_ingest(
+                    "https://www.instagram.com/reel/abc/",
+                    None,
+                    Path(temp_dir),
+                )
+
+            self.assertEqual(result["things_extracted"], [])
+            self.assertEqual(result["resolved_things"], [])
+            self.assertEqual(result["metadata"]["extraction_status"], "failed")
+            self.assertEqual(
+                result["metadata"]["extraction_error"]["type"],
+                "FakeGeminiError",
+            )
+            self.assertTrue(result["metadata"]["media_preserved"])
+            self.assertEqual(
+                result["metadata"]["caption_or_description"],
+                "Saved caption",
             )
             self.assertFalse(cleanup_dir.exists())
 

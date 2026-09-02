@@ -8,6 +8,17 @@ import bot
 
 
 class TelegramAdapterTests(unittest.IsolatedAsyncioTestCase):
+    def test_formats_saved_source_after_extraction_outage(self) -> None:
+        formatted = bot._format_result(
+            {
+                "metadata": {"extraction_status": "failed"},
+                "resolved_things": [],
+            }
+        )
+
+        self.assertIn("Source saved for review", formatted)
+        self.assertIn("retried later", formatted)
+
     def test_formats_timestamp_and_slide_reference(self) -> None:
         result = {
             "resolved_places": [
