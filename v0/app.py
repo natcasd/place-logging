@@ -82,8 +82,29 @@ class ShortcutDiagnosticResponse(BaseModel):
     body_sha256: str
 
 
+class SavedThingSource(BaseModel):
+    id: int
+    item_id: int
+    ordinal: int
+    name: str
+    type: str
+    source_url: str
+    source_platform: str
+    creator: str | None = None
+    description: str = ""
+    dishes: list[str]
+    why_its_cool: str
+    tags: list[str]
+    timestamp_seconds: float | None = Field(default=None, ge=0)
+    slide_index: int | None = Field(default=None, ge=1)
+    resolution_status: str
+    location_query: str | None = None
+    saved_at: str
+
+
 class SavedPlace(BaseModel):
     id: int
+    location_id: int | None = None
     item_id: int
     ordinal: int
     name: str
@@ -107,6 +128,7 @@ class SavedPlace(BaseModel):
     location_query: str | None = None
     source_url: str
     saved_at: str
+    sources: list[SavedThingSource] = Field(default_factory=list)
 
 
 class PlacesResponse(BaseModel):
@@ -467,7 +489,7 @@ def create_app(injected_runtime: Runtime | None = None) -> FastAPI:
         request: Request,
         authorization: str | None = Header(default=None),
     ) -> dict[str, Any]:
-        """Delete one UI thing card's exact saved references atomically."""
+        """Delete canonical Things atomically while preserving source posts."""
         runtime: Runtime = request.app.state.runtime
         _require_ingest_auth(runtime, authorization)
         thing_ids = list(dict.fromkeys(payload.thing_ids))

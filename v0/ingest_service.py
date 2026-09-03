@@ -48,7 +48,7 @@ class IngestService:
         return list_places(self.db_path, limit)
 
     def things(self, limit: int = 200) -> list[dict[str, Any]]:
-        """Return every extracted thing, whether or not it has a location."""
+        """Return canonical things with their source-specific recommendations."""
         return list_things(self.db_path, limit)
 
     def sources(self, limit: int = 200) -> list[dict[str, Any]]:
@@ -60,9 +60,9 @@ class IngestService:
         return delete_place(self.db_path, place_id)
 
     def delete_thing(self, thing_id: int) -> dict[str, int] | None:
-        """Delete one thing reference without deleting its source post."""
+        """Delete one canonical thing without deleting its source posts."""
         return delete_thing(self.db_path, thing_id)
 
     def delete_things(self, thing_ids: list[int]) -> dict[str, int] | None:
-        """Delete one logical thing card's exact source references."""
+        """Delete canonical things without deleting their source posts."""
         return delete_things(self.db_path, thing_ids)

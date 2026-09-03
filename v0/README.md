@@ -6,14 +6,25 @@ optionally resolves physical locations through Google Places.
 ## Saved-things model
 
 - Every ingest creates a source record, even when extraction returns no things.
+- `things` stores one canonical recommendation, `locations` stores an optional
+  Google-resolved venue, and `thing_sources` records which source recommended
+  which Thing together with that source's description and media reference.
+- A Thing has zero or one Location. Many Things can share a Location, and many
+  Sources can recommend the same Thing.
+- Matching is deliberately conservative: permanent venues match by Google Place
+  ID and compatible type; temporary things additionally require the same title
+  and dates; non-location things require the same title and type. Uncertain
+  recommendations remain separate.
 - Instagram media is archived under `WORKDIR/sources` on the mounted Fly volume.
 - Each extracted thing has an open-ended type, detailed description, optional
   availability dates, and optional Google location.
 - Resolved locations retain Google's display name and Google Place ID. Clients can
   show one map pin per location while keeping distinct saved things at that pin.
 - Repeated saves of the same logical thing can be presented as one card with all of
-  its source posts. Deleting that card removes only its exact thing references;
-  source posts and other things at the same location remain saved.
+  its source posts. The newest source description is displayed for now while every
+  source-specific description remains stored. Deleting that card removes only its
+  Thing and source connections; source posts and other things at the same location
+  remain saved.
 - Existing place rows migrate in place with `Unknown` as their temporary type. Before
   the first additive migration, the service creates a timestamped SQLite backup
   beside the database.
