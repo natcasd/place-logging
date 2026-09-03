@@ -118,6 +118,7 @@ class ApiTests(unittest.TestCase):
                 "longitude": None,
                 "formatted_address": None,
                 "google_maps_url": None,
+                "location_name": "The Creative Act Bookstore",
                 "dishes": [],
                 "why_its_cool": "",
                 "tags": [],
@@ -143,6 +144,10 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["things"][0]["type"], "Book")
         self.assertIsNone(response.json()["things"][0]["latitude"])
+        self.assertEqual(
+            response.json()["things"][0]["location_name"],
+            "The Creative Act Bookstore",
+        )
 
     def test_sources_includes_sources_needing_review(self) -> None:
         self.service.sources.return_value = [
@@ -227,6 +232,47 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["deleted_things"], 1)
         self.service.delete_thing.assert_called_once_with(8)
+
+    def test_delete_thing_card_deletes_exact_references(self) -> None:
+        self.service.delete_things.return_value = {
+            "deleted_things": 3,
+            "deleted_sources": 0,
+        }
+
+        response = self.client.request(
+            "DELETE",
+            "/api/v1/things",
+            headers={"Authorization": "Bearer api-secret"},
+            json={"thing_ids": [8, 9, 10]},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["thing_ids"], [8, 9, 10])
+        self.assertEqual(response.json()["deleted_things"], 3)
+        self.service.delete_things.assert_called_once_with([8, 9, 10])
+
+    def test_delete_thing_card_rejects_missing_reference_without_partial_delete(self) -> None:
+        self.service.delete_things.return_value = None
+
+        response = self.client.request(
+            "DELETE",
+            "/api/v1/things",
+            headers={"Authorization": "Bearer api-secret"},
+            json={"thing_ids": [8, 999]},
+        )
+
+        self.assertEqual(response.status_code, 404)
+        self.service.delete_things.assert_called_once_with([8, 999])
+
+    def test_delete_thing_card_requires_authentication(self) -> None:
+        response = self.client.request(
+            "DELETE",
+            "/api/v1/things",
+            json={"thing_ids": [8]},
+        )
+
+        self.assertEqual(response.status_code, 401)
+        self.service.delete_things.assert_not_called()
 
     def test_ingest_calls_shared_service_and_returns_result(self) -> None:
         response = self.client.post(

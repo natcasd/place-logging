@@ -9,6 +9,11 @@ optionally resolves physical locations through Google Places.
 - Instagram media is archived under `WORKDIR/sources` on the mounted Fly volume.
 - Each extracted thing has an open-ended type, detailed description, optional
   availability dates, and optional Google location.
+- Resolved locations retain Google's display name and Google Place ID. Clients can
+  show one map pin per location while keeping distinct saved things at that pin.
+- Repeated saves of the same logical thing can be presented as one card with all of
+  its source posts. Deleting that card removes only its exact thing references;
+  source posts and other things at the same location remain saved.
 - Existing place rows migrate in place with `Unknown` as their temporary type. Before
   the first additive migration, the service creates a timestamped SQLite backup
   beside the database.

@@ -64,6 +64,18 @@ class IngestServiceTests(unittest.TestCase):
         mock_delete.assert_called_once_with(Path("/tmp/test.db"), 8)
         self.assertEqual(result, {"deleted_things": 1, "deleted_sources": 0})
 
+    @patch(
+        "ingest_service.delete_things",
+        return_value={"deleted_things": 3, "deleted_sources": 0},
+    )
+    def test_deletes_logical_thing_card_without_deleting_sources(self, mock_delete) -> None:
+        service = IngestService(Path("/tmp/test.db"), Path("/tmp/downloads"))
+
+        result = service.delete_things([8, 9, 10])
+
+        mock_delete.assert_called_once_with(Path("/tmp/test.db"), [8, 9, 10])
+        self.assertEqual(result, {"deleted_things": 3, "deleted_sources": 0})
+
 
 if __name__ == "__main__":
     unittest.main()

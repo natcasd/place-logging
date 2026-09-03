@@ -92,6 +92,7 @@ class SavedPlace(BaseModel):
     longitude: float | None
     formatted_address: str | None
     google_maps_url: str | None
+    location_name: str | None = None
     dishes: list[str]
     why_its_cool: str
     tags: list[str]
@@ -143,6 +144,18 @@ class DeletePlaceResponse(BaseModel):
 
 class DeleteThingResponse(BaseModel):
     thing_id: int
+    deleted_things: int
+    deleted_sources: int
+
+
+class DeleteThingsRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    thing_ids: list[int] = Field(min_length=1, max_length=100)
+
+
+class DeleteThingsResponse(BaseModel):
+    thing_ids: list[int]
     deleted_things: int
     deleted_sources: int
 
@@ -444,6 +457,27 @@ def create_app(injected_runtime: Runtime | None = None) -> FastAPI:
             "deleted_things": result["deleted_things"],
             "deleted_sources": result["deleted_sources"],
         }
+
+    @application.delete(
+        "/api/v1/things",
+        response_model=DeleteThingsResponse,
+    )
+    async def delete_saved_things(
+        payload: DeleteThingsRequest,
+        request: Request,
+        authorization: str | None = Header(default=None),
+    ) -> dict[str, Any]:
+        """Delete one UI thing card's exact saved references atomically."""
+        runtime: Runtime = request.app.state.runtime
+        _require_ingest_auth(runtime, authorization)
+        thing_ids = list(dict.fromkeys(payload.thing_ids))
+        result = await asyncio.to_thread(runtime.service.delete_things, thing_ids)
+        if result is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="One or more saved things were not found",
+            )
+        return {"thing_ids": thing_ids, **result}
 
     @application.post("/webhook", include_in_schema=False)
     async def telegram_webhook(

@@ -22,6 +22,7 @@ struct SavedPlace: Decodable, Identifiable, Sendable {
   let longitude: Double?
   let formattedAddress: String?
   let googleMapsURL: URL?
+  let locationName: String?
   let dishes: [String]
   let whyItsCool: String
   let tags: [String]
@@ -42,6 +43,7 @@ struct SavedPlace: Decodable, Identifiable, Sendable {
     case googlePlaceID = "google_place_id"
     case formattedAddress = "formatted_address"
     case googleMapsURL = "google_maps_url"
+    case locationName = "location_name"
     case whyItsCool = "why_its_cool"
     case timestampSeconds = "timestamp_seconds"
     case slideIndex = "slide_index"

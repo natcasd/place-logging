@@ -68,6 +68,15 @@ struct PlaceLoggerAPI: Sendable {
     _ = try await perform(request)
   }
 
+  func deleteThings(ids: [Int]) async throws {
+    let url = APIConfig.baseURL.appending(path: "/api/v1/things")
+    var request = URLRequest(url: url)
+    request.httpMethod = "DELETE"
+    request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+    request.httpBody = try JSONSerialization.data(withJSONObject: ["thing_ids": ids])
+    _ = try await perform(request)
+  }
+
   private func perform(_ originalRequest: URLRequest) async throws -> Data {
     guard !APIConfig.token.isEmpty else { throw PlaceLoggerError.missingToken }
     var request = originalRequest

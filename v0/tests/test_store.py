@@ -8,6 +8,7 @@ from pathlib import Path
 from store import (
     delete_place,
     delete_thing,
+    delete_things,
     init_db,
     list_places,
     list_sources,
@@ -54,6 +55,7 @@ class StoreTests(unittest.TestCase):
                             },
                             "place": {
                                 "id": "places/abc",
+                                "displayName": {"text": "Google Location Name"},
                                 "location": {
                                     "latitude": 19.42,
                                     "longitude": -99.21,
@@ -74,6 +76,7 @@ class StoreTests(unittest.TestCase):
             self.assertEqual(places[0]["tags"], ["bakery"])
             self.assertEqual(places[0]["source_url"], "https://www.instagram.com/reel/test/")
             self.assertEqual(places[0]["latitude"], 19.42)
+            self.assertEqual(places[0]["location_name"], "Google Location Name")
             self.assertEqual(places[0]["timestamp_seconds"], 12.5)
             self.assertEqual(places[0]["slide_index"], 3)
             self.assertEqual(places[0]["type"], "Restaurant")
@@ -117,6 +120,7 @@ class StoreTests(unittest.TestCase):
             self.assertIn("description", columns)
             self.assertIn("starts_at", columns)
             self.assertIn("ends_at", columns)
+            self.assertIn("location_name", columns)
             con = sqlite3.connect(db_path)
             try:
                 legacy = con.execute(
@@ -245,6 +249,55 @@ class StoreTests(unittest.TestCase):
             self.assertEqual(list_things(db_path), [])
             self.assertEqual(len(list_sources(db_path)), 1)
             self.assertTrue(list_sources(db_path)[0]["needs_review"])
+
+    def test_delete_things_removes_exact_card_rows_and_preserves_sources(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            db_path = Path(temp_dir) / "places.db"
+            init_db(db_path)
+            for suffix, name in (("one", "S&P Lunch"), ("two", "S&P Lunch")):
+                save_ingest(
+                    db_path,
+                    {
+                        "source_url": f"https://www.instagram.com/reel/{suffix}/",
+                        "metadata": {},
+                        "resolved_things": [self.resolved_place(name, "places/shared")],
+                    },
+                )
+            save_ingest(
+                db_path,
+                {
+                    "source_url": "https://www.instagram.com/reel/exhibit/",
+                    "metadata": {},
+                    "resolved_things": [
+                        self.resolved_place("Guest Pop-Up", "places/shared")
+                    ],
+                },
+            )
+            things = list_things(db_path)
+            restaurant_ids = [thing["id"] for thing in things if thing["name"] == "S&P Lunch"]
+
+            result = delete_things(db_path, restaurant_ids)
+
+            self.assertEqual(result, {"deleted_things": 2, "deleted_sources": 0})
+            self.assertEqual([thing["name"] for thing in list_things(db_path)], ["Guest Pop-Up"])
+            self.assertEqual(len(list_sources(db_path)), 3)
+
+    def test_delete_things_is_atomic_when_any_id_is_missing(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            db_path = Path(temp_dir) / "places.db"
+            init_db(db_path)
+            save_ingest(
+                db_path,
+                {
+                    "source_url": "https://www.instagram.com/reel/one/",
+                    "metadata": {},
+                    "resolved_things": [self.resolved_place("Keep Me", "places/keep")],
+                },
+            )
+            thing = list_things(db_path)[0]
+
+            self.assertIsNone(delete_things(db_path, [thing["id"], 999]))
+            self.assertEqual([saved["name"] for saved in list_things(db_path)], ["Keep Me"])
 
     def test_delete_place_removes_all_references_but_preserves_post_siblings(
         self,
