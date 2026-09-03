@@ -256,7 +256,10 @@ private struct MappedPlaceGroup: Identifiable {
 
   var primary: SavedPlace { places[0] }
   var name: String {
-    places.compactMap(\.locationName).first { !$0.isEmpty } ?? primary.name
+    if let googleName = places.compactMap(\.locationName).first(where: { !$0.isEmpty }) {
+      return googleName
+    }
+    return places.first(where: { !$0.isTemporaryLocationThing })?.name ?? primary.name
   }
   var thingGroups: [MappedThingGroup] { places.map { MappedThingGroup(thing: $0) } }
   var coordinate: CLLocationCoordinate2D {
@@ -281,6 +284,17 @@ private struct MappedPlaceGroup: Identifiable {
       }
     }
     return groups
+  }
+}
+
+private extension SavedPlace {
+  var isTemporaryLocationThing: Bool {
+    if startsAt != nil || endsAt != nil || recurrenceText != nil { return true }
+    let normalizedType = displayType.lowercased()
+    return [
+      "concert", "event", "exhibit", "exhibition", "festival", "performance",
+      "pop-up", "popup", "screening", "show",
+    ].contains { normalizedType.contains($0) }
   }
 }
 

@@ -172,6 +172,25 @@ python backfill_thing_types.py \
   --apply
 ```
 
+## Location-name backfill
+
+`backfill_location_names.py` retrieves Google Places `displayName` for legacy
+Locations that retained a Place ID but predate name storage. Plan generation is
+checkpointed and read-only with respect to SQLite. Applying a complete plan
+backs up the database, verifies every Location is still unnamed, and updates
+both the normalized Location and its compatibility rows.
+
+```bash
+python backfill_location_names.py \
+  --db-path data/places.db \
+  --plan data/location-name-backfill-plan.json
+
+python backfill_location_names.py \
+  --db-path data/places.db \
+  --plan data/location-name-backfill-plan.json \
+  --apply
+```
+
 ## Known gaps
 
 - Disambiguation of `needs_review` location candidates is not yet available in the UI.
