@@ -9,6 +9,7 @@ from pipeline import process_ingest
 from store import (
     delete_place,
     delete_thing,
+    delete_things,
     init_db,
     list_places,
     list_sources,
@@ -59,5 +60,9 @@ class IngestService:
         return delete_place(self.db_path, place_id)
 
     def delete_thing(self, thing_id: int) -> dict[str, int] | None:
-        """Delete a thing without deleting the source post it came from."""
+        """Delete one thing reference without deleting its source post."""
         return delete_thing(self.db_path, thing_id)
+
+    def delete_things(self, thing_ids: list[int]) -> dict[str, int] | None:
+        """Delete one logical thing card's exact source references."""
+        return delete_things(self.db_path, thing_ids)

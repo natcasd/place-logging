@@ -28,6 +28,7 @@ CREATE TABLE IF NOT EXISTS places (
   lng                        REAL,
   formatted_address          TEXT,
   google_maps_url            TEXT,
+  location_name              TEXT,
   dishes_json                TEXT,
   why_its_cool               TEXT,
   tags_json                  TEXT,
@@ -56,6 +57,7 @@ PLACE_COLUMN_MIGRATIONS = {
     "ends_at": "TEXT",
     "recurrence_text": "TEXT",
     "location_query": "TEXT",
+    "location_name": "TEXT",
 }
 
 
@@ -142,12 +144,13 @@ def save_ingest(db_path: Path, result: dict[str, Any]) -> int:
                     item_id, ordinal, extracted_name,
                     google_place_id, lat, lng,
                     formatted_address, google_maps_url,
+                    location_name,
                     dishes_json, why_its_cool, tags_json,
                     timestamp_seconds, slide_index,
                     resolution_status, resolution_candidates_json,
                     thing_type, description,
                     starts_at, ends_at, recurrence_text, location_query
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
                     item_id,
                     ordinal,
@@ -157,6 +160,7 @@ def save_ingest(db_path: Path, result: dict[str, Any]) -> int:
                     loc.get("longitude"),
                     place.get("formattedAddress"),
                     place.get("googleMapsUri"),
+                    display.get("text"),
                     json.dumps(extracted.get("dishes", []), ensure_ascii=False),
                     extracted.get("why_its_cool", ""),
                     json.dumps(extracted.get("tags", []), ensure_ascii=False),
@@ -205,6 +209,7 @@ def list_things(db_path: Path, limit: int = 200) -> list[dict[str, Any]]:
                  p.lng,
                  p.formatted_address,
                  p.google_maps_url,
+                 p.location_name,
                  p.dishes_json,
                  p.why_its_cool,
                  p.tags_json,
@@ -237,6 +242,7 @@ def list_things(db_path: Path, limit: int = 200) -> list[dict[str, Any]]:
                 "longitude": row["lng"],
                 "formatted_address": row["formatted_address"],
                 "google_maps_url": row["google_maps_url"],
+                "location_name": row["location_name"],
                 "dishes": json.loads(row["dishes_json"] or "[]"),
                 "why_its_cool": row["why_its_cool"] or "",
                 "tags": json.loads(row["tags_json"] or "[]"),
@@ -325,24 +331,41 @@ def list_sources(db_path: Path, limit: int = 200) -> list[dict[str, Any]]:
 
 
 def delete_thing(db_path: Path, thing_id: int) -> dict[str, int] | None:
-    """Delete a logical thing while retaining every preserved source record."""
+    """Delete one saved thing reference while retaining its source record."""
     con = sqlite3.connect(db_path)
     try:
-        row = con.execute(
-            "SELECT id, google_place_id FROM places WHERE id = ?",
-            (thing_id,),
-        ).fetchone()
+        row = con.execute("SELECT id FROM places WHERE id = ?", (thing_id,)).fetchone()
         if row is None:
             return None
+        cursor = con.execute("DELETE FROM places WHERE id = ?", (thing_id,))
+        con.commit()
+        return {"deleted_things": cursor.rowcount, "deleted_sources": 0}
+    finally:
+        con.close()
 
-        google_place_id = row[1]
-        if google_place_id:
-            cursor = con.execute(
-                "DELETE FROM places WHERE google_place_id = ?",
-                (google_place_id,),
-            )
-        else:
-            cursor = con.execute("DELETE FROM places WHERE id = ?", (thing_id,))
+
+def delete_things(db_path: Path, thing_ids: list[int]) -> dict[str, int] | None:
+    """Atomically delete exact thing references while preserving every source."""
+    unique_ids = list(dict.fromkeys(thing_ids))
+    if not unique_ids:
+        return None
+
+    placeholders = ",".join("?" for _ in unique_ids)
+    con = sqlite3.connect(db_path)
+    try:
+        found = {
+            row[0]
+            for row in con.execute(
+                f"SELECT id FROM places WHERE id IN ({placeholders})",
+                unique_ids,
+            ).fetchall()
+        }
+        if found != set(unique_ids):
+            return None
+        cursor = con.execute(
+            f"DELETE FROM places WHERE id IN ({placeholders})",
+            unique_ids,
+        )
         con.commit()
         return {"deleted_things": cursor.rowcount, "deleted_sources": 0}
     finally:

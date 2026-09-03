@@ -28,12 +28,15 @@ final class PlacesModel: ObservableObject {
 
   func delete(_ place: SavedPlace) async throws {
     try await api.deleteThing(id: place.id)
-    places.removeAll { candidate in
-      if let googlePlaceID = place.googlePlaceID, !googlePlaceID.isEmpty {
-        return candidate.googlePlaceID == googlePlaceID
-      }
-      return candidate.id == place.id
-    }
+    places.removeAll { $0.id == place.id }
+    sources = try await api.fetchSources()
+  }
+
+  func deleteThingCard(_ placesToDelete: [SavedPlace]) async throws {
+    let ids = placesToDelete.map(\.id)
+    try await api.deleteThings(ids: ids)
+    let deletedIDs = Set(ids)
+    places.removeAll { deletedIDs.contains($0.id) }
     sources = try await api.fetchSources()
   }
 }
@@ -65,7 +68,7 @@ struct PlacesView: View {
               places: model.places,
               isRefreshing: model.isLoading,
               refresh: { await model.load() },
-              deletePlace: { place in try await model.delete(place) }
+              deleteThingCard: { things in try await model.deleteThingCard(things) }
             )
               .tabItem {
                 Label("Around Me", systemImage: "location")
@@ -218,8 +221,7 @@ private struct PlacesList: View {
       }
     } message: {
       if let place = pendingDeletion {
-        let count = savedReferenceCount(for: place)
-        Text(deleteMessage(name: place.name, referenceCount: count))
+        Text(deleteMessage(name: place.name))
       }
     }
     .alert(
@@ -235,15 +237,38 @@ private struct PlacesList: View {
     }
   }
 
-  private func savedReferenceCount(for place: SavedPlace) -> Int {
-    guard let googlePlaceID = place.googlePlaceID, !googlePlaceID.isEmpty else {
-      return 1
+}
+
+private struct MappedThingGroup: Identifiable {
+  let id: String
+  var places: [SavedPlace]
+
+  var primary: SavedPlace { places[0] }
+  var name: String { primary.name }
+  var type: String { primary.displayType }
+  var sourceCount: Int { Set(places.map(\.itemID)).count }
+  var dishes: [String] { uniqueStrings(places.flatMap(\.dishes)) }
+
+  static func make(from places: [SavedPlace]) -> [MappedThingGroup] {
+    var groups: [MappedThingGroup] = []
+    var indexes: [String: Int] = [:]
+
+    for place in places {
+      let identityParts = [
+        normalizedIdentity(place.name),
+        normalizedIdentity(place.displayType),
+        place.startsAt ?? "",
+        place.endsAt ?? "",
+      ]
+      let key = identityParts.joined(separator: "|")
+      if let index = indexes[key] {
+        groups[index].places.append(place)
+      } else {
+        indexes[key] = groups.count
+        groups.append(MappedThingGroup(id: key, places: [place]))
+      }
     }
-    return Set(
-      places
-        .filter { $0.googlePlaceID == googlePlaceID }
-        .map(\.sourceURL)
-    ).count
+    return groups
   }
 }
 
@@ -252,30 +277,15 @@ private struct MappedPlaceGroup: Identifiable {
   var places: [SavedPlace]
 
   var primary: SavedPlace { places[0] }
-  var name: String { primary.name }
+  var name: String {
+    places.compactMap(\.locationName).first { !$0.isEmpty } ?? primary.name
+  }
+  var thingGroups: [MappedThingGroup] { MappedThingGroup.make(from: places) }
   var coordinate: CLLocationCoordinate2D {
     CLLocationCoordinate2D(
       latitude: primary.latitude ?? 0,
       longitude: primary.longitude ?? 0
     )
-  }
-
-  var dishes: [String] {
-    uniqueStrings(places.flatMap(\.dishes))
-  }
-
-  var tags: [String] {
-    uniqueStrings(places.flatMap(\.tags))
-  }
-
-  private func uniqueStrings(_ strings: [String]) -> [String] {
-    var seen: Set<String> = []
-    return strings.filter { value in
-      let normalized = value.lowercased()
-      guard !normalized.isEmpty, !seen.contains(normalized) else { return false }
-      seen.insert(normalized)
-      return true
-    }
   }
 
   static func make(from places: [SavedPlace]) -> [MappedPlaceGroup] {
@@ -293,6 +303,21 @@ private struct MappedPlaceGroup: Identifiable {
       }
     }
     return groups
+  }
+}
+
+private func normalizedIdentity(_ value: String) -> String {
+  value.folding(options: [.caseInsensitive, .diacriticInsensitive], locale: .current)
+    .trimmingCharacters(in: .whitespacesAndNewlines)
+}
+
+private func uniqueStrings(_ strings: [String]) -> [String] {
+  var seen: Set<String> = []
+  return strings.filter { value in
+    let normalized = normalizedIdentity(value)
+    guard !normalized.isEmpty, !seen.contains(normalized) else { return false }
+    seen.insert(normalized)
+    return true
   }
 }
 
@@ -355,7 +380,7 @@ private struct PlacesMap: View {
   let places: [SavedPlace]
   let isRefreshing: Bool
   let refresh: () async -> Void
-  let deletePlace: (SavedPlace) async throws -> Void
+  let deleteThingCard: ([SavedPlace]) async throws -> Void
   @StateObject private var locationModel = LocationModel()
   @StateObject private var searchModel = MapSearchModel()
   @State private var cameraPosition: MapCameraPosition = .automatic
@@ -551,7 +576,7 @@ private struct PlacesMap: View {
       }) { group in
         NavigationStack {
           PlaceDetailSheet(group: group) {
-            try await deletePlace(group.primary)
+            try await deleteThingCard($0.places)
           }
         }
         .presentationDetents([.fraction(0.58), .large])
@@ -592,131 +617,75 @@ private struct PlacesMap: View {
 
 private struct PlaceDetailSheet: View {
   let group: MappedPlaceGroup
-  let deletePlace: () async throws -> Void
+  let deleteThing: (MappedThingGroup) async throws -> Void
   @Environment(\.dismiss) private var dismiss
-  @State private var isConfirmingDeletion = false
-  @State private var isDeleting = false
+  @State private var pendingDeletion: MappedThingGroup?
+  @State private var deletingThingID: String?
   @State private var deletionError: String?
 
   var body: some View {
     ScrollView {
       LazyVStack(alignment: .leading, spacing: 20) {
-        HStack(alignment: .firstTextBaseline, spacing: 8) {
-          Text(group.name)
-            .font(.title2.bold())
+        if let thing = group.thingGroups.first, group.thingGroups.count == 1 {
+          SingleThingLocationDetails(
+            thing: thing,
+            address: group.primary.formattedAddress,
+            mapsURL: group.primary.appleMapsURL,
+            isDeleting: deletingThingID == thing.id,
+            requestDeletion: { pendingDeletion = thing }
+          )
+        } else {
+          LocationHeader(group: group)
 
-          Spacer(minLength: 8)
-
-          if isDeleting {
-            ProgressView()
-              .controlSize(.small)
-          } else {
-            Menu {
-              if let mapsURL = group.primary.appleMapsURL {
-                Link(destination: mapsURL) {
-                  Label("Open in Maps", systemImage: "map")
-                }
-
-                Divider()
-              }
-
-              Button("Delete Place", systemImage: "trash", role: .destructive) {
-                isConfirmingDeletion = true
-              }
-            } label: {
-              Image(systemName: "ellipsis")
-                .font(.headline)
-                .frame(width: 36, height: 36)
-                .contentShape(Circle())
-            }
-            .buttonStyle(.plain)
-            .foregroundStyle(.primary)
-            .accessibilityLabel("More Options")
-          }
-        }
-
-        HStack(spacing: 10) {
-          Text(group.primary.displayType)
+          Text("Things at this location")
             .font(.caption.weight(.semibold))
             .foregroundStyle(.secondary)
-          if let availability = group.primary.availabilityText {
-            Label(availability, systemImage: "calendar")
-              .font(.caption)
-              .foregroundStyle(.secondary)
-          }
-        }
+            .textCase(.uppercase)
 
-        VStack(alignment: .leading, spacing: 12) {
-          ForEach(group.places) { place in
-            SourceDetailCard(
-              place: place,
-              showsDetails: group.places.count > 1
+          ForEach(group.thingGroups) { thing in
+            ThingAtLocationCard(
+              thing: thing,
+              isDeleting: deletingThingID == thing.id,
+              requestDeletion: { pendingDeletion = thing }
             )
           }
         }
-
-        if !group.primary.detailedDescription.isEmpty {
-          VStack(alignment: .leading, spacing: 6) {
-            Text("About")
-              .font(.headline)
-            Text(group.primary.detailedDescription)
-              .font(.subheadline)
-          }
-        }
-
-        if !group.dishes.isEmpty {
-          VStack(alignment: .leading, spacing: 6) {
-            Text("Things to Try")
-              .font(.headline)
-            Text(group.dishes.joined(separator: " · "))
-              .font(.subheadline)
-              .foregroundStyle(.orange)
-          }
-        }
-
-        if !group.tags.isEmpty {
-          VStack(alignment: .leading, spacing: 6) {
-            Text("Tags")
-              .font(.headline)
-            Text(group.tags.joined(separator: " · "))
-              .font(.subheadline)
-              .foregroundStyle(.secondary)
-          }
-        }
-
       }
       .padding(.horizontal)
       .padding(.top, 18)
       .padding(.bottom, 28)
     }
     .confirmationDialog(
-      "Delete \(group.name)?",
-      isPresented: $isConfirmingDeletion,
+      pendingDeletion.map { "Delete \($0.name)?" } ?? "Delete Thing?",
+      isPresented: Binding(
+        get: { pendingDeletion != nil },
+        set: { if !$0 { pendingDeletion = nil } }
+      ),
       titleVisibility: .visible
     ) {
-      Button("Delete Place", role: .destructive) {
-        Task {
-          isDeleting = true
-          defer { isDeleting = false }
-          do {
-            try await deletePlace()
-            dismiss()
-          } catch {
-            deletionError = error.localizedDescription
+      if let thing = pendingDeletion {
+        Button("Delete Thing", role: .destructive) {
+          pendingDeletion = nil
+          Task {
+            deletingThingID = thing.id
+            defer { deletingThingID = nil }
+            do {
+              try await deleteThing(thing)
+              dismiss()
+            } catch {
+              deletionError = error.localizedDescription
+            }
           }
         }
       }
-      Button("Cancel", role: .cancel) {}
+      Button("Cancel", role: .cancel) { pendingDeletion = nil }
     } message: {
-      Text(
-        deleteMessage(
-          name: group.name,
-          referenceCount: Set(group.places.map(\.sourceURL)).count
-        )
-      )
+      if let thing = pendingDeletion {
+        Text(logicalThingDeleteMessage(thing))
+      }
     }
     .alert(
-      "Couldn’t Delete Place",
+      "Couldn’t Delete Thing",
       isPresented: Binding(
         get: { deletionError != nil },
         set: { if !$0 { deletionError = nil } }
@@ -729,57 +698,232 @@ private struct PlaceDetailSheet: View {
   }
 }
 
-private func deleteMessage(name: String, referenceCount: Int) -> String {
-  let references = referenceCount == 1
-    ? "its saved post"
-    : "its \(referenceCount) saved posts"
-  return "This removes \(name) and \(references). Other places from those posts will remain."
+private func deleteMessage(name: String) -> String {
+  "This removes only \(name). Its original source post stays saved."
 }
 
-private struct SourceDetailCard: View {
-  let place: SavedPlace
-  let showsDetails: Bool
+private func logicalThingDeleteMessage(_ thing: MappedThingGroup) -> String {
+  let references = thing.sourceCount == 1
+    ? "its saved reference"
+    : "its \(thing.sourceCount) saved references"
+  return "This removes \(thing.name) and \(references). Original source posts and other things at this location stay saved."
+}
+
+private struct LocationHeader: View {
+  let group: MappedPlaceGroup
+
+  var body: some View {
+    HStack(alignment: .firstTextBaseline, spacing: 8) {
+      VStack(alignment: .leading, spacing: 5) {
+        Text(group.name)
+          .font(.title2.bold())
+        if let address = group.primary.formattedAddress, !address.isEmpty {
+          Text(address)
+            .font(.subheadline)
+            .foregroundStyle(.secondary)
+        }
+        Text("\(group.thingGroups.count) saved things")
+          .font(.caption)
+          .foregroundStyle(.secondary)
+      }
+
+      Spacer(minLength: 8)
+
+      if let mapsURL = group.primary.appleMapsURL {
+        Link(destination: mapsURL) {
+          Image(systemName: "map")
+            .font(.headline)
+            .frame(width: 36, height: 36)
+            .contentShape(Circle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Open in Maps")
+      }
+    }
+  }
+}
+
+private struct SingleThingLocationDetails: View {
+  let thing: MappedThingGroup
+  let address: String?
+  let mapsURL: URL?
+  let isDeleting: Bool
+  let requestDeletion: () -> Void
+
+  var body: some View {
+    HStack(alignment: .firstTextBaseline, spacing: 8) {
+      VStack(alignment: .leading, spacing: 5) {
+        Text(thing.name)
+          .font(.title2.bold())
+        ThingMetadata(thing: thing)
+      }
+
+      Spacer(minLength: 8)
+      ThingActions(
+        mapsURL: mapsURL,
+        isDeleting: isDeleting,
+        requestDeletion: requestDeletion
+      )
+    }
+
+    if let address, !address.isEmpty {
+      Text(address)
+        .font(.subheadline)
+        .foregroundStyle(.secondary)
+    }
+
+    ThingContent(thing: thing)
+
+    SourceLinks(places: thing.places)
+  }
+}
+
+private struct ThingAtLocationCard: View {
+  let thing: MappedThingGroup
+  let isDeleting: Bool
+  let requestDeletion: () -> Void
 
   var body: some View {
     VStack(alignment: .leading, spacing: 12) {
-      Link(destination: place.linkedSourceURL) {
-        HStack(spacing: 12) {
-          Image(systemName: place.sourceSystemImage)
-            .font(.title3)
-            .frame(width: 28)
-
-          VStack(alignment: .leading, spacing: 3) {
-            Text(place.sourceLinkText)
-              .font(.subheadline.weight(.semibold))
-            if let mediaReference = place.mediaReferenceText {
-              Text(mediaReference)
-                .font(.caption)
-                .foregroundStyle(.secondary)
-            }
-          }
-
-          Spacer()
-          Image(systemName: "arrow.up.right")
-            .font(.caption.weight(.bold))
+      HStack(alignment: .firstTextBaseline, spacing: 8) {
+        VStack(alignment: .leading, spacing: 5) {
+          Text(thing.name)
+            .font(.headline)
+          ThingMetadata(thing: thing)
         }
-        .contentShape(Rectangle())
-      }
-      .buttonStyle(.plain)
-      .foregroundStyle(.tint)
 
-      if showsDetails, !place.detailedDescription.isEmpty {
-        Text(place.detailedDescription)
-          .font(.subheadline)
+        Spacer(minLength: 8)
+        ThingActions(
+          mapsURL: nil,
+          isDeleting: isDeleting,
+          requestDeletion: requestDeletion
+        )
       }
 
-      if showsDetails, !place.dishes.isEmpty {
-        Text(place.dishes.joined(separator: " · "))
-          .font(.caption)
-          .foregroundStyle(.orange)
-      }
+      ThingContent(thing: thing)
+
+      SourceLinks(places: thing.places)
     }
     .padding(14)
     .background(.secondary.opacity(0.1), in: RoundedRectangle(cornerRadius: 14))
+  }
+}
+
+private struct ThingMetadata: View {
+  let thing: MappedThingGroup
+
+  var body: some View {
+    HStack(spacing: 8) {
+      Text(thing.type)
+        .font(.caption.weight(.semibold))
+        .foregroundStyle(.secondary)
+      if let availability = thing.primary.availabilityText {
+        Label(availability, systemImage: "calendar")
+          .font(.caption)
+          .foregroundStyle(.secondary)
+      }
+      Text("\(thing.sourceCount) \(thing.sourceCount == 1 ? "post" : "posts")")
+        .font(.caption)
+        .foregroundStyle(.secondary)
+    }
+  }
+}
+
+private struct ThingActions: View {
+  let mapsURL: URL?
+  let isDeleting: Bool
+  let requestDeletion: () -> Void
+
+  var body: some View {
+    HStack(spacing: 6) {
+      if let mapsURL {
+        Link(destination: mapsURL) {
+          Image(systemName: "map")
+            .frame(width: 34, height: 34)
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Open in Maps")
+      }
+
+      if isDeleting {
+        ProgressView()
+          .controlSize(.small)
+          .frame(width: 34, height: 34)
+      } else {
+        Button("Delete Thing", systemImage: "trash", role: .destructive) {
+          requestDeletion()
+        }
+        .labelStyle(.iconOnly)
+        .frame(width: 34, height: 34)
+      }
+    }
+  }
+}
+
+private struct ThingContent: View {
+  let thing: MappedThingGroup
+
+  var body: some View {
+    if !thing.primary.detailedDescription.isEmpty {
+      Text(thing.primary.detailedDescription)
+        .font(.subheadline)
+    }
+
+    if !thing.dishes.isEmpty {
+      VStack(alignment: .leading, spacing: 5) {
+        Text("Things to Try")
+          .font(.subheadline.weight(.semibold))
+        Text(thing.dishes.joined(separator: " · "))
+          .font(.subheadline)
+          .foregroundStyle(.orange)
+      }
+    }
+  }
+}
+
+private struct SourceLinks: View {
+  let places: [SavedPlace]
+
+  var body: some View {
+    VStack(alignment: .leading, spacing: 8) {
+      Text("Saved from \(sourceCount) \(sourceCount == 1 ? "post" : "posts")")
+        .font(.subheadline.weight(.semibold))
+
+      ForEach(uniqueSourcePlaces) { place in
+        Link(destination: place.linkedSourceURL) {
+          HStack(spacing: 12) {
+            Image(systemName: place.sourceSystemImage)
+              .font(.title3)
+              .frame(width: 28)
+
+            VStack(alignment: .leading, spacing: 3) {
+              Text(place.sourceLinkText)
+                .font(.subheadline.weight(.semibold))
+              if let mediaReference = place.mediaReferenceText {
+                Text(mediaReference)
+                  .font(.caption)
+                  .foregroundStyle(.secondary)
+              }
+            }
+
+            Spacer()
+            Image(systemName: "arrow.up.right")
+              .font(.caption.weight(.bold))
+          }
+          .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+      }
+    }
+  }
+
+  private var sourceCount: Int {
+    uniqueSourcePlaces.count
+  }
+
+  private var uniqueSourcePlaces: [SavedPlace] {
+    var seen: Set<Int> = []
+    return places.filter { seen.insert($0.itemID).inserted }
   }
 
 }
