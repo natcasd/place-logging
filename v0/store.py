@@ -102,6 +102,34 @@ CREATE TABLE IF NOT EXISTS thing_sources (
 CREATE INDEX IF NOT EXISTS idx_things_location ON things(location_id);
 CREATE INDEX IF NOT EXISTS idx_thing_sources_thing ON thing_sources(thing_id);
 CREATE INDEX IF NOT EXISTS idx_thing_sources_item ON thing_sources(item_id);
+
+CREATE TABLE IF NOT EXISTS ingest_runs (
+  id              INTEGER PRIMARY KEY AUTOINCREMENT,
+  source_url      TEXT NOT NULL,
+  user_prompt     TEXT,
+  source_platform TEXT NOT NULL DEFAULT 'other',
+  status          TEXT NOT NULL,
+  stage           TEXT NOT NULL,
+  item_id         INTEGER UNIQUE REFERENCES items(id),
+  result_json     TEXT,
+  error_type      TEXT,
+  error_message   TEXT,
+  started_at      TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at      TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  completed_at    TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS ingest_events (
+  id            INTEGER PRIMARY KEY AUTOINCREMENT,
+  ingest_run_id INTEGER NOT NULL REFERENCES ingest_runs(id) ON DELETE CASCADE,
+  stage         TEXT NOT NULL,
+  status        TEXT NOT NULL,
+  message       TEXT NOT NULL,
+  created_at    TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_ingest_runs_updated ON ingest_runs(updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_ingest_events_run ON ingest_events(ingest_run_id, id);
 """
 
 PLACE_COLUMN_MIGRATIONS = {
@@ -185,6 +213,7 @@ def init_db(db_path: Path) -> None:
         _backup_before_normalized_migration(con, db_path)
         con.executescript(NORMALIZED_SCHEMA)
         _backfill_normalized_model(con)
+        _backfill_ingest_runs(con)
         con.commit()
     finally:
         con.close()
@@ -276,6 +305,110 @@ def save_ingest(db_path: Path, result: dict[str, Any]) -> int:
 
         con.commit()
         return item_id
+    finally:
+        con.close()
+
+
+def start_ingest_run(
+    db_path: Path,
+    source_url: str,
+    user_prompt: str | None,
+    source_platform: str,
+) -> int:
+    """Create durable processing history before source work begins."""
+    con = _connect(db_path)
+    try:
+        cursor = con.execute(
+            """INSERT INTO ingest_runs (
+                 source_url, user_prompt, source_platform, status, stage
+               ) VALUES (?, ?, ?, 'processing', 'accepted')""",
+            (source_url, user_prompt, source_platform),
+        )
+        run_id = cursor.lastrowid
+        con.execute(
+            """INSERT INTO ingest_events (ingest_run_id, stage, status, message)
+               VALUES (?, 'accepted', 'processing', 'Save accepted')""",
+            (run_id,),
+        )
+        con.commit()
+        return run_id
+    finally:
+        con.close()
+
+
+def update_ingest_run(
+    db_path: Path,
+    run_id: int,
+    stage: str,
+    message: str,
+) -> None:
+    """Record a processing stage for in-app visibility."""
+    con = _connect(db_path)
+    try:
+        cursor = con.execute(
+            """UPDATE ingest_runs
+                  SET status = 'processing', stage = ?, updated_at = CURRENT_TIMESTAMP
+                WHERE id = ? AND status = 'processing'""",
+            (stage, run_id),
+        )
+        if cursor.rowcount:
+            con.execute(
+                """INSERT INTO ingest_events (ingest_run_id, stage, status, message)
+                   VALUES (?, ?, 'processing', ?)""",
+                (run_id, stage, message),
+            )
+        con.commit()
+    finally:
+        con.close()
+
+
+def finish_ingest_run(
+    db_path: Path,
+    run_id: int,
+    *,
+    status: str,
+    stage: str,
+    message: str,
+    item_id: int | None = None,
+    outcomes: list[dict[str, Any]] | None = None,
+    error: Exception | None = None,
+) -> None:
+    """Finish an ingest and snapshot the exact canonical save outcomes."""
+    con = _connect(db_path)
+    try:
+        con.execute(
+            """UPDATE ingest_runs
+                  SET status = ?, stage = ?, item_id = ?, result_json = ?,
+                      error_type = ?, error_message = ?,
+                      updated_at = CURRENT_TIMESTAMP,
+                      completed_at = CURRENT_TIMESTAMP
+                WHERE id = ?""",
+            (
+                status,
+                stage,
+                item_id,
+                json.dumps(outcomes or [], ensure_ascii=False),
+                type(error).__name__ if error else None,
+                str(error)[:1000] if error else None,
+                run_id,
+            ),
+        )
+        con.execute(
+            """INSERT INTO ingest_events (ingest_run_id, stage, status, message)
+               VALUES (?, ?, ?, ?)""",
+            (run_id, stage, status, message),
+        )
+        con.commit()
+    finally:
+        con.close()
+
+
+def saved_thing_outcomes(db_path: Path, item_id: int) -> list[dict[str, Any]]:
+    """Return what one Source added, including conservative match outcomes."""
+    con = _connect(db_path)
+    con.row_factory = sqlite3.Row
+    try:
+        return _saved_thing_outcomes(con, item_id)
     finally:
         con.close()
 
@@ -590,6 +723,165 @@ def _backfill_normalized_model(con: sqlite3.Connection) -> None:
             candidates=json.loads(row["resolution_candidates_json"] or "[]"),
             source_created_at=row["source_created_at"],
         )
+
+
+def _saved_thing_outcomes(
+    con: sqlite3.Connection,
+    item_id: int,
+) -> list[dict[str, Any]]:
+    con.row_factory = sqlite3.Row
+    rows = con.execute(
+        """SELECT t.id AS thing_id, ts.source_name AS name,
+                  ts.source_type AS thing_type, t.location_id,
+                  l.display_name AS location_name, l.lat, l.lng,
+                  ts.resolution_status,
+                  ts.id AS source_connection_id,
+                  (SELECT MIN(first_ts.id)
+                     FROM thing_sources AS first_ts
+                    WHERE first_ts.thing_id = t.id) AS first_source_id,
+                  (SELECT COUNT(*)
+                     FROM thing_sources AS prior_ts
+                    WHERE prior_ts.thing_id = t.id
+                      AND prior_ts.id <= ts.id) AS source_count
+             FROM thing_sources AS ts
+             JOIN things AS t ON t.id = ts.thing_id
+             LEFT JOIN locations AS l ON l.id = t.location_id
+            WHERE ts.item_id = ?
+            ORDER BY ts.ordinal, ts.id""",
+        (item_id,),
+    ).fetchall()
+    return [
+        {
+            "thing_id": row["thing_id"],
+            "name": row["name"],
+            "type": row["thing_type"],
+            "location_id": row["location_id"],
+            "location_name": row["location_name"],
+            "latitude": row["lat"],
+            "longitude": row["lng"],
+            "resolution_status": row["resolution_status"],
+            "is_new": row["source_connection_id"] == row["first_source_id"],
+            "source_count": row["source_count"],
+        }
+        for row in rows
+    ]
+
+
+def _backfill_ingest_runs(con: sqlite3.Connection) -> None:
+    """Give existing Sources a completed Activity record without changing them."""
+    con.row_factory = sqlite3.Row
+    rows = con.execute(
+        """SELECT i.*
+             FROM items AS i
+             LEFT JOIN ingest_runs AS r ON r.item_id = i.id
+            WHERE r.id IS NULL
+            ORDER BY i.created_at, i.id"""
+    ).fetchall()
+    for row in rows:
+        metadata = _decode_json_object(row["raw_payload_json"])
+        outcomes = _saved_thing_outcomes(con, row["id"])
+        needs_review = (
+            not outcomes
+            or metadata.get("extraction_status") == "failed"
+            or any(
+                outcome["resolution_status"] in {"needs_review", "unresolved"}
+                for outcome in outcomes
+            )
+        )
+        status = "partial" if needs_review else "completed"
+        message = (
+            "Source saved with results needing review"
+            if needs_review
+            else f"Saved {len(outcomes)} thing{'s' if len(outcomes) != 1 else ''}"
+        )
+        cursor = con.execute(
+            """INSERT INTO ingest_runs (
+                 source_url, user_prompt, source_platform, status, stage,
+                 item_id, result_json, started_at, updated_at, completed_at
+               ) VALUES (?, ?, ?, ?, 'completed', ?, ?, ?, ?, ?)""",
+            (
+                row["source_url"],
+                row["user_prompt"],
+                metadata.get("source_platform") or "other",
+                status,
+                row["id"],
+                json.dumps(outcomes, ensure_ascii=False),
+                row["created_at"],
+                row["created_at"],
+                row["created_at"],
+            ),
+        )
+        con.execute(
+            """INSERT INTO ingest_events (
+                 ingest_run_id, stage, status, message, created_at
+               ) VALUES (?, 'completed', ?, ?, ?)""",
+            (cursor.lastrowid, status, message, row["created_at"]),
+        )
+
+
+def list_ingest_runs(db_path: Path, limit: int = 200) -> list[dict[str, Any]]:
+    """Return durable processing history, results, and readable stage events."""
+    con = _connect(db_path)
+    con.row_factory = sqlite3.Row
+    try:
+        rows = con.execute(
+            """SELECT r.*, i.raw_payload_json
+                 FROM ingest_runs AS r
+                 LEFT JOIN items AS i ON i.id = r.item_id
+                ORDER BY r.started_at DESC, r.id DESC
+                LIMIT ?""",
+            (limit,),
+        ).fetchall()
+        if not rows:
+            return []
+        run_ids = [row["id"] for row in rows]
+        placeholders = ",".join("?" for _ in run_ids)
+        event_rows = con.execute(
+            f"""SELECT id, ingest_run_id, stage, status, message, created_at
+                  FROM ingest_events
+                 WHERE ingest_run_id IN ({placeholders})
+                 ORDER BY id""",
+            run_ids,
+        ).fetchall()
+        events_by_run: dict[int, list[dict[str, Any]]] = {}
+        for event in event_rows:
+            events_by_run.setdefault(event["ingest_run_id"], []).append(
+                {
+                    "id": event["id"],
+                    "stage": event["stage"],
+                    "status": event["status"],
+                    "message": event["message"],
+                    "created_at": event["created_at"],
+                }
+            )
+
+        activity = []
+        for row in rows:
+            metadata = _decode_json_object(row["raw_payload_json"])
+            source_content = metadata.get("source_content") or {}
+            activity.append(
+                {
+                    "id": row["id"],
+                    "item_id": row["item_id"],
+                    "source_url": row["source_url"],
+                    "source_platform": row["source_platform"],
+                    "creator": metadata.get("uploader"),
+                    "caption": metadata.get("caption_or_description"),
+                    "summary": source_content.get("summary"),
+                    "status": row["status"],
+                    "stage": row["stage"],
+                    "error_type": row["error_type"],
+                    "error_message": row["error_message"],
+                    "started_at": row["started_at"],
+                    "updated_at": row["updated_at"],
+                    "completed_at": row["completed_at"],
+                    "results": _decode_json_list(row["result_json"]),
+                    "events": events_by_run.get(row["id"], []),
+                }
+            )
+        return activity
+    finally:
+        con.close()
 
 
 def list_things(db_path: Path, limit: int = 200) -> list[dict[str, Any]]:

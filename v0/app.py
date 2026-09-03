@@ -63,7 +63,21 @@ class ShortcutIngestRequest(BaseModel):
     delivery: Literal["response_only", "telegram"] = "response_only"
 
 
+class SavedThingOutcome(BaseModel):
+    thing_id: int
+    name: str
+    type: str
+    location_id: int | None = None
+    location_name: str | None = None
+    latitude: float | None = None
+    longitude: float | None = None
+    resolution_status: str
+    is_new: bool
+    source_count: int = Field(ge=1)
+
+
 class IngestResponse(BaseModel):
+    ingest_id: int
     item_id: int
     source_url: str
     user_prompt: str | None
@@ -72,6 +86,7 @@ class IngestResponse(BaseModel):
     resolved_places: list[dict[str, Any]]
     things_extracted: list[dict[str, Any]] = Field(default_factory=list)
     resolved_things: list[dict[str, Any]] = Field(default_factory=list)
+    saved_things: list[SavedThingOutcome] = Field(default_factory=list)
     delivery_status: Literal["not_requested", "sent", "failed"]
 
 
@@ -156,6 +171,37 @@ class SavedSource(BaseModel):
 
 class SourcesResponse(BaseModel):
     sources: list[SavedSource]
+
+
+class IngestActivityEvent(BaseModel):
+    id: int
+    stage: str
+    status: str
+    message: str
+    created_at: str
+
+
+class IngestActivity(BaseModel):
+    id: int
+    item_id: int | None = None
+    source_url: str
+    source_platform: str
+    creator: str | None = None
+    caption: str | None = None
+    summary: str | None = None
+    status: str
+    stage: str
+    error_type: str | None = None
+    error_message: str | None = None
+    started_at: str
+    updated_at: str
+    completed_at: str | None = None
+    results: list[SavedThingOutcome] = Field(default_factory=list)
+    events: list[IngestActivityEvent] = Field(default_factory=list)
+
+
+class ActivityResponse(BaseModel):
+    activity: list[IngestActivity]
 
 
 class DeletePlaceResponse(BaseModel):
@@ -429,6 +475,21 @@ def create_app(injected_runtime: Runtime | None = None) -> FastAPI:
                 detail="limit must be between 1 and 500",
             )
         return {"sources": await asyncio.to_thread(runtime.service.sources, limit)}
+
+    @application.get("/api/v1/activity", response_model=ActivityResponse)
+    async def get_activity(
+        request: Request,
+        authorization: str | None = Header(default=None),
+        limit: int = 200,
+    ) -> dict[str, Any]:
+        runtime: Runtime = request.app.state.runtime
+        _require_ingest_auth(runtime, authorization)
+        if not 1 <= limit <= 500:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="limit must be between 1 and 500",
+            )
+        return {"activity": await asyncio.to_thread(runtime.service.activity, limit)}
 
     @application.delete(
         "/api/v1/places/{place_id}",

@@ -869,6 +869,7 @@ def process_ingest(
     user_prompt: str | None,
     workdir: Path,
     existing_types: list[str] | None = None,
+    progress: Callable[[str], None] | None = None,
 ) -> dict[str, Any]:
     """Full pipeline: returns a dict with source, metadata, extracted, resolved."""
     if not source_url:
@@ -884,6 +885,8 @@ def process_ingest(
         raise ValueError("Supported URLs are public YouTube videos and Instagram posts")
 
     if platform == "youtube":
+        if progress:
+            progress("extracting")
         metadata = {"source_platform": "youtube", "webpage_url": source_url}
         try:
             bundle = extract_youtube_bundle(source_url, user_prompt, existing_types)
@@ -896,9 +899,13 @@ def process_ingest(
             metadata["source_content"] = bundle["source_content"]
             metadata["extraction_status"] = "complete"
     else:
+        if progress:
+            progress("fetching")
         fetched = fetch(source_url, workdir)
         metadata = fetched.metadata
         try:
+            if progress:
+                progress("archiving")
             try:
                 metadata["archived_media"] = archive_media(
                     fetched.media_paths,
@@ -911,6 +918,8 @@ def process_ingest(
                 # still worth preserving if archival storage is unavailable.
                 metadata["media_preserved"] = False
                 log.exception("source media archive failed (non-fatal)")
+            if progress:
+                progress("extracting")
             try:
                 bundle = extract_bundle(
                     fetched.media_paths,
@@ -932,6 +941,8 @@ def process_ingest(
             except Exception:
                 log.exception("cleanup failed (non-fatal)")
 
+    if progress:
+        progress("resolving")
     resolved = [{"extracted": thing, **resolve(thing)} for thing in things]
 
     return {

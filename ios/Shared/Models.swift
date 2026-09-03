@@ -12,6 +12,10 @@ struct SourcesEnvelope: Decodable {
   let sources: [SavedSource]
 }
 
+struct ActivityEnvelope: Decodable {
+  let activity: [IngestActivity]
+}
+
 struct SavedPlace: Decodable, Identifiable, Sendable {
   let id: Int
   let locationID: Int?
@@ -312,44 +316,135 @@ struct SavedSource: Decodable, Identifiable, Sendable {
 }
 
 struct IngestResponse: Decodable, Sendable {
+  let ingestID: Int
   let itemID: Int
-  let resolvedPlaces: [IngestResolvedPlace]
+  let savedThings: [SavedThingOutcome]
 
-  var savedPlaceNames: [String] {
-    resolvedPlaces.compactMap(\.displayName)
+  var notificationTitle: String {
+    guard savedThings.count == 1, let thing = savedThings.first else {
+      return savedThings.isEmpty ? "No things found" : "Saved \(savedThings.count) things"
+    }
+    return thing.isNew
+      ? "Saved \(thing.type) · \(thing.name)"
+      : "Added to \(thing.type) · \(thing.name)"
+  }
+
+  var notificationBody: String {
+    guard !savedThings.isEmpty else {
+      return "The source was saved for review."
+    }
+    if savedThings.count == 1, let thing = savedThings.first {
+      return thing.isNew
+        ? "Created a new Thing from this post."
+        : "This Thing now has \(thing.sourceCount) saved sources."
+    }
+    let newThings = savedThings.filter(\.isNew)
+    let existingThings = savedThings.filter { !$0.isNew }
+    var sections: [String] = []
+    if !newThings.isEmpty {
+      sections.append("New: " + Self.summary(newThings))
+    }
+    if !existingThings.isEmpty {
+      sections.append("Added: " + Self.summary(existingThings))
+    }
+    return sections.joined(separator: "\n")
   }
 
   enum CodingKeys: String, CodingKey {
+    case ingestID = "ingest_id"
     case itemID = "item_id"
-    case resolvedPlaces = "resolved_places"
+    case savedThings = "saved_things"
+  }
+
+  private static func summary(_ things: [SavedThingOutcome]) -> String {
+    let visible = things.prefix(3).map { "\($0.type) · \($0.name)" }
+    let remaining = things.count - visible.count
+    return visible.joined(separator: "; ") + (remaining > 0 ? "; +\(remaining) more" : "")
   }
 }
 
-struct IngestResolvedPlace: Decodable, Sendable {
-  let extracted: IngestExtractedPlace?
-  let place: IngestGooglePlace?
+struct SavedThingOutcome: Decodable, Identifiable, Sendable, Hashable {
+  let thingID: Int
+  let name: String
+  let type: String
+  let locationID: Int?
+  let locationName: String?
+  let latitude: Double?
+  let longitude: Double?
+  let resolutionStatus: String
+  let isNew: Bool
+  let sourceCount: Int
 
-  var displayName: String? {
-    let name = place?.displayName?.text ?? extracted?.extractedName
-    guard let name, !name.isEmpty else { return nil }
-    return name
-  }
-}
-
-struct IngestExtractedPlace: Decodable, Sendable {
-  let extractedName: String?
+  var id: Int { thingID }
+  var hasLocation: Bool { locationID != nil && latitude != nil && longitude != nil }
 
   enum CodingKeys: String, CodingKey {
-    case extractedName = "extracted_name"
+    case name, type, latitude, longitude
+    case thingID = "thing_id"
+    case locationID = "location_id"
+    case locationName = "location_name"
+    case resolutionStatus = "resolution_status"
+    case isNew = "is_new"
+    case sourceCount = "source_count"
   }
 }
 
-struct IngestGooglePlace: Decodable, Sendable {
-  let displayName: IngestGoogleDisplayName?
+struct IngestActivity: Decodable, Identifiable, Sendable {
+  let id: Int
+  let itemID: Int?
+  let sourceURL: URL
+  let sourcePlatform: String
+  let creator: String?
+  let caption: String?
+  let summary: String?
+  let status: String
+  let stage: String
+  let errorType: String?
+  let errorMessage: String?
+  let startedAt: String
+  let updatedAt: String
+  let completedAt: String?
+  let results: [SavedThingOutcome]
+  let events: [IngestActivityEvent]
+
+  var title: String {
+    if let creator, !creator.isEmpty { return creator }
+    return sourcePlatform.capitalized
+  }
+
+  var statusText: String {
+    switch status {
+    case "processing": return "Processing · \(stage.replacingOccurrences(of: "_", with: " ").capitalized)"
+    case "partial": return "Saved · Needs review"
+    case "failed": return "Failed"
+    default: return "Saved"
+    }
+  }
+
+  enum CodingKeys: String, CodingKey {
+    case id, creator, caption, summary, status, stage, results, events
+    case itemID = "item_id"
+    case sourceURL = "source_url"
+    case sourcePlatform = "source_platform"
+    case errorType = "error_type"
+    case errorMessage = "error_message"
+    case startedAt = "started_at"
+    case updatedAt = "updated_at"
+    case completedAt = "completed_at"
+  }
 }
 
-struct IngestGoogleDisplayName: Decodable, Sendable {
-  let text: String?
+struct IngestActivityEvent: Decodable, Identifiable, Sendable {
+  let id: Int
+  let stage: String
+  let status: String
+  let message: String
+  let createdAt: String
+
+  enum CodingKeys: String, CodingKey {
+    case id, stage, status, message
+    case createdAt = "created_at"
+  }
 }
 
 struct APIErrorEnvelope: Decodable {

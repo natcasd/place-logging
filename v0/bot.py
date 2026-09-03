@@ -36,6 +36,7 @@ def _format_timestamp(value: object) -> str | None:
 
 def _format_result(result: dict) -> str:
     resolved = result.get("resolved_things", result.get("resolved_places", []))
+    outcomes = result.get("saved_things") or []
     if not resolved:
         if (result.get("metadata") or {}).get("extraction_status") == "failed":
             return (
@@ -45,11 +46,12 @@ def _format_result(result: dict) -> str:
         return "⚠️ Source saved, but no individual things were extracted."
 
     lines = []
-    for r in resolved:
+    for index, r in enumerate(resolved):
         extracted = r.get("extracted", {}) or {}
+        outcome = outcomes[index] if index < len(outcomes) else {}
         status = r.get("status")
-        name = extracted.get("extracted_name", "?")
-        thing_type = extracted.get("type_name")
+        name = outcome.get("name") or extracted.get("extracted_name", "?")
+        thing_type = outcome.get("type") or extracted.get("type_name")
         description = extracted.get("description") or extracted.get("why_its_cool")
         dishes = extracted.get("dishes") or []
         dishes_str = ", ".join(dishes[:3]) + ("…" if len(dishes) > 3 else "")
@@ -58,10 +60,14 @@ def _format_result(result: dict) -> str:
 
         if status == "auto":
             place = r["place"]
-            display = (place.get("displayName") or {}).get("text", name)
+            venue = (place.get("displayName") or {}).get("text")
             addr = place.get("shortFormattedAddress") or place.get("formattedAddress", "")
             url = place.get("googleMapsUri", "")
-            lines.append(f"✅ *{display}*")
+            lines.append(f"✅ *{name}*")
+            if thing_type:
+                lines.append(f"📁 {thing_type}")
+            if venue and venue != name:
+                lines.append(f"📍 {venue}")
             if addr:
                 lines.append(f"📍 {addr}")
             if dishes:
@@ -88,6 +94,14 @@ def _format_result(result: dict) -> str:
         else:
             reason = r.get("reason", "")
             lines.append(f"⚠️ *{name}* — unresolved ({reason})")
+
+        if outcome:
+            if outcome.get("is_new"):
+                lines.append("🆕 New Thing")
+            else:
+                lines.append(
+                    f"➕ Added source · {outcome.get('source_count', 1)} total"
+                )
 
         lines.append("")  # blank line between places
 

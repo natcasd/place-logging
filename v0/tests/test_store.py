@@ -11,10 +11,14 @@ from store import (
     delete_things,
     init_db,
     list_places,
+    list_ingest_runs,
     list_sources,
     list_thing_types,
     list_things,
     save_ingest,
+    saved_thing_outcomes,
+    start_ingest_run,
+    finish_ingest_run,
 )
 
 
@@ -363,6 +367,82 @@ class StoreTests(unittest.TestCase):
             sources = list_sources(db_path)
             self.assertEqual(len(sources), 1)
             self.assertTrue(sources[0]["needs_review"])
+
+    def test_activity_backfills_existing_sources_without_changing_them(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            db_path = Path(temp_dir) / "places.db"
+            init_db(db_path)
+            item_id = save_ingest(
+                db_path,
+                {
+                    "source_url": "https://www.instagram.com/reel/old/",
+                    "metadata": {"source_platform": "instagram"},
+                    "resolved_things": [
+                        self.resolved_place("Old Restaurant", "places/old")
+                    ],
+                },
+            )
+
+            init_db(db_path)
+
+            activity = list_ingest_runs(db_path)
+            self.assertEqual(len(activity), 1)
+            self.assertEqual(activity[0]["item_id"], item_id)
+            self.assertEqual(activity[0]["results"][0]["name"], "Old Restaurant")
+            self.assertEqual(activity[0]["status"], "completed")
+            self.assertEqual(len(list_sources(db_path)), 1)
+            self.assertEqual(len(list_things(db_path)), 1)
+
+    def test_saved_thing_outcome_reports_new_then_added_source(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            db_path = Path(temp_dir) / "places.db"
+            init_db(db_path)
+            item_ids = []
+            for suffix in ("one", "two"):
+                item_ids.append(
+                    save_ingest(
+                        db_path,
+                        {
+                            "source_url": f"https://www.instagram.com/reel/{suffix}/",
+                            "metadata": {"source_platform": "instagram"},
+                            "resolved_things": [
+                                self.resolved_place("S&P Lunch", "places/shared")
+                            ],
+                        },
+                    )
+                )
+
+            first = saved_thing_outcomes(db_path, item_ids[0])[0]
+            second = saved_thing_outcomes(db_path, item_ids[1])[0]
+            self.assertTrue(first["is_new"])
+            self.assertEqual(first["source_count"], 1)
+            self.assertFalse(second["is_new"])
+            self.assertEqual(second["source_count"], 2)
+
+    def test_failed_run_preserves_stage_and_readable_error(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            db_path = Path(temp_dir) / "places.db"
+            init_db(db_path)
+            run_id = start_ingest_run(
+                db_path,
+                "https://www.instagram.com/reel/fail/",
+                None,
+                "instagram",
+            )
+            finish_ingest_run(
+                db_path,
+                run_id,
+                status="failed",
+                stage="extracting",
+                message="Failed while finding recommendations",
+                error=RuntimeError("Gemini overloaded"),
+            )
+
+            run = list_ingest_runs(db_path)[0]
+            self.assertEqual(run["status"], "failed")
+            self.assertEqual(run["stage"], "extracting")
+            self.assertEqual(run["error_type"], "RuntimeError")
+            self.assertEqual(run["error_message"], "Gemini overloaded")
 
     def test_delete_thing_preserves_its_source(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

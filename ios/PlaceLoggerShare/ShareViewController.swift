@@ -146,29 +146,21 @@ private struct ShareStatusView: View {
         let url = try await loadURL()
         state = .saving(url)
         let result = try await PlaceLoggerAPI().ingest(sourceURL: url)
-        let title: String
-        let body: String
-        if result.savedPlaceNames.count == 1, let name = result.savedPlaceNames.first {
-          title = "\(name) was saved"
-          body = "Tap to view it in Place Logger."
-        } else if result.savedPlaceNames.count > 1 {
-          title = "\(result.savedPlaceNames.count) places were saved"
-          body = "Tap to view them in Place Logger."
-        } else {
-          title = "No places found"
-          body = "Place Logger finished processing the shared post."
-        }
         await LocalNotification.send(
-          title: title,
-          body: body,
-          itemID: result.itemID
+          title: result.notificationTitle,
+          body: result.notificationBody,
+          ingestID: result.ingestID,
+          itemID: result.itemID,
+          thing: result.savedThings.count == 1 ? result.savedThings.first : nil
         )
         complete()
       } catch {
         await LocalNotification.send(
           title: "Couldn't save place",
           body: error.localizedDescription,
-          itemID: nil
+          ingestID: nil,
+          itemID: nil,
+          thing: nil
         )
         state = .failed(error.localizedDescription)
       }
@@ -177,7 +169,13 @@ private struct ShareStatusView: View {
 }
 
 private enum LocalNotification {
-  static func send(title: String, body: String, itemID: Int?) async {
+  static func send(
+    title: String,
+    body: String,
+    ingestID: Int?,
+    itemID: Int?,
+    thing: SavedThingOutcome?
+  ) async {
     let center = UNUserNotificationCenter.current()
     let settings = await center.notificationSettings()
     guard settings.authorizationStatus == .authorized
@@ -190,9 +188,14 @@ private enum LocalNotification {
     content.title = title
     content.body = body
     content.sound = .default
-    if let itemID {
-      content.userInfo = ["item_id": itemID]
+    var userInfo: [String: Any] = [:]
+    if let ingestID { userInfo["ingest_id"] = ingestID }
+    if let itemID { userInfo["item_id"] = itemID }
+    if let thing {
+      userInfo["thing_id"] = thing.thingID
+      userInfo["has_location"] = thing.hasLocation
     }
+    content.userInfo = userInfo
 
     let request = UNNotificationRequest(
       identifier: UUID().uuidString,

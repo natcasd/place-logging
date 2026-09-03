@@ -40,6 +40,34 @@ class TelegramAdapterTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("🖼 Slide 4", formatted)
         self.assertIn("🎬 Appears at 1:14", formatted)
 
+    def test_formats_thing_identity_and_existing_source_outcome(self) -> None:
+        result = {
+            "saved_things": [
+                {
+                    "name": "Giacometti in the Temple of Dendur",
+                    "type": "Exhibit",
+                    "is_new": False,
+                    "source_count": 2,
+                }
+            ],
+            "resolved_things": [
+                {
+                    "status": "auto",
+                    "extracted": {
+                        "extracted_name": "Giacometti in the Temple of Dendur",
+                        "type_name": "Exhibit",
+                    },
+                    "place": {"displayName": {"text": "The Met"}},
+                }
+            ],
+        }
+
+        formatted = bot._format_result(result)
+
+        self.assertIn("*Giacometti in the Temple of Dendur*", formatted)
+        self.assertIn("📍 The Met", formatted)
+        self.assertIn("Added source · 2 total", formatted)
+
     @patch("bot.send_ingest_result", new_callable=AsyncMock)
     async def test_url_message_calls_shared_ingest_service(
         self,

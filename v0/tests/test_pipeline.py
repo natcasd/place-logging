@@ -469,12 +469,14 @@ class ProcessIngestTests(unittest.TestCase):
             "things": [{"extracted_name": "Test Place"}],
         }
         mock_resolve.return_value = {"status": "unresolved", "reason": "test"}
+        stages = []
 
         with patch("pipeline.fetch") as mock_fetch:
             result = pipeline.process_ingest(
                 "https://youtu.be/abc",
                 None,
                 Path("/unused"),
+                progress=stages.append,
             )
 
         mock_fetch.assert_not_called()
@@ -484,6 +486,7 @@ class ProcessIngestTests(unittest.TestCase):
             result["places_extracted"][0]["extracted_name"],
             "Test Place",
         )
+        self.assertEqual(stages, ["extracting", "resolving"])
 
     def test_tiktok_fails_with_clear_temporary_message(self) -> None:
         with self.assertRaisesRegex(NotImplementedError, "temporarily unavailable"):
@@ -546,11 +549,13 @@ class ProcessIngestTests(unittest.TestCase):
                 "things": [{"extracted_name": "Test Place"}],
             }
             mock_resolve.return_value = {"status": "unresolved", "reason": "test"}
+            stages = []
 
             pipeline.process_ingest(
                 "https://www.instagram.com/reel/abc/",
                 None,
                 Path(temp_dir),
+                progress=stages.append,
             )
 
             self.assertFalse(video.exists())
@@ -559,6 +564,10 @@ class ProcessIngestTests(unittest.TestCase):
             source_dirs = list((Path(temp_dir) / "sources").iterdir())
             self.assertEqual(len(source_dirs), 1)
             self.assertTrue((source_dirs[0] / "001-post.mp4").exists())
+            self.assertEqual(
+                stages,
+                ["fetching", "archiving", "extracting", "resolving"],
+            )
 
     @patch("pipeline.resolve")
     @patch("pipeline.archive_media", side_effect=OSError("disk full"))
