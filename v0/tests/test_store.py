@@ -85,6 +85,12 @@ class StoreTests(unittest.TestCase):
                 "A bakery with great bread and sandwiches.",
             )
             self.assertEqual(places[0]["ends_at"], "2026-09-30")
+            canonical = list_things(db_path)[0]
+            self.assertEqual(len(canonical["sources"]), 1)
+            self.assertEqual(
+                canonical["sources"][0]["description"],
+                "A bakery with great bread and sandwiches.",
+            )
             self.assertEqual(list_thing_types(db_path), ["Restaurant"])
 
     def test_init_db_migrates_existing_places_table(self) -> None:
@@ -130,6 +136,143 @@ class StoreTests(unittest.TestCase):
                 con.close()
             self.assertEqual(legacy, ("legacy", "Unknown"))
             self.assertEqual(len(list(Path(temp_dir).glob("*.pre-things-*.bak"))), 1)
+
+    def test_normalized_migration_backs_up_and_backfills_legacy_rows(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            db_path = Path(temp_dir) / "places.db"
+            init_db(db_path)
+            save_ingest(
+                db_path,
+                {
+                    "source_url": "https://www.instagram.com/reel/legacy/",
+                    "metadata": {},
+                    "resolved_things": [
+                        self.resolved_place("Legacy Restaurant", "places/legacy")
+                    ],
+                },
+            )
+            con = sqlite3.connect(db_path)
+            con.executescript(
+                "DROP TABLE thing_sources; DROP TABLE things; DROP TABLE locations;"
+            )
+            con.commit()
+            con.close()
+
+            init_db(db_path)
+
+            self.assertEqual([thing["name"] for thing in list_things(db_path)], ["Legacy Restaurant"])
+            self.assertEqual(
+                len(list(Path(temp_dir).glob("*.pre-normalized-*.bak"))),
+                1,
+            )
+
+    def test_conservative_matching_merges_venue_aliases_but_not_exhibits(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            db_path = Path(temp_dir) / "places.db"
+            init_db(db_path)
+            examples = (
+                ("one", "S&P Lunch", "Restaurant", None, "First description"),
+                ("two", "S & P Lunch", "Deli", None, "Most recent description"),
+                (
+                    "three",
+                    "Giacometti in the Temple of Dendur",
+                    "Exhibit",
+                    "2026-09-08",
+                    "Exhibit description",
+                ),
+            )
+            for suffix, name, thing_type, ends_at, description in examples:
+                extracted = {
+                    "extracted_name": name,
+                    "type_name": thing_type,
+                    "description": description,
+                }
+                if ends_at:
+                    extracted["ends_at"] = ends_at
+                save_ingest(
+                    db_path,
+                    {
+                        "source_url": f"https://www.instagram.com/reel/{suffix}/",
+                        "metadata": {"source_platform": "instagram"},
+                        "resolved_things": [
+                            {
+                                "status": "resolved",
+                                "extracted": extracted,
+                                "place": {
+                                    "id": "places/shared",
+                                    "displayName": {"text": "Shared Venue"},
+                                },
+                            }
+                        ],
+                    },
+                )
+
+            things = list_things(db_path)
+
+            self.assertEqual(len(things), 2)
+            venue = next(thing for thing in things if thing["type"] == "Restaurant")
+            exhibit = next(thing for thing in things if thing["type"] == "Exhibit")
+            self.assertEqual(len(venue["sources"]), 2)
+            self.assertEqual(venue["description"], "Most recent description")
+            self.assertEqual(exhibit["ends_at"], "2026-09-08")
+            self.assertEqual(venue["location_id"], exhibit["location_id"])
+
+    def test_temporary_things_with_different_dates_remain_separate(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            db_path = Path(temp_dir) / "places.db"
+            init_db(db_path)
+            for suffix, ends_at in (("one", "2026-09-08"), ("two", "2027-09-08")):
+                save_ingest(
+                    db_path,
+                    {
+                        "source_url": f"https://www.instagram.com/reel/{suffix}/",
+                        "metadata": {},
+                        "resolved_things": [
+                            {
+                                "status": "resolved",
+                                "extracted": {
+                                    "extracted_name": "Annual Exhibition",
+                                    "type_name": "Exhibit",
+                                    "ends_at": ends_at,
+                                },
+                                "place": {"id": "places/museum"},
+                            }
+                        ],
+                    },
+                )
+
+            self.assertEqual(len(list_things(db_path)), 2)
+
+    def test_non_location_things_match_only_on_normalized_name_and_type(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            db_path = Path(temp_dir) / "places.db"
+            init_db(db_path)
+            for suffix, name, thing_type in (
+                ("one", "The Creative Act", "Book"),
+                ("two", "the creative act", "Book"),
+                ("three", "The Creative Act", "Movie"),
+            ):
+                save_ingest(
+                    db_path,
+                    {
+                        "source_url": f"https://www.instagram.com/reel/{suffix}/",
+                        "metadata": {},
+                        "resolved_things": [
+                            {
+                                "status": "not_applicable",
+                                "extracted": {
+                                    "extracted_name": name,
+                                    "type_name": thing_type,
+                                },
+                            }
+                        ],
+                    },
+                )
+
+            things = list_things(db_path)
+            self.assertEqual(len(things), 2)
+            book = next(thing for thing in things if thing["type"] == "Book")
+            self.assertEqual(len(book["sources"]), 2)
 
     def test_never_persists_generic_place_type(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -278,7 +421,7 @@ class StoreTests(unittest.TestCase):
 
             result = delete_things(db_path, restaurant_ids)
 
-            self.assertEqual(result, {"deleted_things": 2, "deleted_sources": 0})
+            self.assertEqual(result, {"deleted_things": 1, "deleted_sources": 0})
             self.assertEqual([thing["name"] for thing in list_things(db_path)], ["Guest Pop-Up"])
             self.assertEqual(len(list_sources(db_path)), 3)
 
@@ -336,7 +479,7 @@ class StoreTests(unittest.TestCase):
 
             result = delete_place(db_path, selected["id"])
 
-            self.assertEqual(result, {"deleted_places": 2, "deleted_items": 1})
+            self.assertEqual(result, {"deleted_places": 2, "deleted_items": 0})
             remaining = list_places(db_path, 10)
             self.assertEqual([place["name"] for place in remaining], ["Keep Me"])
             self.assertEqual(
@@ -345,7 +488,7 @@ class StoreTests(unittest.TestCase):
             )
             con = sqlite3.connect(db_path)
             try:
-                self.assertEqual(con.execute("SELECT COUNT(*) FROM items").fetchone()[0], 1)
+                self.assertEqual(con.execute("SELECT COUNT(*) FROM items").fetchone()[0], 2)
             finally:
                 con.close()
 

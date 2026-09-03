@@ -133,6 +133,27 @@ class ApiTests(unittest.TestCase):
                 "location_query": None,
                 "source_url": "https://youtu.be/test",
                 "saved_at": "2026-09-02 12:00:00",
+                "sources": [
+                    {
+                        "id": 31,
+                        "item_id": 12,
+                        "ordinal": 0,
+                        "name": "The Creative Act",
+                        "type": "Book",
+                        "source_url": "https://youtu.be/test",
+                        "source_platform": "youtube",
+                        "creator": "Reader",
+                        "description": "A book about creativity.",
+                        "dishes": [],
+                        "why_its_cool": "",
+                        "tags": [],
+                        "timestamp_seconds": 3.0,
+                        "slide_index": None,
+                        "resolution_status": "not_applicable",
+                        "location_query": None,
+                        "saved_at": "2026-09-02 12:00:00",
+                    }
+                ],
             }
         ]
 
@@ -148,6 +169,7 @@ class ApiTests(unittest.TestCase):
             response.json()["things"][0]["location_name"],
             "The Creative Act Bookstore",
         )
+        self.assertEqual(response.json()["things"][0]["sources"][0]["creator"], "Reader")
 
     def test_sources_includes_sources_needing_review(self) -> None:
         self.service.sources.return_value = [

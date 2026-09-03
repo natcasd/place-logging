@@ -32,11 +32,9 @@ final class PlacesModel: ObservableObject {
     sources = try await api.fetchSources()
   }
 
-  func deleteThingCard(_ placesToDelete: [SavedPlace]) async throws {
-    let ids = placesToDelete.map(\.id)
-    try await api.deleteThings(ids: ids)
-    let deletedIDs = Set(ids)
-    places.removeAll { deletedIDs.contains($0.id) }
+  func deleteThingCard(_ thing: SavedPlace) async throws {
+    try await api.deleteThing(id: thing.id)
+    places.removeAll { $0.id == thing.id }
     sources = try await api.fetchSources()
   }
 }
@@ -68,7 +66,7 @@ struct PlacesView: View {
               places: model.places,
               isRefreshing: model.isLoading,
               refresh: { await model.load() },
-              deleteThingCard: { things in try await model.deleteThingCard(things) }
+              deleteThingCard: { thing in try await model.deleteThingCard(thing) }
             )
               .tabItem {
                 Label("Around Me", systemImage: "location")
@@ -111,7 +109,9 @@ struct PlacesView: View {
       }
       .navigationDestination(for: Int.self) { itemID in
         SavedItemView(
-          places: model.places.filter { $0.itemID == itemID },
+          places: model.places.filter { thing in
+            thing.itemID == itemID || thing.sources.contains { $0.itemID == itemID }
+          },
           isLoading: model.isLoading
         )
       }
@@ -221,7 +221,7 @@ private struct PlacesList: View {
       }
     } message: {
       if let place = pendingDeletion {
-        Text(deleteMessage(name: place.name))
+        Text(deleteMessage(thing: place))
       }
     }
     .alert(
@@ -240,36 +240,14 @@ private struct PlacesList: View {
 }
 
 private struct MappedThingGroup: Identifiable {
-  let id: String
-  var places: [SavedPlace]
+  let thing: SavedPlace
 
-  var primary: SavedPlace { places[0] }
+  var id: Int { thing.id }
+  var primary: SavedPlace { thing }
   var name: String { primary.name }
   var type: String { primary.displayType }
-  var sourceCount: Int { Set(places.map(\.itemID)).count }
-  var dishes: [String] { uniqueStrings(places.flatMap(\.dishes)) }
-
-  static func make(from places: [SavedPlace]) -> [MappedThingGroup] {
-    var groups: [MappedThingGroup] = []
-    var indexes: [String: Int] = [:]
-
-    for place in places {
-      let identityParts = [
-        normalizedIdentity(place.name),
-        normalizedIdentity(place.displayType),
-        place.startsAt ?? "",
-        place.endsAt ?? "",
-      ]
-      let key = identityParts.joined(separator: "|")
-      if let index = indexes[key] {
-        groups[index].places.append(place)
-      } else {
-        indexes[key] = groups.count
-        groups.append(MappedThingGroup(id: key, places: [place]))
-      }
-    }
-    return groups
-  }
+  var sourceCount: Int { primary.sources.count }
+  var dishes: [String] { primary.dishes }
 }
 
 private struct MappedPlaceGroup: Identifiable {
@@ -280,7 +258,7 @@ private struct MappedPlaceGroup: Identifiable {
   var name: String {
     places.compactMap(\.locationName).first { !$0.isEmpty } ?? primary.name
   }
-  var thingGroups: [MappedThingGroup] { MappedThingGroup.make(from: places) }
+  var thingGroups: [MappedThingGroup] { places.map { MappedThingGroup(thing: $0) } }
   var coordinate: CLLocationCoordinate2D {
     CLLocationCoordinate2D(
       latitude: primary.latitude ?? 0,
@@ -294,7 +272,7 @@ private struct MappedPlaceGroup: Identifiable {
 
     for place in places {
       guard place.latitude != nil, place.longitude != nil else { continue }
-      let key = place.googlePlaceID.map { "google:\($0)" } ?? "saved:\(place.id)"
+      let key = place.locationID.map { "location:\($0)" } ?? "saved:\(place.id)"
       if let index = indexes[key] {
         groups[index].places.append(place)
       } else {
@@ -303,21 +281,6 @@ private struct MappedPlaceGroup: Identifiable {
       }
     }
     return groups
-  }
-}
-
-private func normalizedIdentity(_ value: String) -> String {
-  value.folding(options: [.caseInsensitive, .diacriticInsensitive], locale: .current)
-    .trimmingCharacters(in: .whitespacesAndNewlines)
-}
-
-private func uniqueStrings(_ strings: [String]) -> [String] {
-  var seen: Set<String> = []
-  return strings.filter { value in
-    let normalized = normalizedIdentity(value)
-    guard !normalized.isEmpty, !seen.contains(normalized) else { return false }
-    seen.insert(normalized)
-    return true
   }
 }
 
@@ -380,7 +343,7 @@ private struct PlacesMap: View {
   let places: [SavedPlace]
   let isRefreshing: Bool
   let refresh: () async -> Void
-  let deleteThingCard: ([SavedPlace]) async throws -> Void
+  let deleteThingCard: (SavedPlace) async throws -> Void
   @StateObject private var locationModel = LocationModel()
   @StateObject private var searchModel = MapSearchModel()
   @State private var cameraPosition: MapCameraPosition = .automatic
@@ -576,7 +539,7 @@ private struct PlacesMap: View {
       }) { group in
         NavigationStack {
           PlaceDetailSheet(group: group) {
-            try await deleteThingCard($0.places)
+            try await deleteThingCard($0.primary)
           }
         }
         .presentationDetents([.fraction(0.58), .large])
@@ -620,7 +583,7 @@ private struct PlaceDetailSheet: View {
   let deleteThing: (MappedThingGroup) async throws -> Void
   @Environment(\.dismiss) private var dismiss
   @State private var pendingDeletion: MappedThingGroup?
-  @State private var deletingThingID: String?
+  @State private var deletingThingID: Int?
   @State private var deletionError: String?
 
   var body: some View {
@@ -698,8 +661,11 @@ private struct PlaceDetailSheet: View {
   }
 }
 
-private func deleteMessage(name: String) -> String {
-  "This removes only \(name). Its original source post stays saved."
+private func deleteMessage(thing: SavedPlace) -> String {
+  let references = thing.sources.count == 1
+    ? "its saved reference"
+    : "its \(thing.sources.count) saved references"
+  return "This removes \(thing.name) and \(references). Original source posts stay saved."
 }
 
 private func logicalThingDeleteMessage(_ thing: MappedThingGroup) -> String {
@@ -774,7 +740,7 @@ private struct SingleThingLocationDetails: View {
 
     ThingContent(thing: thing)
 
-    SourceLinks(places: thing.places)
+    SourceLinks(thing: thing.primary)
   }
 }
 
@@ -802,7 +768,7 @@ private struct ThingAtLocationCard: View {
 
       ThingContent(thing: thing)
 
-      SourceLinks(places: thing.places)
+      SourceLinks(thing: thing.primary)
     }
     .padding(14)
     .background(.secondary.opacity(0.1), in: RoundedRectangle(cornerRadius: 14))
@@ -887,24 +853,24 @@ private struct ThingContent: View {
 }
 
 private struct SourceLinks: View {
-  let places: [SavedPlace]
+  let thing: SavedPlace
 
   var body: some View {
     VStack(alignment: .leading, spacing: 8) {
       Text("Saved from \(sourceCount) \(sourceCount == 1 ? "post" : "posts")")
         .font(.subheadline.weight(.semibold))
 
-      ForEach(uniqueSourcePlaces) { place in
-        Link(destination: place.linkedSourceURL) {
+      ForEach(thing.sources) { source in
+        Link(destination: source.linkedSourceURL) {
           HStack(spacing: 12) {
-            Image(systemName: place.sourceSystemImage)
+            Image(systemName: source.sourceSystemImage)
               .font(.title3)
               .frame(width: 28)
 
             VStack(alignment: .leading, spacing: 3) {
-              Text(place.sourceLinkText)
+              Text(source.sourceLinkText)
                 .font(.subheadline.weight(.semibold))
-              if let mediaReference = place.mediaReferenceText {
+              if let mediaReference = source.mediaReferenceText {
                 Text(mediaReference)
                   .font(.caption)
                   .foregroundStyle(.secondary)
@@ -923,12 +889,7 @@ private struct SourceLinks: View {
   }
 
   private var sourceCount: Int {
-    uniqueSourcePlaces.count
-  }
-
-  private var uniqueSourcePlaces: [SavedPlace] {
-    var seen: Set<Int> = []
-    return places.filter { seen.insert($0.itemID).inserted }
+    thing.sources.count
   }
 
 }

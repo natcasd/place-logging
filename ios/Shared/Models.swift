@@ -14,6 +14,7 @@ struct SourcesEnvelope: Decodable {
 
 struct SavedPlace: Decodable, Identifiable, Sendable {
   let id: Int
+  let locationID: Int?
   let itemID: Int
   let ordinal: Int
   let name: String
@@ -36,9 +37,12 @@ struct SavedPlace: Decodable, Identifiable, Sendable {
   let recurrenceText: String?
   let sourceURL: URL
   let savedAt: String
+  let sources: [SavedThingSource]
 
   enum CodingKeys: String, CodingKey {
     case id, ordinal, name, latitude, longitude, dishes, tags
+    case sources
+    case locationID = "location_id"
     case itemID = "item_id"
     case googlePlaceID = "google_place_id"
     case formattedAddress = "formatted_address"
@@ -176,6 +180,104 @@ struct SavedPlace: Decodable, Identifiable, Sendable {
     formatter.locale = Locale(identifier: "en_US_POSIX")
     formatter.dateFormat = "yyyy-MM-dd"
     return formatter.date(from: value)
+  }
+}
+
+struct SavedThingSource: Decodable, Identifiable, Sendable {
+  let id: Int
+  let itemID: Int
+  let ordinal: Int
+  let name: String
+  let type: String
+  let sourceURL: URL
+  let sourcePlatform: String
+  let creator: String?
+  let description: String
+  let dishes: [String]
+  let whyItsCool: String
+  let tags: [String]
+  let timestampSeconds: Double?
+  let slideIndex: Int?
+  let resolutionStatus: String
+  let locationQuery: String?
+  let savedAt: String
+
+  enum CodingKeys: String, CodingKey {
+    case id, ordinal, name, type, description, dishes, tags
+    case itemID = "item_id"
+    case sourceURL = "source_url"
+    case sourcePlatform = "source_platform"
+    case creator
+    case whyItsCool = "why_its_cool"
+    case timestampSeconds = "timestamp_seconds"
+    case slideIndex = "slide_index"
+    case resolutionStatus = "resolution_status"
+    case locationQuery = "location_query"
+    case savedAt = "saved_at"
+  }
+
+  var mediaReferenceText: String? {
+    let timestamp = timestampSeconds.map(Self.formatTimestamp)
+    switch (slideIndex, timestamp) {
+    case let (.some(slide), .some(time)):
+      return "Slide \(slide) · Appears at \(time)"
+    case let (.some(slide), .none):
+      return "Slide \(slide)"
+    case let (.none, .some(time)):
+      return "Appears at \(time)"
+    case (.none, .none):
+      return nil
+    }
+  }
+
+  var linkedSourceURL: URL {
+    guard var components = URLComponents(url: sourceURL, resolvingAgainstBaseURL: false) else {
+      return sourceURL
+    }
+    var items = components.queryItems ?? []
+    if let slideIndex {
+      items.removeAll { $0.name == "img_index" }
+      items.append(URLQueryItem(name: "img_index", value: String(slideIndex)))
+    }
+    if let timestampSeconds, isYouTubeSource {
+      items.removeAll { $0.name == "t" }
+      items.append(
+        URLQueryItem(name: "t", value: "\(max(0, Int(timestampSeconds.rounded())))s")
+      )
+    }
+    components.queryItems = items
+    return components.url ?? sourceURL
+  }
+
+  var sourceLinkText: String {
+    if let creator, !creator.isEmpty { return creator }
+    let host = sourceURL.host?.lowercased() ?? ""
+    if host.contains("instagram") { return "Instagram Post" }
+    if isYouTubeSource { return "Watch on YouTube" }
+    return "Open original post"
+  }
+
+  var sourceSystemImage: String {
+    let host = sourceURL.host?.lowercased() ?? ""
+    if host.contains("instagram") { return "camera" }
+    if isYouTubeSource { return "play.rectangle.fill" }
+    return "link"
+  }
+
+  private var isYouTubeSource: Bool {
+    let host = sourceURL.host?.lowercased() ?? ""
+    return host.contains("youtube.com") || host.contains("youtu.be")
+  }
+
+  private static func formatTimestamp(_ value: Double) -> String {
+    let totalSeconds = max(0, Int(value.rounded()))
+    let hours = totalSeconds / 3600
+    let minutes = (totalSeconds % 3600) / 60
+    let seconds = totalSeconds % 60
+    if hours > 0 {
+      return String(format: "%d:%02d:%02d", hours, minutes, seconds)
+    }
+    return String(format: "%d:%02d", minutes, seconds)
   }
 }
 
