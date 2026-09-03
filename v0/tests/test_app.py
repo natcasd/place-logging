@@ -13,6 +13,7 @@ from app import Runtime, create_app
 
 def canonical_result() -> dict:
     return {
+        "ingest_id": 34,
         "item_id": 12,
         "source_url": "https://youtu.be/test",
         "user_prompt": None,
@@ -23,6 +24,20 @@ def canonical_result() -> dict:
                 "extracted": {"extracted_name": "Test Place"},
                 "status": "unresolved",
                 "reason": "test",
+            }
+        ],
+        "saved_things": [
+            {
+                "thing_id": 8,
+                "name": "Test Place",
+                "type": "Restaurant",
+                "location_id": None,
+                "location_name": None,
+                "latitude": None,
+                "longitude": None,
+                "resolution_status": "unresolved",
+                "is_new": True,
+                "source_count": 1,
             }
         ],
     }
@@ -195,6 +210,40 @@ class ApiTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertTrue(response.json()["sources"][0]["needs_review"])
+
+    def test_activity_returns_processing_history_and_results(self) -> None:
+        self.service.activity.return_value = [
+            {
+                "id": 34,
+                "item_id": 12,
+                "source_url": "https://youtu.be/test",
+                "source_platform": "youtube",
+                "status": "completed",
+                "stage": "completed",
+                "started_at": "2026-09-03 12:00:00",
+                "updated_at": "2026-09-03 12:01:00",
+                "completed_at": "2026-09-03 12:01:00",
+                "results": canonical_result()["saved_things"],
+                "events": [
+                    {
+                        "id": 1,
+                        "stage": "completed",
+                        "status": "completed",
+                        "message": "Saved 1 thing",
+                        "created_at": "2026-09-03 12:01:00",
+                    }
+                ],
+            }
+        ]
+
+        response = self.client.get(
+            "/api/v1/activity?limit=25",
+            headers={"Authorization": "Bearer api-secret"},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["activity"][0]["results"][0]["name"], "Test Place")
+        self.service.activity.assert_called_once_with(25)
 
     def test_places_rejects_excessive_limit(self) -> None:
         response = self.client.get(

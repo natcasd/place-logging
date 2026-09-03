@@ -40,6 +40,17 @@ struct PlaceLoggerAPI: Sendable {
     return try JSONDecoder().decode(SourcesEnvelope.self, from: data).sources
   }
 
+  func fetchActivity(limit: Int = 200) async throws -> [IngestActivity] {
+    var components = URLComponents(
+      url: APIConfig.baseURL.appending(path: "/api/v1/activity"),
+      resolvingAgainstBaseURL: false
+    )
+    components?.queryItems = [URLQueryItem(name: "limit", value: String(limit))]
+    guard let url = components?.url else { throw PlaceLoggerError.invalidResponse }
+    let data = try await perform(URLRequest(url: url))
+    return try JSONDecoder().decode(ActivityEnvelope.self, from: data).activity
+  }
+
   func ingest(sourceURL: URL) async throws -> IngestResponse {
     let url = APIConfig.baseURL.appending(path: "/api/v1/ingests")
     var request = URLRequest(url: url)

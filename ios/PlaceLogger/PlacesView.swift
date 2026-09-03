@@ -5,7 +5,7 @@ import SwiftUI
 @MainActor
 final class PlacesModel: ObservableObject {
   @Published var places: [SavedPlace] = []
-  @Published var sources: [SavedSource] = []
+  @Published var activity: [IngestActivity] = []
   @Published var isLoading = false
   @Published var errorMessage: String?
 
@@ -17,25 +17,35 @@ final class PlacesModel: ObservableObject {
     defer { isLoading = false }
     do {
       async let loadedThings = api.fetchThings()
-      async let loadedSources = api.fetchSources()
+      async let loadedActivity = api.fetchActivity()
       places = try await loadedThings
-      sources = try await loadedSources
+      activity = try await loadedActivity
       errorMessage = nil
     } catch {
       errorMessage = error.localizedDescription
     }
   }
 
+  func ensureLoaded() async {
+    if isLoading {
+      while isLoading {
+        try? await Task.sleep(nanoseconds: 50_000_000)
+      }
+      return
+    }
+    await load()
+  }
+
   func delete(_ place: SavedPlace) async throws {
     try await api.deleteThing(id: place.id)
     places.removeAll { $0.id == place.id }
-    sources = try await api.fetchSources()
+    activity = try await api.fetchActivity()
   }
 
   func deleteThingCard(_ thing: SavedPlace) async throws {
     try await api.deleteThing(id: thing.id)
     places.removeAll { $0.id == thing.id }
-    sources = try await api.fetchSources()
+    activity = try await api.fetchActivity()
   }
 }
 
@@ -43,16 +53,17 @@ struct PlacesView: View {
   @ObservedObject var router: PlaceLoggerRouter
   @StateObject private var model = PlacesModel()
   @Environment(\.scenePhase) private var scenePhase
-  @State private var path: [Int] = []
+  @State private var path: [PlacesNavigation] = []
   @State private var selectedTab: PlacesTab = .aroundMe
+  @State private var requestedMapThingID: Int?
 
   var body: some View {
     NavigationStack(path: $path) {
       Group {
-        if model.isLoading && model.places.isEmpty && model.sources.isEmpty {
+        if model.isLoading && model.places.isEmpty && model.activity.isEmpty {
           ProgressView("Loading saved things…")
         } else if let error = model.errorMessage,
-                  model.places.isEmpty && model.sources.isEmpty {
+                  model.places.isEmpty && model.activity.isEmpty {
           ContentUnavailableView {
             Label("Couldn’t Load Saves", systemImage: "wifi.exclamationmark")
           } description: {
@@ -65,6 +76,7 @@ struct PlacesView: View {
             PlacesMap(
               places: model.places,
               isRefreshing: model.isLoading,
+              requestedThingID: $requestedMapThingID,
               refresh: { await model.load() },
               deleteThingCard: { thing in try await model.deleteThingCard(thing) }
             )
@@ -83,11 +95,11 @@ struct PlacesView: View {
             }
             .tag(PlacesTab.saved)
 
-            SourcesList(sources: model.sources)
+            ActivityList(activity: model.activity)
               .tabItem {
-                Label("Sources", systemImage: "rectangle.stack")
+                Label("Activity", systemImage: "clock.arrow.circlepath")
               }
-              .tag(PlacesTab.sources)
+              .tag(PlacesTab.activity)
           }
         }
       }
@@ -107,22 +119,55 @@ struct PlacesView: View {
           }
         }
       }
-      .navigationDestination(for: Int.self) { itemID in
-        SavedItemView(
-          places: model.places.filter { thing in
-            thing.itemID == itemID || thing.sources.contains { $0.itemID == itemID }
-          },
-          isLoading: model.isLoading
-        )
+      .navigationDestination(for: PlacesNavigation.self) { destination in
+        switch destination {
+        case .thing(let thingID):
+          SavedItemView(
+            places: model.places.filter { $0.id == thingID },
+            isLoading: model.isLoading
+          )
+        case .activity(let ingestID):
+          if let run = model.activity.first(where: { $0.id == ingestID }) {
+            ActivityDetail(activity: run)
+          } else {
+            ContentUnavailableView("Activity Not Found", systemImage: "clock.badge.questionmark")
+          }
+        case .legacyItem(let itemID):
+          SavedItemView(
+            places: model.places.filter { thing in
+              thing.itemID == itemID || thing.sources.contains { $0.itemID == itemID }
+            },
+            isLoading: model.isLoading
+          )
+        }
       }
     }
     .task { await model.load() }
-    .task(id: router.selectedItemID) {
-      guard let itemID = router.selectedItemID else { return }
-      await model.load()
-      selectedTab = .saved
-      path = [itemID]
-      router.selectedItemID = nil
+    .task(id: router.pendingDestination) {
+      guard let destination = router.pendingDestination else { return }
+      await model.ensureLoaded()
+      switch destination {
+      case .mapThing(let thingID):
+        if let thing = model.places.first(where: { $0.id == thingID }),
+           thing.latitude != nil, thing.longitude != nil, thing.isCurrentlyRelevant {
+          path = []
+          selectedTab = .aroundMe
+          requestedMapThingID = thingID
+        } else {
+          selectedTab = .saved
+          path = [.thing(thingID)]
+        }
+      case .savedThing(let thingID):
+        selectedTab = .saved
+        path = [.thing(thingID)]
+      case .activity(let ingestID):
+        selectedTab = .activity
+        path = [.activity(ingestID)]
+      case .legacyItem(let itemID):
+        selectedTab = .saved
+        path = [.legacyItem(itemID)]
+      }
+      router.pendingDestination = nil
     }
     .onChange(of: scenePhase) { _, phase in
       guard phase == .active else { return }
@@ -134,7 +179,13 @@ struct PlacesView: View {
 private enum PlacesTab: Hashable {
   case saved
   case aroundMe
-  case sources
+  case activity
+}
+
+private enum PlacesNavigation: Hashable {
+  case thing(Int)
+  case activity(Int)
+  case legacyItem(Int)
 }
 
 private struct PlacesList: View {
@@ -298,52 +349,46 @@ private extension SavedPlace {
   }
 }
 
-private struct SourcesList: View {
-  let sources: [SavedSource]
+private struct ActivityList: View {
+  let activity: [IngestActivity]
 
   var body: some View {
-    if sources.isEmpty {
+    if activity.isEmpty {
       ContentUnavailableView(
-        "No Saved Sources",
-        systemImage: "rectangle.stack",
-        description: Text("Original posts will appear here after they are saved.")
+        "No Activity Yet",
+        systemImage: "clock.arrow.circlepath",
+        description: Text("Shared posts and their processing results will appear here.")
       )
     } else {
-      List(sources) { source in
-        Link(destination: source.sourceURL) {
+      List(activity) { run in
+        NavigationLink(value: PlacesNavigation.activity(run.id)) {
           VStack(alignment: .leading, spacing: 6) {
-            HStack {
-              Text(source.title)
+            HStack(spacing: 8) {
+              Image(systemName: run.statusSystemImage)
+                .foregroundStyle(run.statusColor)
+              Text(run.title)
                 .font(.headline)
-                .foregroundStyle(.primary)
               Spacer()
-              if source.needsReview {
-                Label("Needs Review", systemImage: "exclamationmark.circle")
-                  .font(.caption.weight(.semibold))
-                  .foregroundStyle(.orange)
-              }
+              Text(run.statusText)
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(run.statusColor)
             }
 
-            if let caption = source.caption, !caption.isEmpty {
-              Text(caption)
+            if !run.results.isEmpty {
+              Text(run.results.prefix(3).map { "\($0.type) · \($0.name)" }.joined(separator: ", "))
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
-                .lineLimit(3)
-            } else if let summary = source.summary, !summary.isEmpty {
-              Text(summary)
+                .lineLimit(2)
+            } else if let message = run.errorMessage ?? run.events.last?.message {
+              Text(message)
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
-                .lineLimit(3)
+                .lineLimit(2)
             }
 
-            HStack(spacing: 12) {
-              Label("\(source.thingCount) things", systemImage: "tray.full")
-              if source.mediaPreserved {
-                Label("Media preserved", systemImage: "checkmark.circle")
-              }
-            }
-            .font(.caption)
-            .foregroundStyle(.secondary)
+            Text(run.startedAt)
+              .font(.caption)
+              .foregroundStyle(.tertiary)
           }
           .padding(.vertical, 5)
         }
@@ -353,9 +398,111 @@ private struct SourcesList: View {
   }
 }
 
+private struct ActivityDetail: View {
+  let activity: IngestActivity
+
+  var body: some View {
+    List {
+      Section {
+        HStack(spacing: 10) {
+          Image(systemName: activity.statusSystemImage)
+            .font(.title2)
+            .foregroundStyle(activity.statusColor)
+          VStack(alignment: .leading, spacing: 2) {
+            Text(activity.statusText)
+              .font(.headline)
+            Text(activity.startedAt)
+              .font(.caption)
+              .foregroundStyle(.secondary)
+          }
+        }
+
+        if let error = activity.errorMessage, !error.isEmpty {
+          Text(error)
+            .foregroundStyle(.red)
+        }
+
+        Link(destination: activity.sourceURL) {
+          Label("Open original post", systemImage: "arrow.up.right.square")
+        }
+      }
+
+      if !activity.results.isEmpty {
+        Section("Things from this post") {
+          ForEach(activity.results) { result in
+            NavigationLink(value: PlacesNavigation.thing(result.thingID)) {
+              VStack(alignment: .leading, spacing: 4) {
+                Text(result.name)
+                  .font(.headline)
+                HStack(spacing: 8) {
+                  Text(result.type)
+                  Text(result.isNew ? "New Thing" : "Added source · \(result.sourceCount) total")
+                }
+                .font(.caption)
+                .foregroundStyle(.secondary)
+              }
+              .padding(.vertical, 3)
+            }
+          }
+        }
+      }
+
+      if let summary = activity.summary, !summary.isEmpty {
+        Section("Post summary") {
+          Text(summary)
+        }
+      } else if let caption = activity.caption, !caption.isEmpty {
+        Section("Caption") {
+          Text(caption)
+        }
+      }
+
+      if !activity.events.isEmpty {
+        Section("Processing log") {
+          ForEach(activity.events) { event in
+            HStack(alignment: .top, spacing: 10) {
+              Image(systemName: event.status == "failed" ? "xmark.circle.fill" : "checkmark.circle")
+                .foregroundStyle(event.status == "failed" ? .red : .secondary)
+              VStack(alignment: .leading, spacing: 2) {
+                Text(event.message)
+                Text(event.createdAt)
+                  .font(.caption)
+                  .foregroundStyle(.secondary)
+              }
+            }
+          }
+        }
+      }
+    }
+    .navigationTitle(activity.title)
+    .navigationBarTitleDisplayMode(.inline)
+  }
+}
+
+private extension IngestActivity {
+  var statusSystemImage: String {
+    switch status {
+    case "processing": return "arrow.triangle.2.circlepath"
+    case "partial": return "exclamationmark.circle.fill"
+    case "failed": return "xmark.circle.fill"
+    default: return "checkmark.circle.fill"
+    }
+  }
+
+  var statusColor: Color {
+    switch status {
+    case "processing": return .blue
+    case "partial": return .orange
+    case "failed": return .red
+    default: return .green
+    }
+  }
+}
+
 private struct PlacesMap: View {
   let places: [SavedPlace]
   let isRefreshing: Bool
+  @Binding var requestedThingID: Int?
   let refresh: () async -> Void
   let deleteThingCard: (SavedPlace) async throws -> Void
   @StateObject private var locationModel = LocationModel()
@@ -435,6 +582,29 @@ private struct PlacesMap: View {
       }
       .task {
         locationModel.requestCurrentLocation()
+      }
+      .task(id: requestedThingID) {
+        guard let thingID = requestedThingID,
+              let group = groups.first(where: { group in
+                group.places.contains { $0.id == thingID }
+              })
+        else { return }
+        var focusedPlaces = group.places
+        if let index = focusedPlaces.firstIndex(where: { $0.id == thingID }) {
+          focusedPlaces.insert(focusedPlaces.remove(at: index), at: 0)
+        }
+        let focusedGroup = MappedPlaceGroup(id: group.id, places: focusedPlaces)
+        hasChosenInitialCamera = true
+        cameraPosition = .region(
+          MKCoordinateRegion(
+            center: focusedGroup.coordinate,
+            latitudinalMeters: 1_500,
+            longitudinalMeters: 1_500
+          )
+        )
+        selectedGroupID = focusedGroup.id
+        detailGroup = focusedGroup
+        requestedThingID = nil
       }
       .alert(
         "Search Failed",

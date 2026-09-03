@@ -1,44 +1,71 @@
 from __future__ import annotations
 
 import unittest
+import tempfile
 from pathlib import Path
 from unittest.mock import patch
 
 from ingest_service import IngestService
+from store import list_ingest_runs
 
 
 class IngestServiceTests(unittest.TestCase):
-    @patch("ingest_service.list_thing_types", return_value=["Place", "Book"])
-    @patch("ingest_service.save_ingest", return_value=42)
     @patch("ingest_service.process_ingest")
     def test_processes_and_persists_canonical_result(
         self,
         mock_process,
-        mock_save,
-        mock_types,
     ) -> None:
         processed = {
             "source_url": "https://youtu.be/test",
             "user_prompt": None,
-            "metadata": {},
+            "metadata": {"source_platform": "youtube"},
             "places_extracted": [],
-            "resolved_places": [],
+            "resolved_places": [
+                {
+                    "status": "not_applicable",
+                    "extracted": {
+                        "extracted_name": "The Creative Act",
+                        "type_name": "Book",
+                    },
+                }
+            ],
         }
-        mock_process.return_value = processed
-        service = IngestService(Path("/tmp/test.db"), Path("/tmp/downloads"))
+        def process(*args, **kwargs):
+            kwargs["progress"]("extracting")
+            return processed
 
-        result = service.ingest("https://youtu.be/test")
+        mock_process.side_effect = process
+        with tempfile.TemporaryDirectory() as temp_dir:
+            db_path = Path(temp_dir) / "test.db"
+            service = IngestService(db_path, Path(temp_dir) / "downloads")
+            service.initialize()
 
-        mock_process.assert_called_once_with(
-            "https://youtu.be/test",
-            None,
-            Path("/tmp/downloads"),
-            ["Place", "Book"],
-        )
-        mock_types.assert_called_once_with(Path("/tmp/test.db"))
-        mock_save.assert_called_once_with(Path("/tmp/test.db"), processed)
-        self.assertEqual(result["item_id"], 42)
-        self.assertEqual(result["source_url"], "https://youtu.be/test")
+            result = service.ingest("https://youtu.be/test")
+
+            self.assertEqual(result["source_url"], "https://youtu.be/test")
+            self.assertEqual(result["saved_things"][0]["name"], "The Creative Act")
+            self.assertTrue(result["saved_things"][0]["is_new"])
+            activity = list_ingest_runs(db_path)
+            self.assertEqual(activity[0]["status"], "completed")
+            self.assertEqual(
+                [event["stage"] for event in activity[0]["events"]],
+                ["accepted", "extracting", "saving", "completed"],
+            )
+
+    @patch("ingest_service.process_ingest", side_effect=RuntimeError("boom"))
+    def test_persists_failed_processing_run(self, mock_process) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            db_path = Path(temp_dir) / "test.db"
+            service = IngestService(db_path, Path(temp_dir) / "downloads")
+            service.initialize()
+
+            with self.assertRaisesRegex(RuntimeError, "boom"):
+                service.ingest("https://youtu.be/test")
+
+            activity = list_ingest_runs(db_path)
+            self.assertEqual(activity[0]["status"], "failed")
+            self.assertEqual(activity[0]["stage"], "accepted")
+            self.assertEqual(activity[0]["error_message"], "boom")
 
     @patch(
         "ingest_service.delete_place",

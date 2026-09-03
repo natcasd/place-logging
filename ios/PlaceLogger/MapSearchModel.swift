@@ -57,6 +57,7 @@ final class MapSearchModel: NSObject, ObservableObject {
 
   private func run(_ request: MKLocalSearch.Request) async -> MKMapItem? {
     activeSearch?.cancel()
+    errorMessage = nil
     let search = MKLocalSearch(request: request)
     activeSearch = search
     do {
@@ -84,6 +85,8 @@ extension MapSearchModel: @preconcurrency MKLocalSearchCompleterDelegate {
 
   func completer(_ completer: MKLocalSearchCompleter, didFailWithError error: Error) {
     suggestions = []
-    errorMessage = error.localizedDescription
+    // Autocomplete is best-effort. Clearing or replacing its query can report
+    // a transient failure even while the user's submitted search succeeds.
+    // Only MKLocalSearch failures from run(_:) should trigger the alert.
   }
 }
