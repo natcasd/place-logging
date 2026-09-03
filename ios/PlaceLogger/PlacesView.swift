@@ -850,11 +850,16 @@ private struct ThingActions: View {
           .controlSize(.small)
           .frame(width: 34, height: 34)
       } else {
-        Button("Delete Thing", systemImage: "trash", role: .destructive) {
-          requestDeletion()
+        Menu {
+          Button("Delete Thing", systemImage: "trash", role: .destructive) {
+            requestDeletion()
+          }
+        } label: {
+          Image(systemName: "ellipsis")
+            .foregroundStyle(.secondary)
+            .frame(width: 34, height: 34)
         }
-        .labelStyle(.iconOnly)
-        .frame(width: 34, height: 34)
+        .accessibilityLabel("More Actions")
       }
     }
   }
