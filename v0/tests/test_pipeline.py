@@ -43,6 +43,7 @@ class YouTubeExtractionTests(unittest.TestCase):
         self.assertIn("supplier, neighboring business, collaborator, or partner", prompt)
         self.assertIn("closing call-to-action", prompt)
         self.assertIn("Never use a generic class as its name", prompt)
+        self.assertIn("film montage, movie edit, or carousel of film scenes", prompt)
         self.assertIn("Restaurant, Café, Bar, Bakery", prompt)
         self.assertNotIn("Existing specific type names", prompt)
 
@@ -61,6 +62,25 @@ class YouTubeExtractionTests(unittest.TestCase):
         )
 
         self.assertEqual(things, [{"extracted_name": "Theodora", "type_name": "Restaurant"}])
+
+    def test_normalizes_exhibit_to_pop_up_without_reclassifying_a_gallery(self) -> None:
+        things = pipeline._normalize_exhibit_types(
+            [
+                {
+                    "extracted_name": "HiFi Pursuit Listening Room Dream No. 3",
+                    "type_name": "Art Gallery",
+                    "description": "A listening room within the Art of Noise exhibition.",
+                },
+                {
+                    "extracted_name": "The Example Gallery",
+                    "type_name": "Art Gallery",
+                    "description": "A gallery with a new exhibition program.",
+                },
+            ]
+        )
+
+        self.assertEqual(things[0]["type_name"], "Pop-up")
+        self.assertEqual(things[1]["type_name"], "Art Gallery")
 
     @patch("pipeline._client")
     def test_sends_youtube_url_directly_to_gemini(self, mock_client: MagicMock) -> None:

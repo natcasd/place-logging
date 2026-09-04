@@ -413,6 +413,7 @@ Be selective about what becomes a saved thing:
 - A run, event, activity, or gathering that merely hosts or frames a product or place is context, not a separate thing.
 - A creator's closing call-to-action (for example, comment, DM, link-in-bio, or sign up for my program) is context unless the post is primarily promoting that offering.
 - Likewise, a movie poster visible in the background is not a movie recommendation, and a city shown as a story's setting is not a travel recommendation.
+- A film montage, movie edit, or carousel of film scenes can be a movie recommendation. Save the movie when its title is identifiable from the supplied media with high confidence; otherwise preserve the source without guessing.
 - When the evidence is ambiguous, prefer preserving the information in source_content or a recommendation's description instead of creating an extra thing.
 
 When multiple media items are supplied, they are the slides of one carousel in display order. Analyze all of them together. The source metadata's caption_or_description may contain the post caption or Instagram's combined carousel captions; treat that text as evidence even when an exact caption-to-slide mapping is unavailable.
@@ -562,6 +563,22 @@ def _remove_generic_thing_names(things: list[dict[str, Any]]) -> list[dict[str, 
     return kept
 
 
+def _normalize_exhibit_types(things: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Treat a temporary exhibition as a Pop-up, not as its host gallery."""
+    for thing in things:
+        description = str(thing.get("description") or "")
+        name = str(thing.get("extracted_name") or "")
+        is_exhibit = bool(re.search(r"\bexhibit(?:ion)?\b", description, re.I))
+        is_named_gallery = bool(re.search(r"\bgallery\b", name, re.I))
+        if (
+            thing.get("type_name") == "Art Gallery"
+            and is_exhibit
+            and not is_named_gallery
+        ):
+            thing["type_name"] = "Pop-up"
+    return things
+
+
 def _normalize_media_references(
     things: list[dict[str, Any]],
     metadata: dict[str, Any],
@@ -646,7 +663,7 @@ def extract_bundle(
     return {
         "source_content": parsed.get("source_content") or {},
         "things": _remove_generic_thing_names(
-            _normalize_media_references(extracted, metadata)
+            _normalize_exhibit_types(_normalize_media_references(extracted, metadata))
         ),
     }
 
@@ -697,7 +714,7 @@ def extract_youtube_bundle(
     return {
         "source_content": parsed.get("source_content") or {},
         "things": _remove_generic_thing_names(
-            _normalize_media_references(extracted, metadata)
+            _normalize_exhibit_types(_normalize_media_references(extracted, metadata))
         ),
     }
 
