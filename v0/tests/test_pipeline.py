@@ -62,6 +62,46 @@ class YouTubeExtractionTests(unittest.TestCase):
 
         self.assertEqual(things, [{"extracted_name": "Theodora", "type_name": "Restaurant"}])
 
+    def test_scope_review_copies_rejected_host_location_to_product(self) -> None:
+        things = [
+            {
+                "extracted_name": "Edith's Sandwich Counter",
+                "type_name": "Restaurant",
+                "location_query": "Edith's Sandwich Counter Brooklyn",
+            },
+            {
+                "extracted_name": "Run On Clouds Slushie",
+                "type_name": "Product",
+            },
+        ]
+
+        kept = pipeline._apply_scope_review(things, [1])
+
+        self.assertEqual(kept, [
+            {
+                "extracted_name": "Run On Clouds Slushie",
+                "type_name": "Product",
+                "location_query": "Edith's Sandwich Counter Brooklyn",
+            }
+        ])
+
+    @patch("pipeline._client")
+    def test_scope_review_runs_for_creator_cta_even_with_one_candidate(
+        self, mock_client: MagicMock
+    ) -> None:
+        mock_client.return_value.models.generate_content.return_value = SimpleNamespace(
+            text=json.dumps({"keep_indices": []})
+        )
+        things = [{"extracted_name": "A Program", "type_name": "Fitness"}]
+
+        kept = pipeline._review_scope_if_needed(
+            things,
+            {"transcript": "Comment PRIMAL for my coaching program."},
+        )
+
+        self.assertEqual(kept, [])
+        mock_client.return_value.models.generate_content.assert_called_once()
+
     @patch("pipeline._client")
     def test_sends_youtube_url_directly_to_gemini(self, mock_client: MagicMock) -> None:
         response = SimpleNamespace(
