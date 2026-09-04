@@ -322,11 +322,11 @@ struct IngestResponse: Decodable, Sendable {
 
   var notificationTitle: String {
     guard savedThings.count == 1, let thing = savedThings.first else {
-      return savedThings.isEmpty ? "No things found" : "Saved \(savedThings.count) things"
+      return savedThings.isEmpty ? "Nothing found" : "Logged " + Self.typeCountSummary(savedThings)
     }
     return thing.isNew
-      ? "Saved \(thing.type) · \(thing.name)"
-      : "Added to \(thing.type) · \(thing.name)"
+      ? "Logged \(thing.type) · \(thing.name)"
+      : "Logged a new source to \(thing.type) - \(thing.name)"
   }
 
   var notificationBody: String {
@@ -335,19 +335,10 @@ struct IngestResponse: Decodable, Sendable {
     }
     if savedThings.count == 1, let thing = savedThings.first {
       return thing.isNew
-        ? "Created a new Thing from this post."
-        : "This Thing now has \(thing.sourceCount) saved sources."
+        ? "Logged a new \(thing.type) from this post."
+        : "This \(thing.type) now has \(thing.sourceCount) logged sources."
     }
-    let newThings = savedThings.filter(\.isNew)
-    let existingThings = savedThings.filter { !$0.isNew }
-    var sections: [String] = []
-    if !newThings.isEmpty {
-      sections.append("New: " + Self.summary(newThings))
-    }
-    if !existingThings.isEmpty {
-      sections.append("Added: " + Self.summary(existingThings))
-    }
-    return sections.joined(separator: "\n")
+    return ""
   }
 
   enum CodingKeys: String, CodingKey {
@@ -356,10 +347,47 @@ struct IngestResponse: Decodable, Sendable {
     case savedThings = "saved_things"
   }
 
-  private static func summary(_ things: [SavedThingOutcome]) -> String {
-    let visible = things.prefix(3).map { "\($0.type) · \($0.name)" }
-    let remaining = things.count - visible.count
-    return visible.joined(separator: "; ") + (remaining > 0 ? "; +\(remaining) more" : "")
+  private static func typeCountSummary(_ things: [SavedThingOutcome]) -> String {
+    var orderedTypes: [String] = []
+    var counts: [String: Int] = [:]
+
+    for thing in things {
+      let type = thing.type.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+      let label = type.isEmpty ? "thing" : type
+      if counts[label] == nil {
+        orderedTypes.append(label)
+      }
+      counts[label, default: 0] += 1
+    }
+
+    return orderedTypes.map { type in
+      let count = counts[type, default: 0]
+      return "\(count) \(pluralized(type, count: count))"
+    }.joined(separator: ", ")
+  }
+
+  private static func pluralized(_ type: String, count: Int) -> String {
+    guard count != 1 else { return type }
+
+    let splitIndex = type.lastIndex(of: " ")
+    let prefix = splitIndex.map { String(type[...$0]) } ?? ""
+    let word = splitIndex.map { String(type[type.index(after: $0)...]) } ?? type
+    let pluralWord: String
+
+    if word.hasSuffix("y"), word.count > 1 {
+      let beforeY = word[word.index(word.endIndex, offsetBy: -2)]
+      if !"aeiou".contains(beforeY) {
+        pluralWord = String(word.dropLast()) + "ies"
+      } else {
+        pluralWord = word + "s"
+      }
+    } else if ["s", "x", "z", "ch", "sh"].contains(where: word.hasSuffix) {
+      pluralWord = word + "es"
+    } else {
+      pluralWord = word + "s"
+    }
+
+    return prefix + pluralWord
   }
 }
 
