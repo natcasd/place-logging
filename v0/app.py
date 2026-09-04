@@ -87,6 +87,7 @@ class IngestResponse(BaseModel):
     things_extracted: list[dict[str, Any]] = Field(default_factory=list)
     resolved_things: list[dict[str, Any]] = Field(default_factory=list)
     saved_things: list[SavedThingOutcome] = Field(default_factory=list)
+    already_logged: bool = False
     delivery_status: Literal["not_requested", "sent", "failed"]
 
 

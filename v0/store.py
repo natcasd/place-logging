@@ -8,6 +8,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from source_identity import canonical_source_url
+
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS items (
   id               INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -305,6 +307,47 @@ def save_ingest(db_path: Path, result: dict[str, Any]) -> int:
 
         con.commit()
         return item_id
+    finally:
+        con.close()
+
+
+def find_processed_source(
+    db_path: Path,
+    source_url: str,
+) -> dict[str, Any] | None:
+    """Return the newest successful Source with the same post/video identity."""
+    identity = canonical_source_url(source_url)
+    con = _connect(db_path)
+    con.row_factory = sqlite3.Row
+    try:
+        rows = con.execute(
+            """SELECT i.*, r.id AS ingest_id, r.status AS ingest_status
+                 FROM items AS i
+                 LEFT JOIN ingest_runs AS r ON r.item_id = i.id
+                ORDER BY i.created_at DESC, i.id DESC"""
+        ).fetchall()
+        for row in rows:
+            if canonical_source_url(row["source_url"]) != identity:
+                continue
+            metadata = _decode_json_object(row["raw_payload_json"])
+            if metadata.get("extraction_status") == "failed":
+                continue
+            if row["ingest_status"] == "failed":
+                continue
+            return {
+                "ingest_id": row["ingest_id"] or row["id"],
+                "item_id": row["id"],
+                "source_url": row["source_url"],
+                "user_prompt": row["user_prompt"],
+                "metadata": metadata,
+                "places_extracted": [],
+                "resolved_places": [],
+                "things_extracted": [],
+                "resolved_things": [],
+                "saved_things": _saved_thing_outcomes(con, row["id"]),
+                "already_logged": True,
+            }
+        return None
     finally:
         con.close()
 

@@ -8,6 +8,9 @@ import bot
 
 
 class TelegramAdapterTests(unittest.IsolatedAsyncioTestCase):
+    def test_formats_duplicate_source(self) -> None:
+        self.assertEqual(bot._format_result({"already_logged": True}), "Already logged")
+
     def test_formats_saved_source_after_extraction_outage(self) -> None:
         formatted = bot._format_result(
             {

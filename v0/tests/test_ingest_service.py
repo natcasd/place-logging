@@ -45,6 +45,7 @@ class IngestServiceTests(unittest.TestCase):
             self.assertEqual(result["source_url"], "https://youtu.be/test")
             self.assertEqual(result["saved_things"][0]["name"], "The Creative Act")
             self.assertTrue(result["saved_things"][0]["is_new"])
+            self.assertFalse(result["already_logged"])
             activity = list_ingest_runs(db_path)
             self.assertEqual(activity[0]["status"], "completed")
             self.assertEqual(
@@ -66,6 +67,61 @@ class IngestServiceTests(unittest.TestCase):
             self.assertEqual(activity[0]["status"], "failed")
             self.assertEqual(activity[0]["stage"], "accepted")
             self.assertEqual(activity[0]["error_message"], "boom")
+
+    @patch("ingest_service.process_ingest")
+    def test_same_processed_post_is_not_processed_or_saved_again(self, mock_process) -> None:
+        processed = {
+            "source_url": "https://www.instagram.com/reel/duplicate/",
+            "user_prompt": None,
+            "metadata": {"source_platform": "instagram", "extraction_status": "complete"},
+            "places_extracted": [],
+            "resolved_places": [],
+        }
+        mock_process.return_value = processed
+        with tempfile.TemporaryDirectory() as temp_dir:
+            db_path = Path(temp_dir) / "test.db"
+            service = IngestService(db_path, Path(temp_dir) / "downloads")
+            service.initialize()
+
+            first = service.ingest("https://www.instagram.com/reel/duplicate/")
+            second = service.ingest(
+                "https://instagram.com/reel/duplicate/?igsh=tracking"
+            )
+
+            self.assertFalse(first["already_logged"])
+            self.assertTrue(second["already_logged"])
+            self.assertEqual(second["item_id"], first["item_id"])
+            self.assertEqual(second["ingest_id"], first["ingest_id"])
+            self.assertEqual(mock_process.call_count, 1)
+            self.assertEqual(len(list_ingest_runs(db_path)), 1)
+
+    @patch("ingest_service.process_ingest")
+    def test_retries_source_whose_saved_extraction_failed(self, mock_process) -> None:
+        failed = {
+            "source_url": "https://www.instagram.com/reel/retry/",
+            "user_prompt": None,
+            "metadata": {"source_platform": "instagram", "extraction_status": "failed"},
+            "places_extracted": [],
+            "resolved_places": [],
+        }
+        completed = {
+            **failed,
+            "metadata": {"source_platform": "instagram", "extraction_status": "complete"},
+        }
+        mock_process.side_effect = [failed, completed]
+        with tempfile.TemporaryDirectory() as temp_dir:
+            db_path = Path(temp_dir) / "test.db"
+            service = IngestService(db_path, Path(temp_dir) / "downloads")
+            service.initialize()
+
+            first = service.ingest(failed["source_url"])
+            second = service.ingest(failed["source_url"])
+
+            self.assertFalse(first["already_logged"])
+            self.assertFalse(second["already_logged"])
+            self.assertNotEqual(second["item_id"], first["item_id"])
+            self.assertEqual(mock_process.call_count, 2)
+            self.assertEqual(len(list_ingest_runs(db_path)), 2)
 
     @patch(
         "ingest_service.delete_place",
