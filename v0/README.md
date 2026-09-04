@@ -18,7 +18,7 @@ optionally resolves physical locations through Google Places.
 - Instagram media is archived under `WORKDIR/sources` on the mounted Fly volume.
 - Each extracted thing uses one stable browse type (`Restaurant`, `Café`, `Bar`,
   `Bakery`, `Park`, `Hiking Trail`, `Bike Route`, `Museum`, `Art Gallery`,
-  `Store`, `Spa`, `Fitness`, `Concert`, `Pop-up`, `Book`, `Movie`, `Article`,
+  `Store`, `Spa`, `Fitness`, `Concert`, `Pop-up`, `Exhibit`, `Book`, `Movie`, `Article`,
   `Song`, `Product`, or `Unknown`), plus a detailed description, optional
   availability dates, and optional Google location.
 - Resolved locations retain Google's display name and Google Place ID. Clients can

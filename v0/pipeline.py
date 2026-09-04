@@ -391,7 +391,7 @@ def archive_media(
 
 # ---------- Extractor ----------
 
-TYPE_NAME_GUIDANCE = """Choose exactly one primary type from this fixed list: Restaurant, Café, Bar, Bakery, Park, Hiking Trail, Bike Route, Museum, Art Gallery, Store, Spa, Fitness, Concert, Pop-up, Book, Movie, Article, Song, Product, or Unknown. Do not invent another type. Use Unknown only when none of the listed types fit."""
+TYPE_NAME_GUIDANCE = """Choose exactly one primary type from this fixed list: Restaurant, Café, Bar, Bakery, Park, Hiking Trail, Bike Route, Museum, Art Gallery, Store, Spa, Fitness, Concert, Pop-up, Exhibit, Book, Movie, Article, Song, Product, or Unknown. Do not invent another type. Use Exhibit for a museum or gallery exhibition, installation, or curated show; use Pop-up for a temporary food, retail, or event offering. Use Unknown only when none of the listed types fit."""
 
 
 def specific_type_names(type_names: list[str] | None) -> list[str]:
@@ -726,7 +726,7 @@ _FIELD_MASK = ",".join([
     "places.googleMapsUri",
 ])
 
-_VENUE_BOUND_TYPE_NAMES = {"pop-up", "concert"}
+_VENUE_BOUND_TYPE_NAMES = {"pop-up", "concert", "exhibit"}
 _LOCATION_QUERY_STOP_WORDS = {
     "at",
     "center",
