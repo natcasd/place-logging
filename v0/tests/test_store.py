@@ -306,7 +306,7 @@ class StoreTests(unittest.TestCase):
             db_path = Path(temp_dir) / "places.db"
             init_db(db_path)
             for ordinal, thing_type in enumerate(
-                ("Deli", "Coffee Shop", "Exhibit", "Fitness Exercise"),
+                ("Deli", "Coffee Shop", "Exhibit", "Fitness Exercise", "Food Pop-Up"),
                 start=1,
             ):
                 save_ingest(
@@ -328,7 +328,7 @@ class StoreTests(unittest.TestCase):
 
             self.assertEqual(
                 list_thing_types(db_path),
-                ["Café", "Exhibit", "Fitness", "Restaurant"],
+                ["Café", "Exhibit", "Fitness", "Pop-up", "Restaurant"],
             )
 
     def test_saves_non_location_thing_and_preserves_source(self) -> None:
