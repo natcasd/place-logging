@@ -33,6 +33,7 @@ _DELETE_NAMES = {
     "oslo",
     "grand central",
     "notre dame cathedral",
+    "notre-dame cathedral",
 }
 
 

@@ -50,6 +50,7 @@ _TYPE_ALIASES = {
     "ice cream shop": "Bakery",
     "food popup": "Pop-up",
     "food pop up": "Pop-up",
+    "food pop-up": "Pop-up",
     "exhibition": "Exhibit",
     "fitness exercise": "Fitness",
     "fitness coaching program": "Fitness",
