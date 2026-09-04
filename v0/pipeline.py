@@ -391,7 +391,7 @@ def archive_media(
 
 # ---------- Extractor ----------
 
-TYPE_NAME_GUIDANCE = """Choose exactly one primary type from this fixed list: Restaurant, Café, Bar, Bakery, Park, Hiking Trail, Bike Route, Museum, Art Gallery, Store, Spa, Fitness, Concert, Pop-up, Book, Movie, Article, Song, Product, or Unknown. Do not invent another type. Use Unknown only when none of the listed types fit."""
+TYPE_NAME_GUIDANCE = """Choose exactly one primary type from this fixed list: Restaurant, Café, Bar, Bakery, Park, Hiking Trail, Bike Route, Museum, Art Gallery, Store, Spa, Fitness, Concert, Pop-up, Book, Movie, Article, Song, Product, or Unknown. Do not invent another type. Use Pop-up for every temporary exhibit or exhibition, food pop-up, or limited-time offering; Art Gallery is only for a permanent gallery venue. Use Unknown only when none of the listed types fit."""
 
 
 def specific_type_names(type_names: list[str] | None) -> list[str]:
@@ -412,6 +412,7 @@ Be selective about what becomes a saved thing:
 - A supplier, neighboring business, collaborator, or partner that only supports the main recommendation is context, not a separate thing.
 - A run, event, activity, or gathering that merely hosts or frames a product or place is context, not a separate thing.
 - A creator's closing call-to-action (for example, comment, DM, link-in-bio, or sign up for my program) is context unless the post is primarily promoting that offering.
+- Example: if a restaurant's toast uses bread from a neighboring bakery, save the restaurant, not the bakery. If a limited-time drink, food pop-up, or exhibit is at a named venue, save the drink/pop-up/exhibit with that venue as location_query, not the venue itself.
 - Likewise, a movie poster visible in the background is not a movie recommendation, and a city shown as a story's setting is not a travel recommendation.
 - When the evidence is ambiguous, prefer preserving the information in source_content or a recommendation's description instead of creating an extra thing.
 
@@ -508,6 +509,17 @@ EXTRACTION_RESPONSE_SCHEMA = {
     "required": ["source_content", "things"],
 }
 
+SCOPE_REVIEW_RESPONSE_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "keep_indices": {
+            "type": "array",
+            "items": {"type": "integer"},
+        },
+    },
+    "required": ["keep_indices"],
+}
+
 # Inline media is base64-encoded in the JSON request, which adds roughly 33%
 # overhead. Keep the source files comfortably below Gemini's 100 MB total
 # request limit so there is also room for the extraction prompt and metadata.
@@ -560,6 +572,109 @@ def _remove_generic_thing_names(things: list[dict[str, Any]]) -> list[dict[str, 
             continue
         kept.append(thing)
     return kept
+
+
+_CTA_RE = re.compile(
+    r"\b(comment|dm|direct message|link(?:[- ]in[- ]bio)?|sign[ -]?up|subscribe|book a call)\b",
+    re.IGNORECASE,
+)
+_VENUE_TYPES = {
+    "restaurant",
+    "cafe",
+    "bar",
+    "bakery",
+    "park",
+    "hiking trail",
+    "bike route",
+    "museum",
+    "art gallery",
+    "store",
+    "spa",
+}
+
+
+def _needs_scope_review(
+    things: list[dict[str, Any]], source_content: dict[str, Any]
+) -> bool:
+    if len(things) > 1:
+        return True
+    source_text = " ".join(str(value or "") for value in source_content.values())
+    return bool(_CTA_RE.search(source_text))
+
+
+def _scope_review_prompt(
+    source_content: dict[str, Any], things: list[dict[str, Any]]
+) -> str:
+    candidates = [
+        {
+            "index": index,
+            "name": thing.get("extracted_name"),
+            "type": thing.get("type_name"),
+            "description": thing.get("description"),
+            "location_query": thing.get("location_query"),
+        }
+        for index, thing in enumerate(things)
+    ]
+    return f"""Review candidate saved Things from one social post. Keep only candidates that are independently recommended or a principal subject of the post.
+
+Reject context-only candidates: host venues, suppliers, neighboring businesses, collaborators, background posters, settings, and creator calls-to-action. If a product, temporary pop-up, or exhibit is at a venue, keep the product/pop-up/exhibit, not the venue.
+
+Source content:
+{json.dumps(source_content, ensure_ascii=False)}
+
+Candidates:
+{json.dumps(candidates, ensure_ascii=False)}
+
+Return ONLY JSON: {{"keep_indices": [the indexes to save]}}.
+"""
+
+
+def _apply_scope_review(
+    things: list[dict[str, Any]], keep_indices: list[int]
+) -> list[dict[str, Any]]:
+    keep_set = set(keep_indices)
+    kept = [thing for index, thing in enumerate(things) if index in keep_set]
+    rejected = [thing for index, thing in enumerate(things) if index not in keep_set]
+    venue_queries = [
+        thing.get("location_query")
+        for thing in rejected
+        if normalized_type_label(thing.get("type_name")) in _VENUE_TYPES
+        and str(thing.get("location_query") or "").strip()
+    ]
+    if len(venue_queries) == 1:
+        for thing in kept:
+            if (
+                normalized_type_label(thing.get("type_name")) in {"product", "pop-up"}
+                and not str(thing.get("location_query") or "").strip()
+            ):
+                thing["location_query"] = venue_queries[0]
+    return kept
+
+
+def _review_scope_if_needed(
+    things: list[dict[str, Any]], source_content: dict[str, Any]
+) -> list[dict[str, Any]]:
+    if not _needs_scope_review(things, source_content):
+        return things
+    response = _call_gemini_with_retry(
+        lambda: _client().models.generate_content(
+            model=os.environ.get("GEMINI_MODEL", "gemini-3.1-flash-lite"),
+            contents=[_scope_review_prompt(source_content, things)],
+            config=types.GenerateContentConfig(
+                response_mime_type="application/json",
+                response_schema=SCOPE_REVIEW_RESPONSE_SCHEMA,
+            ),
+        ),
+        "recommendation scope review",
+    )
+    parsed = json.loads(response.text)
+    raw_indices = parsed.get("keep_indices")
+    if not isinstance(raw_indices, list):
+        raise ValueError("scope review omitted keep_indices")
+    indices = sorted(set(raw_indices))
+    if any(not isinstance(index, int) or not 0 <= index < len(things) for index in indices):
+        raise ValueError("scope review returned invalid candidate index")
+    return _apply_scope_review(things, indices)
 
 
 def _normalize_media_references(
@@ -643,8 +758,13 @@ def extract_bundle(
 
     parsed = json.loads(response.text)
     extracted = parsed.get("things", parsed.get("places", []))
+    source_content = parsed.get("source_content") or {}
+    try:
+        extracted = _review_scope_if_needed(extracted, source_content)
+    except Exception:
+        log.exception("Scope review failed; retaining extractor candidates")
     return {
-        "source_content": parsed.get("source_content") or {},
+        "source_content": source_content,
         "things": _remove_generic_thing_names(
             _normalize_media_references(extracted, metadata)
         ),
@@ -694,8 +814,13 @@ def extract_youtube_bundle(
     )
     parsed = json.loads(response.output_text)
     extracted = parsed.get("things", parsed.get("places", []))
+    source_content = parsed.get("source_content") or {}
+    try:
+        extracted = _review_scope_if_needed(extracted, source_content)
+    except Exception:
+        log.exception("Scope review failed; retaining extractor candidates")
     return {
-        "source_content": parsed.get("source_content") or {},
+        "source_content": source_content,
         "things": _remove_generic_thing_names(
             _normalize_media_references(extracted, metadata)
         ),
