@@ -2,16 +2,19 @@
 
 The native MVP contains two targets:
 
-- `PlaceLogger`: a SwiftUI list and MapKit map of saved restaurants.
+- `PlaceLogger`: a SwiftUI list and MapKit map of saved Things.
 - `PlaceLoggerShare`: a native share extension that accepts links and media
   shared by Instagram or YouTube and sends the extracted URL to the existing
   ingest API. The extension can close while the synchronous request continues;
-  on completion, it schedules a local notification naming the saved place.
+  on completion, it schedules a local notification summarizing the logged
+  Things.
 
-Tapping a successful notification opens the containing app, refreshes the
-saved-place list, and navigates to the places created by that ingest. Native
-shares use response-only API delivery, so they do not also send Telegram
-progress or result messages.
+The current free, locally provisioned build cannot use APNs. Because completion
+notifications are scheduled by the share extension, tapping them does not open
+the containing app. When the app moves to a paid Apple Developer Program team,
+migrate these to APNs notifications sent by the backend so taps can launch the
+app and navigate to the logged result. Native shares use response-only API
+delivery, so they do not also send Telegram progress or result messages.
 
 The map shows resolved restaurants as selectable pins. Repeated saves with the
 same Google Place ID share one pin while retaining every recommendation and
