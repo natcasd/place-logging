@@ -180,7 +180,7 @@ class StoreTests(unittest.TestCase):
                 (
                     "three",
                     "Giacometti in the Temple of Dendur",
-                    "Pop-up",
+                    "Exhibit",
                     "2026-09-08",
                     "Exhibit description",
                 ),
@@ -215,7 +215,7 @@ class StoreTests(unittest.TestCase):
 
             self.assertEqual(len(things), 2)
             venue = next(thing for thing in things if thing["type"] == "Restaurant")
-            exhibit = next(thing for thing in things if thing["type"] == "Pop-up")
+            exhibit = next(thing for thing in things if thing["type"] == "Exhibit")
             self.assertEqual(len(venue["sources"]), 2)
             self.assertEqual(venue["description"], "Most recent description")
             self.assertEqual(exhibit["ends_at"], "2026-09-08")
@@ -328,7 +328,7 @@ class StoreTests(unittest.TestCase):
 
             self.assertEqual(
                 list_thing_types(db_path),
-                ["Café", "Fitness", "Pop-up", "Restaurant"],
+                ["Café", "Exhibit", "Fitness", "Restaurant"],
             )
 
     def test_saves_non_location_thing_and_preserves_source(self) -> None:

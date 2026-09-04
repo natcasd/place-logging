@@ -44,6 +44,7 @@ class YouTubeExtractionTests(unittest.TestCase):
         self.assertIn("closing call-to-action", prompt)
         self.assertIn("Never use a generic class as its name", prompt)
         self.assertIn("Restaurant, Café, Bar, Bakery", prompt)
+        self.assertIn("Use Exhibit for a museum or gallery exhibition", prompt)
         self.assertNotIn("Existing specific type names", prompt)
 
     def test_schema_allows_only_controlled_types(self) -> None:
@@ -479,7 +480,7 @@ class ProcessIngestTests(unittest.TestCase):
     def test_temporary_thing_rejects_unmatched_single_google_candidate(self) -> None:
         thing = {
             "extracted_name": "HiFi Pursuit Listening Room Dream No. 3",
-            "type_name": "Pop-up",
+            "type_name": "Exhibit",
             "location_query": "HiFi Pursuit Listening Room Dream No. 3, New York City",
             "ends_at": "2026-09-08",
         }
@@ -498,7 +499,7 @@ class ProcessIngestTests(unittest.TestCase):
     def test_temporary_thing_accepts_matching_host_venue(self) -> None:
         thing = {
             "extracted_name": "HiFi Pursuit Listening Room Dream No. 3",
-            "type_name": "Pop-up",
+            "type_name": "Exhibit",
             "location_query": "Cooper Hewitt, Smithsonian Design Museum, New York City",
             "ends_at": "2026-09-08",
         }
