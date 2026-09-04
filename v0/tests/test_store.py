@@ -180,7 +180,7 @@ class StoreTests(unittest.TestCase):
                 (
                     "three",
                     "Giacometti in the Temple of Dendur",
-                    "Exhibit",
+                    "Pop-up",
                     "2026-09-08",
                     "Exhibit description",
                 ),
@@ -215,7 +215,7 @@ class StoreTests(unittest.TestCase):
 
             self.assertEqual(len(things), 2)
             venue = next(thing for thing in things if thing["type"] == "Restaurant")
-            exhibit = next(thing for thing in things if thing["type"] == "Exhibit")
+            exhibit = next(thing for thing in things if thing["type"] == "Pop-up")
             self.assertEqual(len(venue["sources"]), 2)
             self.assertEqual(venue["description"], "Most recent description")
             self.assertEqual(exhibit["ends_at"], "2026-09-08")
@@ -300,6 +300,36 @@ class StoreTests(unittest.TestCase):
             )
 
             self.assertEqual(list_thing_types(db_path), ["Unknown"])
+
+    def test_normalizes_legacy_type_aliases_to_controlled_types(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            db_path = Path(temp_dir) / "places.db"
+            init_db(db_path)
+            for ordinal, thing_type in enumerate(
+                ("Deli", "Coffee Shop", "Exhibit", "Fitness Exercise"),
+                start=1,
+            ):
+                save_ingest(
+                    db_path,
+                    {
+                        "source_url": f"https://www.instagram.com/reel/type-{ordinal}/",
+                        "metadata": {},
+                        "resolved_things": [
+                            {
+                                "status": "not_applicable",
+                                "extracted": {
+                                    "extracted_name": f"Named thing {ordinal}",
+                                    "type_name": thing_type,
+                                },
+                            }
+                        ],
+                    },
+                )
+
+            self.assertEqual(
+                list_thing_types(db_path),
+                ["Café", "Fitness", "Pop-up", "Restaurant"],
+            )
 
     def test_saves_non_location_thing_and_preserves_source(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any
 
 from source_identity import canonical_source_url
+from thing_types import canonical_thing_type
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS items (
@@ -457,12 +458,7 @@ def saved_thing_outcomes(db_path: Path, item_id: int) -> list[dict[str, Any]]:
 
 
 def _normalize_type_name(value: Any) -> str:
-    name = " ".join(str(value or "Unknown").split()).strip()
-    if not name:
-        return "Unknown"
-    if name.casefold() == "place":
-        return "Unknown"
-    return name[:80].title()
+    return canonical_thing_type(value)
 
 
 def _normalize_identity(value: Any) -> str:
@@ -492,6 +488,7 @@ _LOCATION_TYPE_FAMILIES = {
         "bakery",
         "bar",
         "cafe",
+        "café",
         "coffee",
         "deli",
         "restaurant",

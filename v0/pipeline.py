@@ -10,6 +10,7 @@ import json
 import logging
 import mimetypes
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -25,6 +26,8 @@ from urllib.parse import urlparse
 import requests
 from google import genai
 from google.genai import types
+
+from thing_types import THING_TYPES, normalized_type_label
 
 log = logging.getLogger(__name__)
 
@@ -388,7 +391,7 @@ def archive_media(
 
 # ---------- Extractor ----------
 
-TYPE_NAME_GUIDANCE = """Choose the most specific short singular noun category supported by the source, such as Restaurant, Bakery, Coffee Shop, Bar, Spa, Movie Theater, Park, Hiking Trail, Museum, Store, Bike Route, Art Gallery, Concert, Food Pop-up, Exhibit, Book, Movie, Article, Song, or Skincare Product. Never use the generic category Place. Reuse a specific existing type whenever it reasonably fits. If none fits, create a concise new type. Use Unknown only when the kind of thing is genuinely unclear."""
+TYPE_NAME_GUIDANCE = """Choose exactly one primary type from this fixed list: Restaurant, Café, Bar, Bakery, Park, Hiking Trail, Bike Route, Museum, Art Gallery, Store, Spa, Fitness, Concert, Pop-up, Book, Movie, Article, Song, Product, or Unknown. Do not invent another type. Use Unknown only when none of the listed types fit."""
 
 
 def specific_type_names(type_names: list[str] | None) -> list[str]:
@@ -406,6 +409,9 @@ Be selective about what becomes a saved thing:
 - A thing must be independently recommended, endorsed, or presented as a principal subject of the post. For a list post, each intended list entry is a principal recommendation.
 - Do not create separate things for incidental mentions, scenery, background signs or posters, examples, ingredients, products merely being used, or places that only establish where the main recommendation happens.
 - A host venue can be important context. Preserve it in the main recommendation's description and use it in location_query when it anchors the recommendation. Do not also save the host venue as a separate thing unless the post independently recommends the venue itself.
+- A supplier, neighboring business, collaborator, or partner that only supports the main recommendation is context, not a separate thing.
+- A run, event, activity, or gathering that merely hosts or frames a product or place is context, not a separate thing.
+- A creator's closing call-to-action (for example, comment, DM, link-in-bio, or sign up for my program) is context unless the post is primarily promoting that offering.
 - Likewise, a movie poster visible in the background is not a movie recommendation, and a city shown as a story's setting is not a travel recommendation.
 - When the evidence is ambiguous, prefer preserving the information in source_content or a recommendation's description instead of creating an extra thing.
 
@@ -419,7 +425,7 @@ Also preserve a source_content object with:
 Return one object per individual thing. Do not combine a list of restaurants, books, products, or events into one record.
 
 For each thing, return an object with:
-- extracted_name: concise name of the thing as mentioned or shown
+- extracted_name: concise, distinct name of the thing as mentioned or shown. Never use a generic class as its name (for example, "Cafe", "Restaurant", "Store", or "Place"); if no distinct name is supported, do not return a thing.
 - type_name: """ + TYPE_NAME_GUIDANCE + """
 - description: a detailed, source-grounded explanation containing the useful information conveyed about this thing. Do not add facts that are not in the source.
 - location_query: only when the thing has a physical place, area, anchor, or venue that Google Places could resolve. Use the venue for an event or exhibit. Include the name plus directly evidenced neighborhood/city/region hints. Omit this field for non-location things and when there is not enough location evidence.
@@ -463,7 +469,7 @@ EXTRACTION_RESPONSE_SCHEMA = {
                 "type": "object",
                 "properties": {
                     "extracted_name": {"type": "string"},
-                    "type_name": {"type": "string"},
+                    "type_name": {"type": "string", "enum": list(THING_TYPES)},
                     "description": {"type": "string"},
                     "location_query": {"type": "string"},
                     "location_hints": {
@@ -526,13 +532,34 @@ def _extraction_prompt(
             "what you'd otherwise infer from the content):\n"
             + user_prompt
         )
-    reusable_types = specific_type_names(existing_types)
-    if reusable_types:
-        prompt += (
-            "\n\nExisting specific type names (reuse one when it reasonably fits):\n"
-            + json.dumps(reusable_types, ensure_ascii=False)
-        )
     return prompt
+
+
+_GENERIC_THING_NAMES = {
+    *(normalized_type_label(thing_type) for thing_type in THING_TYPES),
+    "place",
+    "venue",
+    "business",
+    "location",
+    "shop",
+    "cafe",
+    "coffee shop",
+    "movie theater",
+    "food popup",
+    "food pop up",
+}
+
+
+def _remove_generic_thing_names(things: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Never persist an inferred category as though it were a named Thing."""
+    kept = []
+    for thing in things:
+        name = normalized_type_label(thing.get("extracted_name"))
+        if not name or name in _GENERIC_THING_NAMES:
+            log.info("Discarding generic unnamed extraction %r", thing.get("extracted_name"))
+            continue
+        kept.append(thing)
+    return kept
 
 
 def _normalize_media_references(
@@ -618,7 +645,9 @@ def extract_bundle(
     extracted = parsed.get("things", parsed.get("places", []))
     return {
         "source_content": parsed.get("source_content") or {},
-        "things": _normalize_media_references(extracted, metadata),
+        "things": _remove_generic_thing_names(
+            _normalize_media_references(extracted, metadata)
+        ),
     }
 
 
@@ -667,7 +696,9 @@ def extract_youtube_bundle(
     extracted = parsed.get("things", parsed.get("places", []))
     return {
         "source_content": parsed.get("source_content") or {},
-        "things": _normalize_media_references(extracted, metadata),
+        "things": _remove_generic_thing_names(
+            _normalize_media_references(extracted, metadata)
+        ),
     }
 
 
@@ -694,6 +725,55 @@ _FIELD_MASK = ",".join([
     "places.primaryTypeDisplayName",
     "places.googleMapsUri",
 ])
+
+_VENUE_BOUND_TYPE_NAMES = {"pop-up", "concert"}
+_LOCATION_QUERY_STOP_WORDS = {
+    "at",
+    "center",
+    "centre",
+    "city",
+    "concert",
+    "event",
+    "exhibit",
+    "exhibition",
+    "food",
+    "gallery",
+    "hall",
+    "in",
+    "listening",
+    "market",
+    "museum",
+    "new",
+    "pop",
+    "room",
+    "shop",
+    "the",
+    "up",
+    "venue",
+    "york",
+}
+
+
+def _location_query_matches_candidate(query: str, candidate: dict[str, Any]) -> bool:
+    """Require a venue-bearing word from the query to appear in Google's name."""
+    query_words = {
+        word
+        for word in re.findall(r"\w+", normalized_type_label(query))
+        if len(word) >= 3 and word not in _LOCATION_QUERY_STOP_WORDS
+    }
+    candidate_name = (candidate.get("displayName") or {}).get("text") or ""
+    candidate_words = set(re.findall(r"\w+", normalized_type_label(candidate_name)))
+    return bool(query_words & candidate_words)
+
+
+def _requires_venue_match(place: dict[str, Any]) -> bool:
+    """Temporary recommendations must resolve through their host venue."""
+    return bool(
+        normalized_type_label(place.get("type_name")) in _VENUE_BOUND_TYPE_NAMES
+        or place.get("starts_at")
+        or place.get("ends_at")
+        or place.get("recurrence_text")
+    )
 
 
 def _llm_tiebreaker(
@@ -807,6 +887,14 @@ def resolve(place: dict[str, Any]) -> dict[str, Any]:
     if not candidates:
         return {"status": "unresolved", "reason": "zero candidates"}
     if len(candidates) == 1:
+        if _requires_venue_match(place) and not _location_query_matches_candidate(
+            query, candidates[0]
+        ):
+            return {
+                "status": "needs_review",
+                "candidates": candidates,
+                "reason": "venue query does not match Google candidate name",
+            }
         return {"status": "auto", "place": candidates[0]}
 
     # Multiple candidates — LLM tiebreaker
