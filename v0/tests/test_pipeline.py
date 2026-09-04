@@ -32,7 +32,7 @@ class SourcePlatformTests(unittest.TestCase):
 
 
 class YouTubeExtractionTests(unittest.TestCase):
-    def test_prompt_requires_main_intent_and_excludes_generic_types(self) -> None:
+    def test_prompt_requires_main_intent_and_uses_fixed_types(self) -> None:
         prompt = pipeline._extraction_prompt(
             {"caption_or_description": "An exhibit at a museum."},
             existing_types=["Place", "Unknown", "Restaurant", "Restaurant", "Exhibit"],
@@ -40,9 +40,27 @@ class YouTubeExtractionTests(unittest.TestCase):
 
         self.assertIn("part of the post's main intent", prompt)
         self.assertIn("Do not also save the host venue as a separate thing", prompt)
-        self.assertIn("Never use the generic category Place", prompt)
-        self.assertIn('["Restaurant", "Exhibit"]', prompt)
-        self.assertNotIn('["Place"', prompt)
+        self.assertIn("supplier, neighboring business, collaborator, or partner", prompt)
+        self.assertIn("closing call-to-action", prompt)
+        self.assertIn("Never use a generic class as its name", prompt)
+        self.assertIn("Restaurant, Café, Bar, Bakery", prompt)
+        self.assertNotIn("Existing specific type names", prompt)
+
+    def test_schema_allows_only_controlled_types(self) -> None:
+        type_schema = pipeline.EXTRACTION_RESPONSE_SCHEMA["properties"]["things"]["items"]["properties"]["type_name"]
+
+        self.assertEqual(type_schema["enum"], list(pipeline.THING_TYPES))
+
+    def test_removes_generic_unnamed_things(self) -> None:
+        things = pipeline._remove_generic_thing_names(
+            [
+                {"extracted_name": "Cafe", "type_name": "Café"},
+                {"extracted_name": "Theodora", "type_name": "Restaurant"},
+                {"extracted_name": "Place", "type_name": "Unknown"},
+            ]
+        )
+
+        self.assertEqual(things, [{"extracted_name": "Theodora", "type_name": "Restaurant"}])
 
     @patch("pipeline._client")
     def test_sends_youtube_url_directly_to_gemini(self, mock_client: MagicMock) -> None:
@@ -457,6 +475,42 @@ class InstagramExtractionTests(unittest.TestCase):
 
 
 class ProcessIngestTests(unittest.TestCase):
+    @patch.dict("pipeline.os.environ", {"GOOGLE_PLACES_API_KEY": "test"})
+    def test_temporary_thing_rejects_unmatched_single_google_candidate(self) -> None:
+        thing = {
+            "extracted_name": "HiFi Pursuit Listening Room Dream No. 3",
+            "type_name": "Pop-up",
+            "location_query": "HiFi Pursuit Listening Room Dream No. 3, New York City",
+            "ends_at": "2026-09-08",
+        }
+        response = MagicMock(ok=True)
+        response.json.return_value = {
+            "places": [{"displayName": {"text": "OJAS Listening Room"}}]
+        }
+
+        with patch("pipeline.requests.post", return_value=response):
+            result = pipeline.resolve(thing)
+
+        self.assertEqual(result["status"], "needs_review")
+        self.assertIn("does not match", result["reason"])
+
+    @patch.dict("pipeline.os.environ", {"GOOGLE_PLACES_API_KEY": "test"})
+    def test_temporary_thing_accepts_matching_host_venue(self) -> None:
+        thing = {
+            "extracted_name": "HiFi Pursuit Listening Room Dream No. 3",
+            "type_name": "Pop-up",
+            "location_query": "Cooper Hewitt, Smithsonian Design Museum, New York City",
+            "ends_at": "2026-09-08",
+        }
+        candidate = {"displayName": {"text": "Cooper Hewitt, Smithsonian Design Museum"}}
+        response = MagicMock(ok=True)
+        response.json.return_value = {"places": [candidate]}
+
+        with patch("pipeline.requests.post", return_value=response):
+            result = pipeline.resolve(thing)
+
+        self.assertEqual(result, {"status": "auto", "place": candidate})
+
     @patch("pipeline.resolve")
     @patch("pipeline.extract_youtube_bundle")
     def test_youtube_bypasses_downloader(

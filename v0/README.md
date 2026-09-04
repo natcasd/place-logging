@@ -16,7 +16,10 @@ optionally resolves physical locations through Google Places.
   and dates; non-location things require the same title and type. Uncertain
   recommendations remain separate.
 - Instagram media is archived under `WORKDIR/sources` on the mounted Fly volume.
-- Each extracted thing has an open-ended type, detailed description, optional
+- Each extracted thing uses one stable browse type (`Restaurant`, `Café`, `Bar`,
+  `Bakery`, `Park`, `Hiking Trail`, `Bike Route`, `Museum`, `Art Gallery`,
+  `Store`, `Spa`, `Fitness`, `Concert`, `Pop-up`, `Book`, `Movie`, `Article`,
+  `Song`, `Product`, or `Unknown`), plus a detailed description, optional
   availability dates, and optional Google location.
 - Resolved locations retain Google's display name and Google Place ID. Clients can
   show one map pin per location while keeping distinct saved things at that pin.
@@ -28,8 +31,9 @@ optionally resolves physical locations through Google Places.
 - Existing place rows migrate in place with `Unknown` as their temporary type. Before
   the first additive migration, the service creates a timestamped SQLite backup
   beside the database.
-- New extraction never emits the generic `Place` category. It saves only the
-  post's principal recommendations and chooses the most specific supported type.
+- New extraction saves only distinct principal recommendations; it excludes
+  scenery, background posters, host venues, suppliers, and creator CTAs unless
+  independently recommended. Generic unnamed records such as `Cafe` are dropped.
 - Temporary Gemini capacity and rate-limit errors receive bounded exponential
   retries. If extraction still fails, the source context and downloaded Instagram
   media are saved with zero things so the source remains visible for later review.
