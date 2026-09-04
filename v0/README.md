@@ -191,6 +191,24 @@ python backfill_location_names.py \
   --apply
 ```
 
+## Duplicate-source backfill
+
+`backfill_duplicate_sources.py` groups Instagram and YouTube share-URL variants
+by their underlying post/video, keeps the newest successfully processed Source,
+and preserves any recommendation found only by an older processing pass. The
+apply step verifies the reviewed plan and creates a full database backup first.
+
+```bash
+python backfill_duplicate_sources.py \
+  --db-path data/places.db \
+  --plan data/duplicate-source-backfill-plan.json
+
+python backfill_duplicate_sources.py \
+  --db-path data/places.db \
+  --plan data/duplicate-source-backfill-plan.json \
+  --apply
+```
+
 ## Known gaps
 
 - Disambiguation of `needs_review` location candidates is not yet available in the UI.

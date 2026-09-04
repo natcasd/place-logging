@@ -1,16 +1,19 @@
 """Application service shared by every ingest transport."""
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
+from threading import Lock
 from typing import Any
 
 from pipeline import process_ingest
 from pipeline import source_platform as detect_source_platform
+from source_identity import canonical_source_url
 from store import (
     delete_place,
     delete_thing,
     delete_things,
+    find_processed_source,
     init_db,
     finish_ingest_run,
     list_ingest_runs,
@@ -39,6 +42,18 @@ STAGE_MESSAGES = {
 class IngestService:
     db_path: Path
     workdir: Path
+    _source_locks: dict[str, Lock] = field(
+        default_factory=dict,
+        init=False,
+        repr=False,
+        compare=False,
+    )
+    _source_locks_guard: Lock = field(
+        default_factory=Lock,
+        init=False,
+        repr=False,
+        compare=False,
+    )
 
     def initialize(self) -> None:
         init_db(self.db_path)
@@ -49,6 +64,21 @@ class IngestService:
         user_prompt: str | None = None,
     ) -> dict[str, Any]:
         """Process and persist one source, returning the canonical result."""
+        identity = canonical_source_url(source_url)
+        with self._source_locks_guard:
+            source_lock = self._source_locks.setdefault(identity, Lock())
+        with source_lock:
+            return self._ingest_once(source_url, user_prompt)
+
+    def _ingest_once(
+        self,
+        source_url: str,
+        user_prompt: str | None,
+    ) -> dict[str, Any]:
+        existing = find_processed_source(self.db_path, source_url)
+        if existing is not None:
+            return existing
+
         run_id = start_ingest_run(
             self.db_path,
             source_url,
@@ -107,6 +137,7 @@ class IngestService:
                 "ingest_id": run_id,
                 "item_id": item_id,
                 "saved_things": outcomes,
+                "already_logged": False,
                 **result,
             }
         except Exception as exc:

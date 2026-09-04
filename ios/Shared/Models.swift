@@ -319,8 +319,10 @@ struct IngestResponse: Decodable, Sendable {
   let ingestID: Int
   let itemID: Int
   let savedThings: [SavedThingOutcome]
+  let alreadyLogged: Bool?
 
   var notificationTitle: String {
+    if alreadyLogged == true { return "Already logged" }
     guard savedThings.count == 1, let thing = savedThings.first else {
       return savedThings.isEmpty ? "Nothing found" : "Logged " + Self.typeCountSummary(savedThings)
     }
@@ -330,6 +332,7 @@ struct IngestResponse: Decodable, Sendable {
   }
 
   var notificationBody: String {
+    if alreadyLogged == true { return "" }
     guard !savedThings.isEmpty else {
       return "The source was saved for review."
     }
@@ -345,6 +348,7 @@ struct IngestResponse: Decodable, Sendable {
     case ingestID = "ingest_id"
     case itemID = "item_id"
     case savedThings = "saved_things"
+    case alreadyLogged = "already_logged"
   }
 
   private static func typeCountSummary(_ things: [SavedThingOutcome]) -> String {

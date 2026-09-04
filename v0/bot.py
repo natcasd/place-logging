@@ -35,6 +35,8 @@ def _format_timestamp(value: object) -> str | None:
 
 
 def _format_result(result: dict) -> str:
+    if result.get("already_logged"):
+        return "Already logged"
     resolved = result.get("resolved_things", result.get("resolved_places", []))
     outcomes = result.get("saved_things") or []
     if not resolved:
