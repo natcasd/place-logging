@@ -18,7 +18,7 @@ struct PlaceLoggerAPI: Sendable {
     return try JSONDecoder().decode(PlacesEnvelope.self, from: data).places
   }
 
-  func fetchThings(limit: Int = 200) async throws -> [SavedPlace] {
+  func fetchThings(limit: Int = 1_000) async throws -> [SavedPlace] {
     var components = URLComponents(
       url: APIConfig.baseURL.appending(path: "/api/v1/things"),
       resolvingAgainstBaseURL: false

@@ -254,6 +254,17 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(response.status_code, 422)
         self.service.places.assert_not_called()
 
+    def test_things_accepts_temporary_thousand_item_limit(self) -> None:
+        self.service.things.return_value = []
+
+        response = self.client.get(
+            "/api/v1/things?limit=1000",
+            headers={"Authorization": "Bearer api-secret"},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.service.things.assert_called_once_with(1000)
+
     def test_delete_place_requires_bearer_token(self) -> None:
         response = self.client.delete("/api/v1/places/7")
 

@@ -457,10 +457,10 @@ def create_app(injected_runtime: Runtime | None = None) -> FastAPI:
     ) -> dict[str, Any]:
         runtime: Runtime = request.app.state.runtime
         _require_ingest_auth(runtime, authorization)
-        if not 1 <= limit <= 500:
+        if not 1 <= limit <= 1_000:
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail="limit must be between 1 and 500",
+                detail="limit must be between 1 and 1000",
             )
         return {"things": await asyncio.to_thread(runtime.service.things, limit)}
 
