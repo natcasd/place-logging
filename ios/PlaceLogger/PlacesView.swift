@@ -56,6 +56,7 @@ struct PlacesView: View {
   @State private var path: [PlacesNavigation] = []
   @State private var selectedTab: PlacesTab = .aroundMe
   @State private var requestedMapThingID: Int?
+  @State private var aroundMeFilterType: String?
 
   var body: some View {
     NavigationStack(path: $path) {
@@ -77,6 +78,7 @@ struct PlacesView: View {
               places: model.places,
               isRefreshing: model.isLoading,
               requestedThingID: $requestedMapThingID,
+              selectedType: $aroundMeFilterType,
               refresh: { await model.load() },
               deleteThingCard: { thing in try await model.deleteThingCard(thing) }
             )
@@ -87,8 +89,7 @@ struct PlacesView: View {
 
             PlacesList(
               places: model.places,
-              refresh: { await model.load() },
-              deletePlace: { place in try await model.delete(place) }
+              refresh: { await model.load() }
             )
             .tabItem {
               Label("Saved", systemImage: "tray.full")
@@ -103,7 +104,7 @@ struct PlacesView: View {
           }
         }
       }
-      .navigationTitle(selectedTab == .aroundMe ? "" : "Place Logger")
+      .navigationTitle(selectedTab == .aroundMe ? "" : selectedTab == .saved ? "Saved" : "Activity")
       .navigationBarTitleDisplayMode(selectedTab == .aroundMe ? .inline : .automatic)
       .toolbar(selectedTab == .aroundMe ? .hidden : .visible, for: .navigationBar)
       .toolbar {
@@ -139,6 +140,18 @@ struct PlacesView: View {
             },
             isLoading: model.isLoading
           )
+        case .category(let type):
+          SavedCategoryList(
+            category: SavedCategory.category(for: type),
+            places: model.places.filter { $0.displayType.caseInsensitiveCompare(type) == .orderedSame },
+            refresh: { await model.load() },
+            deletePlace: { place in try await model.delete(place) },
+            viewAroundMe: {
+              aroundMeFilterType = type
+              path = []
+              selectedTab = .aroundMe
+            }
+          )
         }
       }
     }
@@ -152,6 +165,7 @@ struct PlacesView: View {
            thing.latitude != nil, thing.longitude != nil, thing.isCurrentlyRelevant {
           path = []
           selectedTab = .aroundMe
+          aroundMeFilterType = nil
           requestedMapThingID = thingID
         } else {
           selectedTab = .saved
@@ -186,32 +200,14 @@ private enum PlacesNavigation: Hashable {
   case thing(Int)
   case activity(Int)
   case legacyItem(Int)
+  case category(String)
 }
 
 private struct PlacesList: View {
   let places: [SavedPlace]
   let refresh: () async -> Void
-  let deletePlace: (SavedPlace) async throws -> Void
-  @State private var pendingDeletion: SavedPlace?
-  @State private var deletionError: String?
-  @State private var searchText = ""
-  @State private var selectedType = "All"
 
-  private var types: [String] {
-    Array(Set(places.map(\.displayType))).sorted()
-  }
-
-  private var filteredPlaces: [SavedPlace] {
-    places.filter { place in
-      let matchesType = selectedType == "All" || place.displayType == selectedType
-      let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
-      let matchesSearch = query.isEmpty
-        || place.name.localizedCaseInsensitiveContains(query)
-        || place.detailedDescription.localizedCaseInsensitiveContains(query)
-        || place.displayType.localizedCaseInsensitiveContains(query)
-      return matchesType && matchesSearch
-    }
-  }
+  private var categories: [SavedCategory] { SavedCategory.categories(for: places) }
 
   var body: some View {
     Group {
@@ -222,31 +218,122 @@ private struct PlacesList: View {
           description: Text("Share an Instagram Reel or YouTube video to get started.")
         )
       } else {
-        List {
-          if !types.isEmpty {
-            Picker("Type", selection: $selectedType) {
-              Text("All").tag("All")
-              ForEach(types, id: \.self) { type in
-                Text(type).tag(type)
+        ScrollView {
+          LazyVGrid(
+            columns: [
+              GridItem(.flexible(minimum: 0), spacing: 12),
+              GridItem(.flexible(minimum: 0), spacing: 12),
+            ],
+            spacing: 12
+          ) {
+            ForEach(categories) { category in
+              NavigationLink(value: PlacesNavigation.category(category.type)) {
+                SavedCategoryTile(category: category)
               }
+              .buttonStyle(.plain)
+              .accessibilityLabel(category.title)
             }
-            .pickerStyle(.menu)
           }
-
-          ForEach(filteredPlaces) { place in
-            PlaceRow(place: place)
-              .swipeActions {
-                Button("Delete", systemImage: "trash", role: .destructive) {
-                  pendingDeletion = place
-                }
-              }
-          }
+          .padding(.horizontal)
+          .padding(.top, 12)
+          .padding(.bottom, 24)
         }
-        .listStyle(.plain)
-        .searchable(text: $searchText, prompt: "Search saved things")
         .refreshable { await refresh() }
       }
     }
+  }
+}
+
+private struct SavedCategoryTile: View {
+  let category: SavedCategory
+
+  var body: some View {
+    GeometryReader { geometry in
+      ZStack(alignment: .bottomLeading) {
+        if let artAssetName = category.artAssetName {
+          Image(artAssetName)
+            .resizable()
+            .scaledToFill()
+            .frame(width: geometry.size.width, height: geometry.size.height)
+            .clipped()
+            .saturation(0)
+            .colorMultiply(category.artTint)
+        } else {
+          LinearGradient(
+            colors: [.purple, .indigo],
+            startPoint: .topLeading,
+            endPoint: .bottomTrailing
+          )
+          Image(systemName: category.icon)
+            .font(.system(size: 38, weight: .medium))
+            .foregroundStyle(.white.opacity(0.88))
+        }
+
+        LinearGradient(
+          colors: [.black.opacity(0.3), .clear],
+          startPoint: .bottom,
+          endPoint: .top
+        )
+
+        Text(category.title)
+          .font(.headline.weight(.bold))
+          .foregroundStyle(.white)
+          .padding(14)
+      }
+      .frame(width: geometry.size.width, height: geometry.size.height)
+    }
+    .aspectRatio(1.5, contentMode: .fit)
+    .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+    .contentShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+  }
+}
+
+private struct SavedCategoryList: View {
+  let category: SavedCategory
+  let places: [SavedPlace]
+  let refresh: () async -> Void
+  let deletePlace: (SavedPlace) async throws -> Void
+  let viewAroundMe: () -> Void
+  @State private var pendingDeletion: SavedPlace?
+  @State private var deletionError: String?
+  @State private var searchText = ""
+
+  private var filteredPlaces: [SavedPlace] {
+    let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !query.isEmpty else { return places }
+    return places.filter {
+      $0.name.localizedCaseInsensitiveContains(query)
+        || $0.detailedDescription.localizedCaseInsensitiveContains(query)
+    }
+  }
+
+  var body: some View {
+    List {
+      if category.isPlaceBased {
+        Section {
+          Button(action: viewAroundMe) {
+            Label("View in Around Me", systemImage: "map")
+              .font(.body.weight(.semibold))
+          }
+        }
+      }
+
+      ForEach(filteredPlaces) { place in
+        NavigationLink(value: PlacesNavigation.thing(place.id)) {
+          PlaceRow(place: place)
+        }
+        .swipeActions {
+          Button("Delete", systemImage: "trash", role: .destructive) {
+            pendingDeletion = place
+          }
+        }
+      }
+    }
+    .listStyle(.plain)
+    .navigationTitle(category.title)
+    .navigationBarTitleDisplayMode(.inline)
+    .searchable(text: $searchText, prompt: "Search \(category.title.lowercased())")
+    .refreshable { await refresh() }
     .confirmationDialog(
       pendingDeletion.map { "Delete \($0.name)?" } ?? "Delete Thing?",
       isPresented: Binding(
@@ -267,13 +354,9 @@ private struct PlacesList: View {
           }
         }
       }
-      Button("Cancel", role: .cancel) {
-        pendingDeletion = nil
-      }
+      Button("Cancel", role: .cancel) { pendingDeletion = nil }
     } message: {
-      if let place = pendingDeletion {
-        Text(deleteMessage(thing: place))
-      }
+      if let place = pendingDeletion { Text(deleteMessage(thing: place)) }
     }
     .alert(
       "Couldn’t Delete Thing",
@@ -287,7 +370,6 @@ private struct PlacesList: View {
       Text(deletionError ?? "Please try again.")
     }
   }
-
 }
 
 private struct MappedThingGroup: Identifiable {
@@ -503,6 +585,7 @@ private struct PlacesMap: View {
   let places: [SavedPlace]
   let isRefreshing: Bool
   @Binding var requestedThingID: Int?
+  @Binding var selectedType: String?
   let refresh: () async -> Void
   let deleteThingCard: (SavedPlace) async throws -> Void
   @StateObject private var locationModel = LocationModel()
@@ -518,7 +601,14 @@ private struct PlacesMap: View {
   @FocusState private var searchIsFocused: Bool
 
   private var groups: [MappedPlaceGroup] {
-    MappedPlaceGroup.make(from: places.filter(\.isCurrentlyRelevant))
+    let activeType = selectedType
+    return MappedPlaceGroup.make(
+      from: places.filter { place in
+        guard place.isCurrentlyRelevant else { return false }
+        guard let activeType else { return true }
+        return place.displayType.caseInsensitiveCompare(activeType) == .orderedSame
+      }
+    )
   }
 
   var body: some View {
@@ -682,6 +772,20 @@ private struct PlacesMap: View {
             }
           }
           .frame(maxWidth: .infinity, alignment: .leading)
+
+          if let selectedType {
+            Button {
+              self.selectedType = nil
+            } label: {
+              Label(selectedType, systemImage: "xmark")
+                .font(.subheadline.weight(.semibold))
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
+                .background(.regularMaterial, in: Capsule())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Clear \(selectedType) filter")
+          }
 
           if searchIsFocused && !searchModel.suggestions.isEmpty {
             VStack(spacing: 0) {
