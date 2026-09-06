@@ -51,6 +51,7 @@ class StoreTests(unittest.TestCase):
                                 "description": "A bakery with great bread and sandwiches.",
                                 "starts_at": "2026-09-01",
                                 "ends_at": "2026-09-30",
+                                "recurrence_text": "Thursday - Sunday",
                                 "dishes": ["sandwich"],
                                 "why_its_cool": "Great bread.",
                                 "tags": ["bakery"],
@@ -88,8 +89,13 @@ class StoreTests(unittest.TestCase):
                 places[0]["description"],
                 "A bakery with great bread and sandwiches.",
             )
-            self.assertEqual(places[0]["ends_at"], "2026-09-30")
+            self.assertIsNone(places[0]["starts_at"])
+            self.assertIsNone(places[0]["ends_at"])
+            self.assertIsNone(places[0]["recurrence_text"])
             canonical = list_things(db_path)[0]
+            self.assertIsNone(canonical["starts_at"])
+            self.assertIsNone(canonical["ends_at"])
+            self.assertIsNone(canonical["recurrence_text"])
             self.assertEqual(len(canonical["sources"]), 1)
             self.assertEqual(
                 canonical["sources"][0]["description"],

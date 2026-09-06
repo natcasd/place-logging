@@ -45,6 +45,8 @@ class YouTubeExtractionTests(unittest.TestCase):
         self.assertIn("Never use a generic class as its name", prompt)
         self.assertIn("Restaurant, Café, Bar, Bakery", prompt)
         self.assertIn("Use Exhibit for a museum or gallery exhibition", prompt)
+        self.assertIn("ONLY for a Concert, Pop-up, or Exhibit", prompt)
+        self.assertIn("Never put business hours", prompt)
         self.assertNotIn("Existing specific type names", prompt)
 
     def test_schema_allows_only_controlled_types(self) -> None:
@@ -62,6 +64,29 @@ class YouTubeExtractionTests(unittest.TestCase):
         )
 
         self.assertEqual(things, [{"extracted_name": "Theodora", "type_name": "Restaurant"}])
+
+    def test_removes_timing_from_stable_things_only(self) -> None:
+        things = pipeline._remove_invalid_timing_fields(
+            [
+                {
+                    "extracted_name": "S&P Lunch",
+                    "type_name": "Restaurant",
+                    "recurrence_text": "Thursday - Sunday",
+                },
+                {
+                    "extracted_name": "Sunday Supper",
+                    "type_name": "Pop-up",
+                    "starts_at": "2026-09-01",
+                    "ends_at": "2026-10-01",
+                    "recurrence_text": "Sundays through October",
+                },
+            ]
+        )
+
+        self.assertNotIn("recurrence_text", things[0])
+        self.assertEqual(things[1]["starts_at"], "2026-09-01")
+        self.assertEqual(things[1]["ends_at"], "2026-10-01")
+        self.assertEqual(things[1]["recurrence_text"], "Sundays through October")
 
     @patch("pipeline._client")
     def test_sends_youtube_url_directly_to_gemini(self, mock_client: MagicMock) -> None:

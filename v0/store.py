@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Any
 
 from source_identity import canonical_source_url
-from thing_types import canonical_thing_type
+from thing_types import canonical_thing_type, supports_timing
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS items (
@@ -249,7 +249,9 @@ def save_ingest(db_path: Path, result: dict[str, Any]) -> int:
             result.get("resolved_places", []),
         )
         for ordinal, r in enumerate(resolved_things):
-            extracted = r.get("extracted", {}) or {}
+            extracted = _normalize_extracted_for_storage(
+                r.get("extracted", {}) or {}
+            )
             status = r.get("status", "unresolved")
             place = r.get("place", {}) or {}
             candidates = r.get("candidates", []) or []
@@ -461,6 +463,16 @@ def _normalize_type_name(value: Any) -> str:
     return canonical_thing_type(value)
 
 
+def _normalize_extracted_for_storage(extracted: dict[str, Any]) -> dict[str, Any]:
+    """Canonicalize the type and enforce which Things may own timing metadata."""
+    normalized = dict(extracted)
+    normalized["type_name"] = _normalize_type_name(normalized.get("type_name"))
+    if not supports_timing(normalized["type_name"]):
+        for field in ("starts_at", "ends_at", "recurrence_text"):
+            normalized.pop(field, None)
+    return normalized
+
+
 def _normalize_identity(value: Any) -> str:
     """Normalize conservative identity fields without fuzzy matching."""
     return " ".join(re.sub(r"[^\w]+", " ", str(value or "").casefold()).split())
@@ -611,8 +623,9 @@ def _save_normalized_occurrence(
     candidates: list[Any],
     source_created_at: str | None = None,
 ) -> int:
+    extracted = _normalize_extracted_for_storage(extracted)
     location_id = _upsert_location(con, place)
-    thing_type = _normalize_type_name(extracted.get("type_name"))
+    thing_type = extracted["type_name"]
     identity_key, normalized_name, type_key = _identity_key(
         extracted,
         thing_type,

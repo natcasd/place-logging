@@ -25,7 +25,7 @@ import requests
 from google import genai
 from google.genai import types
 
-from thing_types import THING_TYPES, normalized_type_label
+from thing_types import THING_TYPES, normalized_type_label, supports_timing
 
 log = logging.getLogger(__name__)
 
@@ -393,9 +393,7 @@ For each thing, return an object with:
 - description: a detailed, source-grounded explanation containing the useful information conveyed about this thing. Do not add facts that are not in the source.
 - location_query: only when the thing has a physical place, area, anchor, or venue that Google Places could resolve. Use the venue for an event or exhibit. Include the name plus directly evidenced neighborhood/city/region hints. Omit this field for non-location things and when there is not enough location evidence.
 - location_hints: object with any of { neighborhood, city, region_or_country, on_screen_text, visual_landmarks } — ONLY include fields where you have direct evidence from the supplied media or caption. Omit a field rather than guess.
-- starts_at: ISO 8601 date or datetime when a temporary thing begins, only when directly supported by the source
-- ends_at: ISO 8601 date or datetime when a temporary thing ends, only when directly supported by the source
-- recurrence_text: the source's human-readable recurring schedule when relevant, such as "Sundays through October"
+- starts_at, ends_at, and recurrence_text: ONLY for a Concert, Pop-up, or Exhibit, and only when directly supported by the source. Use ISO 8601 for starts_at and ends_at; preserve a human-readable recurring schedule in recurrence_text. Never put business hours, opening days, release dates, publication dates, or other timing on stable types such as Restaurant, Café, Museum, Book, Movie, or Product. If a temporary event or limited-run offering at a stable venue is itself the main recommendation, extract that event as a Concert, Pop-up, or Exhibit and use the venue only as its location.
 - extraction_confidence: "high" | "medium" | "low"
 - timestamp_seconds: for a Reel, YouTube video, or video carousel slide, the
   non-negative number of seconds from the start of that video to the beginning
@@ -525,6 +523,39 @@ def _remove_generic_thing_names(things: list[dict[str, Any]]) -> list[dict[str, 
     return kept
 
 
+def _remove_invalid_timing_fields(
+    things: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Do not let stable Things acquire post-specific schedules or dates."""
+    sanitized = []
+    for original in things:
+        thing = dict(original)
+        if not supports_timing(thing.get("type_name")):
+            removed = [
+                field
+                for field in ("starts_at", "ends_at", "recurrence_text")
+                if thing.pop(field, None) not in (None, "")
+            ]
+            if removed:
+                log.info(
+                    "Discarding timing fields %s from stable %s Thing %r",
+                    removed,
+                    thing.get("type_name"),
+                    thing.get("extracted_name"),
+                )
+        sanitized.append(thing)
+    return sanitized
+
+
+def _normalize_extracted_things(
+    things: list[dict[str, Any]],
+    metadata: dict[str, Any],
+) -> list[dict[str, Any]]:
+    return _remove_invalid_timing_fields(
+        _remove_generic_thing_names(_normalize_media_references(things, metadata))
+    )
+
+
 def _normalize_media_references(
     things: list[dict[str, Any]],
     metadata: dict[str, Any],
@@ -608,9 +639,7 @@ def extract_bundle(
     extracted = parsed.get("things", parsed.get("places", []))
     return {
         "source_content": parsed.get("source_content") or {},
-        "things": _remove_generic_thing_names(
-            _normalize_media_references(extracted, metadata)
-        ),
+        "things": _normalize_extracted_things(extracted, metadata),
     }
 
 
@@ -659,9 +688,7 @@ def extract_youtube_bundle(
     extracted = parsed.get("things", parsed.get("places", []))
     return {
         "source_content": parsed.get("source_content") or {},
-        "things": _remove_generic_thing_names(
-            _normalize_media_references(extracted, metadata)
-        ),
+        "things": _normalize_extracted_things(extracted, metadata),
     }
 
 

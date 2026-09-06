@@ -29,6 +29,8 @@ THING_TYPES = (
     "Unknown",
 )
 
+TEMPORARY_THING_TYPES = frozenset({"Concert", "Pop-up", "Exhibit"})
+
 
 def normalized_type_label(value: Any) -> str:
     """Normalize labels for matching while ignoring capitalization and accents."""
@@ -67,3 +69,8 @@ def canonical_thing_type(value: Any) -> str:
     """Return the allowed display type, with Unknown for unsupported values."""
     normalized = normalized_type_label(value)
     return _CANONICAL_TYPES.get(normalized, _TYPE_ALIASES.get(normalized, "Unknown"))
+
+
+def supports_timing(value: Any) -> bool:
+    """Only transient recommendation types own dates or recurring schedules."""
+    return canonical_thing_type(value) in TEMPORARY_THING_TYPES
