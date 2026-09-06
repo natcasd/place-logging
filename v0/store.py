@@ -1106,7 +1106,6 @@ def list_sources(db_path: Path, limit: int = 200) -> list[dict[str, Any]]:
         sources = []
         for row in rows:
             metadata = _decode_json_object(row["raw_payload_json"])
-            archived_media = metadata.get("archived_media") or []
             sources.append(
                 {
                     "id": row["id"],
@@ -1116,8 +1115,10 @@ def list_sources(db_path: Path, limit: int = 200) -> list[dict[str, Any]]:
                     "creator": metadata.get("uploader"),
                     "caption": metadata.get("caption_or_description"),
                     "summary": (metadata.get("source_content") or {}).get("summary"),
-                    "media_count": metadata.get("media_count") or len(archived_media),
-                    "media_preserved": bool(metadata.get("media_preserved")),
+                    "media_count": metadata.get("media_count") or 0,
+                    # Kept for released clients; source media is no longer
+                    # retained after extraction, including legacy records.
+                    "media_preserved": False,
                     "thing_count": row["thing_count"],
                     "needs_review": row["thing_count"] == 0,
                     "saved_at": row["created_at"],

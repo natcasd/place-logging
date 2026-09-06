@@ -375,7 +375,7 @@ class StoreTests(unittest.TestCase):
 
             sources = list_sources(db_path)
             self.assertEqual(sources[0]["thing_count"], 1)
-            self.assertTrue(sources[0]["media_preserved"])
+            self.assertFalse(sources[0]["media_preserved"])
             self.assertEqual(sources[0]["summary"], "A creator recommends a book.")
             self.assertFalse(sources[0]["needs_review"])
 

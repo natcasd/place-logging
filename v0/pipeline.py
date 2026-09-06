@@ -5,7 +5,6 @@ Stays synchronous for simplicity; bot.py offloads to a thread via asyncio.to_thr
 """
 from __future__ import annotations
 
-import hashlib
 import json
 import logging
 import mimetypes
@@ -16,7 +15,6 @@ import subprocess
 import sys
 import tempfile
 import time
-import uuid
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -352,41 +350,6 @@ def fetch(source_url: str, workdir: Path) -> InstagramFetch:
     except Exception:
         shutil.rmtree(cleanup_dir, ignore_errors=True)
         raise
-
-
-# ---------- Source archive ----------
-
-
-def archive_media(
-    media_paths: list[Path],
-    workdir: Path,
-    source_url: str,
-) -> list[dict[str, Any]]:
-    """Persist source media outside the temporary extractor directory."""
-    archive_root = workdir / "sources"
-    archive_root.mkdir(parents=True, exist_ok=True)
-    source_key = hashlib.sha256(source_url.encode("utf-8")).hexdigest()[:16]
-    destination = archive_root / f"{source_key}-{uuid.uuid4().hex[:8]}"
-    destination.mkdir()
-
-    manifest = []
-    try:
-        for index, path in enumerate(media_paths, start=1):
-            archived = destination / f"{index:03d}-{path.name}"
-            shutil.copy2(path, archived)
-            manifest.append(
-                {
-                    "path": str(archived),
-                    "filename": archived.name,
-                    "mime_type": mimetypes.guess_type(archived.name)[0]
-                    or "application/octet-stream",
-                    "bytes": archived.stat().st_size,
-                }
-            )
-    except Exception:
-        shutil.rmtree(destination, ignore_errors=True)
-        raise
-    return manifest
 
 
 # ---------- Extractor ----------
@@ -991,21 +954,10 @@ def process_ingest(
             progress("fetching")
         fetched = fetch(source_url, workdir)
         metadata = fetched.metadata
+        # Downloaded source media is processing-only. We retain the URL and
+        # extracted text, but never copy media to persistent storage.
+        metadata["media_preserved"] = False
         try:
-            if progress:
-                progress("archiving")
-            try:
-                metadata["archived_media"] = archive_media(
-                    fetched.media_paths,
-                    workdir,
-                    source_url,
-                )
-                metadata["media_preserved"] = True
-            except Exception:
-                # The URL, caption, source analysis, and extracted things are
-                # still worth preserving if archival storage is unavailable.
-                metadata["media_preserved"] = False
-                log.exception("source media archive failed (non-fatal)")
             if progress:
                 progress("extracting")
             try:

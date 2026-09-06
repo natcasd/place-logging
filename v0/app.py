@@ -9,6 +9,7 @@ import json
 import logging
 import os
 import secrets
+import tempfile
 import time
 import uuid
 from contextlib import asynccontextmanager
@@ -328,9 +329,10 @@ def _require_ingest_auth(runtime: Runtime, authorization: str | None) -> None:
 
 def build_runtime() -> Runtime:
     root = Path(__file__).parent
+    default_workdir = Path(tempfile.gettempdir()) / "place-logger-downloads"
     service = IngestService(
         db_path=Path(os.environ.get("DB_PATH", root / "data" / "places.db")),
-        workdir=Path(os.environ.get("WORKDIR", root / "data" / "downloads")),
+        workdir=Path(os.environ.get("WORKDIR", default_workdir)),
     )
     service.initialize()
     allowed_ids = _allowed_ids()

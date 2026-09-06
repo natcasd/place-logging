@@ -31,7 +31,6 @@ from store import (
 STAGE_MESSAGES = {
     "accepted": "Starting processing",
     "fetching": "Downloading source media",
-    "archiving": "Preserving source media",
     "extracting": "Finding recommendations",
     "resolving": "Resolving locations",
     "saving": "Saving results",

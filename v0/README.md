@@ -15,7 +15,8 @@ optionally resolves physical locations through Google Places.
   ID and compatible type; temporary things additionally require the same title
   and dates; non-location things require the same title and type. Uncertain
   recommendations remain separate.
-- Instagram media is archived under `WORKDIR/sources` on the mounted Fly volume.
+- Instagram media is downloaded into temporary machine storage for extraction,
+  then deleted. The source URL, caption, and extracted source text are retained.
 - Each extracted thing uses one stable browse type (`Restaurant`, `Café`, `Bar`,
   `Bakery`, `Park`, `Hiking Trail`, `Bike Route`, `Museum`, `Art Gallery`,
   `Store`, `Spa`, `Fitness`, `Concert`, `Pop-up`, `Exhibit`, `Book`, `Movie`, `Article`,
@@ -35,8 +36,8 @@ optionally resolves physical locations through Google Places.
   scenery, background posters, host venues, suppliers, and creator CTAs unless
   independently recommended. Generic unnamed records such as `Cafe` are dropped.
 - Temporary Gemini capacity and rate-limit errors receive bounded exponential
-  retries. If extraction still fails, the source context and downloaded Instagram
-  media are saved with zero things so the source remains visible for later review.
+  retries. If extraction still fails, the source URL, caption, and error are
+  saved with zero things so the source remains visible for later review.
 - `/api/v1/things` and `/api/v1/sources` power new clients. `/api/v1/places`
   remains available for released clients.
 
@@ -47,7 +48,8 @@ optionally resolves physical locations through Google Places.
 - `ingest_service.py` — shared process-and-persist application service
 - `pipeline.py` — platform-aware `ingest → extract → resolve` pipeline
 - `store.py` — SQLite schema + `save_ingest()`
-- `data/` — temporary Instagram media cache + `places.db` (both gitignored)
+- `data/` — local SQLite database (gitignored); temporary Instagram media uses
+  the machine's temp directory and is deleted after each attempt
 
 ## First-time setup
 

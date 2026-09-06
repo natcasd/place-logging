@@ -616,23 +616,19 @@ class ProcessIngestTests(unittest.TestCase):
             self.assertFalse(video.exists())
             self.assertFalse(cleanup_dir.exists())
             self.assertTrue(Path(temp_dir).exists())
-            source_dirs = list((Path(temp_dir) / "sources").iterdir())
-            self.assertEqual(len(source_dirs), 1)
-            self.assertTrue((source_dirs[0] / "001-post.mp4").exists())
+            self.assertFalse((Path(temp_dir) / "sources").exists())
             self.assertEqual(
                 stages,
-                ["fetching", "archiving", "extracting", "resolving"],
+                ["fetching", "extracting", "resolving"],
             )
 
     @patch("pipeline.resolve")
-    @patch("pipeline.archive_media", side_effect=OSError("disk full"))
     @patch("pipeline.extract_bundle")
     @patch("pipeline.fetch")
-    def test_archive_failure_still_preserves_source_record_payload(
+    def test_instagram_keeps_source_record_payload_without_archiving(
         self,
         mock_fetch: MagicMock,
         mock_extract: MagicMock,
-        _mock_archive: MagicMock,
         mock_resolve: MagicMock,
     ) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -651,12 +647,11 @@ class ProcessIngestTests(unittest.TestCase):
             }
             mock_resolve.return_value = {"status": "not_applicable"}
 
-            with self.assertLogs("pipeline", level="ERROR"):
-                result = pipeline.process_ingest(
-                    "https://www.instagram.com/reel/abc/",
-                    None,
-                    Path(temp_dir),
-                )
+            result = pipeline.process_ingest(
+                "https://www.instagram.com/reel/abc/",
+                None,
+                Path(temp_dir),
+            )
 
             self.assertFalse(result["metadata"]["media_preserved"])
             self.assertEqual(
@@ -665,14 +660,12 @@ class ProcessIngestTests(unittest.TestCase):
             )
             self.assertFalse(cleanup_dir.exists())
 
-    @patch("pipeline.archive_media")
     @patch("pipeline.extract_bundle", side_effect=FakeGeminiError(503))
     @patch("pipeline.fetch")
-    def test_exhausted_extraction_preserves_archived_source_for_review(
+    def test_exhausted_extraction_preserves_source_record_for_review(
         self,
         mock_fetch: MagicMock,
         _mock_extract: MagicMock,
-        mock_archive: MagicMock,
     ) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             cleanup_dir = Path(temp_dir) / "instagram-ingest"
@@ -687,10 +680,6 @@ class ProcessIngestTests(unittest.TestCase):
                 },
                 cleanup_dir,
             )
-            mock_archive.return_value = [
-                {"path": "/data/downloads/sources/post.mp4", "bytes": 100}
-            ]
-
             with self.assertLogs("pipeline", level="ERROR"):
                 result = pipeline.process_ingest(
                     "https://www.instagram.com/reel/abc/",
@@ -705,7 +694,7 @@ class ProcessIngestTests(unittest.TestCase):
                 result["metadata"]["extraction_error"]["type"],
                 "FakeGeminiError",
             )
-            self.assertTrue(result["metadata"]["media_preserved"])
+            self.assertFalse(result["metadata"]["media_preserved"])
             self.assertEqual(
                 result["metadata"]["caption_or_description"],
                 "Saved caption",
