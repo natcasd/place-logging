@@ -2,12 +2,12 @@
 
 The native MVP contains two targets:
 
-- `PlaceLogger`: a SwiftUI list and MapKit map of saved Things.
+- `PlaceLogger`: a SwiftUI list and MapKit map of saved Entries.
 - `PlaceLoggerShare`: a native share extension that accepts links and media
   shared by Instagram or YouTube and sends the extracted URL to the existing
   ingest API. The extension can close while the synchronous request continues;
   on completion, it schedules a local notification summarizing the logged
-  Things.
+  Entries.
 
 The current free, locally provisioned build cannot use APNs. Because completion
 notifications are scheduled by the share extension, tapping them does not open

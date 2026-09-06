@@ -1,22 +1,24 @@
 from __future__ import annotations
 
+import json
 import sqlite3
 import tempfile
 import unittest
 from pathlib import Path
 
+import store
 from store import (
     delete_place,
-    delete_thing,
-    delete_things,
+    delete_entry,
+    delete_entries,
     init_db,
     list_places,
     list_ingest_runs,
     list_sources,
-    list_thing_types,
-    list_things,
+    list_entry_types,
+    list_entries,
     save_ingest,
-    saved_thing_outcomes,
+    saved_entry_outcomes,
     start_ingest_run,
     finish_ingest_run,
 )
@@ -92,7 +94,7 @@ class StoreTests(unittest.TestCase):
             self.assertIsNone(places[0]["starts_at"])
             self.assertIsNone(places[0]["ends_at"])
             self.assertIsNone(places[0]["recurrence_text"])
-            canonical = list_things(db_path)[0]
+            canonical = list_entries(db_path)[0]
             self.assertIsNone(canonical["starts_at"])
             self.assertIsNone(canonical["ends_at"])
             self.assertIsNone(canonical["recurrence_text"])
@@ -101,7 +103,7 @@ class StoreTests(unittest.TestCase):
                 canonical["sources"][0]["description"],
                 "A bakery with great bread and sandwiches.",
             )
-            self.assertEqual(list_thing_types(db_path), ["Restaurant"])
+            self.assertEqual(list_entry_types(db_path), ["Restaurant"])
 
     def test_init_db_migrates_existing_places_table(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -132,7 +134,7 @@ class StoreTests(unittest.TestCase):
                 con.close()
             self.assertIn("timestamp_seconds", columns)
             self.assertIn("slide_index", columns)
-            self.assertIn("thing_type", columns)
+            self.assertIn("entry_type", columns)
             self.assertIn("description", columns)
             self.assertIn("starts_at", columns)
             self.assertIn("ends_at", columns)
@@ -140,12 +142,114 @@ class StoreTests(unittest.TestCase):
             con = sqlite3.connect(db_path)
             try:
                 legacy = con.execute(
-                    "SELECT google_place_id, thing_type FROM places WHERE id = 1"
+                    "SELECT google_place_id, entry_type FROM places WHERE id = 1"
                 ).fetchone()
             finally:
                 con.close()
             self.assertEqual(legacy, ("legacy", "Unknown"))
-            self.assertEqual(len(list(Path(temp_dir).glob("*.pre-things-*.bak"))), 1)
+            self.assertEqual(len(list(Path(temp_dir).glob("*.pre-entries-*.bak"))), 1)
+
+    def test_init_db_renames_existing_entry_model_without_changing_ids(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            db_path = root / "places.db"
+            legacy_schema = store.SCHEMA.replace("entry_type", "thing_type")
+            legacy_normalized = (
+                store.NORMALIZED_SCHEMA
+                .replace("entry_sources", "thing_sources")
+                .replace("entry_id", "thing_id")
+                .replace("entry_type", "thing_type")
+                .replace("entries", "things")
+            )
+            con = sqlite3.connect(db_path)
+            con.executescript(legacy_schema)
+            con.executescript(legacy_normalized)
+            con.execute(
+                """INSERT INTO items (id, vertical, source_url)
+                   VALUES (4, 'thing', 'https://example.com/source')"""
+            )
+            con.execute(
+                """INSERT INTO places
+                   (id, item_id, ordinal, extracted_name, resolution_status,
+                    thing_type)
+                   VALUES (5, 4, 0, 'S&P Lunch', 'auto', 'Restaurant')"""
+            )
+            con.execute(
+                """INSERT INTO locations (id, google_place_id, display_name)
+                   VALUES (6, 'google-id', 'S&P Lunch')"""
+            )
+            con.execute(
+                """INSERT INTO things
+                   (id, name, normalized_name, thing_type, type_key,
+                    identity_key, location_id)
+                   VALUES (7, 'S&P Lunch', 's p lunch', 'Restaurant', 'food',
+                           'thing|query:|name:s p lunch|type:restaurant|starts:|ends:',
+                           6)"""
+            )
+            con.execute(
+                """INSERT INTO thing_sources
+                   (id, thing_id, item_id, legacy_place_id, ordinal,
+                    source_name, source_type, resolution_status)
+                   VALUES (8, 7, 4, 5, 0, 'S&P Lunch', 'Restaurant', 'auto')"""
+            )
+            con.execute(
+                """INSERT INTO ingest_runs
+                   (id, source_url, source_platform, status, stage, item_id,
+                    result_json)
+                   VALUES (9, 'https://example.com/source', 'instagram',
+                           'completed', 'completed', 4,
+                           '[{"thing_id": 7, "name": "S&P Lunch"}]')"""
+            )
+            con.commit()
+            con.close()
+
+            init_db(db_path)
+
+            con = sqlite3.connect(db_path)
+            try:
+                tables = {
+                    row[0]
+                    for row in con.execute(
+                        "SELECT name FROM sqlite_master WHERE type = 'table'"
+                    )
+                }
+                row = con.execute(
+                    """SELECT e.id, e.entry_type, e.identity_key,
+                              es.id, es.entry_id, i.vertical
+                         FROM entries AS e
+                         JOIN entry_sources AS es ON es.entry_id = e.id
+                         JOIN items AS i ON i.id = es.item_id"""
+                ).fetchone()
+                place_type = con.execute(
+                    "SELECT entry_type FROM places WHERE id = 5"
+                ).fetchone()[0]
+                activity_results = json.loads(
+                    con.execute(
+                        "SELECT result_json FROM ingest_runs WHERE id = 9"
+                    ).fetchone()[0]
+                )
+            finally:
+                con.close()
+
+            self.assertNotIn("things", tables)
+            self.assertNotIn("thing_sources", tables)
+            self.assertEqual(
+                row,
+                (
+                    7,
+                    "Restaurant",
+                    "entry|query:|name:s p lunch|type:restaurant|starts:|ends:",
+                    8,
+                    7,
+                    "entry",
+                ),
+            )
+            self.assertEqual(place_type, "Restaurant")
+            self.assertEqual(
+                activity_results,
+                [{"entry_id": 7, "name": "S&P Lunch"}],
+            )
+            self.assertEqual(len(list(root.glob("*.pre-entry-rename-*.bak"))), 1)
 
     def test_normalized_migration_backs_up_and_backfills_legacy_rows(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -156,21 +260,21 @@ class StoreTests(unittest.TestCase):
                 {
                     "source_url": "https://www.instagram.com/reel/legacy/",
                     "metadata": {},
-                    "resolved_things": [
+                    "resolved_entries": [
                         self.resolved_place("Legacy Restaurant", "places/legacy")
                     ],
                 },
             )
             con = sqlite3.connect(db_path)
             con.executescript(
-                "DROP TABLE thing_sources; DROP TABLE things; DROP TABLE locations;"
+                "DROP TABLE entry_sources; DROP TABLE entries; DROP TABLE locations;"
             )
             con.commit()
             con.close()
 
             init_db(db_path)
 
-            self.assertEqual([thing["name"] for thing in list_things(db_path)], ["Legacy Restaurant"])
+            self.assertEqual([entry["name"] for entry in list_entries(db_path)], ["Legacy Restaurant"])
             self.assertEqual(
                 len(list(Path(temp_dir).glob("*.pre-normalized-*.bak"))),
                 1,
@@ -191,10 +295,10 @@ class StoreTests(unittest.TestCase):
                     "Exhibit description",
                 ),
             )
-            for suffix, name, thing_type, ends_at, description in examples:
+            for suffix, name, entry_type, ends_at, description in examples:
                 extracted = {
                     "extracted_name": name,
-                    "type_name": thing_type,
+                    "type_name": entry_type,
                     "description": description,
                 }
                 if ends_at:
@@ -204,7 +308,7 @@ class StoreTests(unittest.TestCase):
                     {
                         "source_url": f"https://www.instagram.com/reel/{suffix}/",
                         "metadata": {"source_platform": "instagram"},
-                        "resolved_things": [
+                        "resolved_entries": [
                             {
                                 "status": "resolved",
                                 "extracted": extracted,
@@ -217,17 +321,17 @@ class StoreTests(unittest.TestCase):
                     },
                 )
 
-            things = list_things(db_path)
+            entries = list_entries(db_path)
 
-            self.assertEqual(len(things), 2)
-            venue = next(thing for thing in things if thing["type"] == "Restaurant")
-            exhibit = next(thing for thing in things if thing["type"] == "Exhibit")
+            self.assertEqual(len(entries), 2)
+            venue = next(entry for entry in entries if entry["type"] == "Restaurant")
+            exhibit = next(entry for entry in entries if entry["type"] == "Exhibit")
             self.assertEqual(len(venue["sources"]), 2)
             self.assertEqual(venue["description"], "Most recent description")
             self.assertEqual(exhibit["ends_at"], "2026-09-08")
             self.assertEqual(venue["location_id"], exhibit["location_id"])
 
-    def test_temporary_things_with_different_dates_remain_separate(self) -> None:
+    def test_temporary_entries_with_different_dates_remain_separate(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             db_path = Path(temp_dir) / "places.db"
             init_db(db_path)
@@ -237,7 +341,7 @@ class StoreTests(unittest.TestCase):
                     {
                         "source_url": f"https://www.instagram.com/reel/{suffix}/",
                         "metadata": {},
-                        "resolved_things": [
+                        "resolved_entries": [
                             {
                                 "status": "resolved",
                                 "extracted": {
@@ -251,13 +355,13 @@ class StoreTests(unittest.TestCase):
                     },
                 )
 
-            self.assertEqual(len(list_things(db_path)), 2)
+            self.assertEqual(len(list_entries(db_path)), 2)
 
-    def test_non_location_things_match_only_on_normalized_name_and_type(self) -> None:
+    def test_non_location_entries_match_only_on_normalized_name_and_type(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             db_path = Path(temp_dir) / "places.db"
             init_db(db_path)
-            for suffix, name, thing_type in (
+            for suffix, name, entry_type in (
                 ("one", "The Creative Act", "Book"),
                 ("two", "the creative act", "Book"),
                 ("three", "The Creative Act", "Movie"),
@@ -267,21 +371,21 @@ class StoreTests(unittest.TestCase):
                     {
                         "source_url": f"https://www.instagram.com/reel/{suffix}/",
                         "metadata": {},
-                        "resolved_things": [
+                        "resolved_entries": [
                             {
                                 "status": "not_applicable",
                                 "extracted": {
                                     "extracted_name": name,
-                                    "type_name": thing_type,
+                                    "type_name": entry_type,
                                 },
                             }
                         ],
                     },
                 )
 
-            things = list_things(db_path)
-            self.assertEqual(len(things), 2)
-            book = next(thing for thing in things if thing["type"] == "Book")
+            entries = list_entries(db_path)
+            self.assertEqual(len(entries), 2)
+            book = next(entry for entry in entries if entry["type"] == "Book")
             self.assertEqual(len(book["sources"]), 2)
 
     def test_never_persists_generic_place_type(self) -> None:
@@ -293,7 +397,7 @@ class StoreTests(unittest.TestCase):
                 {
                     "source_url": "https://www.instagram.com/reel/generic/",
                     "metadata": {},
-                    "resolved_things": [
+                    "resolved_entries": [
                         {
                             "status": "not_applicable",
                             "extracted": {
@@ -305,13 +409,13 @@ class StoreTests(unittest.TestCase):
                 },
             )
 
-            self.assertEqual(list_thing_types(db_path), ["Unknown"])
+            self.assertEqual(list_entry_types(db_path), ["Unknown"])
 
     def test_normalizes_legacy_type_aliases_to_controlled_types(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             db_path = Path(temp_dir) / "places.db"
             init_db(db_path)
-            for ordinal, thing_type in enumerate(
+            for ordinal, entry_type in enumerate(
                 ("Deli", "Coffee Shop", "Exhibit", "Fitness Exercise", "Food Pop-Up"),
                 start=1,
             ):
@@ -320,12 +424,12 @@ class StoreTests(unittest.TestCase):
                     {
                         "source_url": f"https://www.instagram.com/reel/type-{ordinal}/",
                         "metadata": {},
-                        "resolved_things": [
+                        "resolved_entries": [
                             {
                                 "status": "not_applicable",
                                 "extracted": {
-                                    "extracted_name": f"Named thing {ordinal}",
-                                    "type_name": thing_type,
+                                    "extracted_name": f"Named entry {ordinal}",
+                                    "type_name": entry_type,
                                 },
                             }
                         ],
@@ -333,11 +437,11 @@ class StoreTests(unittest.TestCase):
                 )
 
             self.assertEqual(
-                list_thing_types(db_path),
+                list_entry_types(db_path),
                 ["Café", "Exhibit", "Fitness", "Pop-up", "Restaurant"],
             )
 
-    def test_saves_non_location_thing_and_preserves_source(self) -> None:
+    def test_saves_non_location_entry_and_preserves_source(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             db_path = Path(temp_dir) / "places.db"
             init_db(db_path)
@@ -354,14 +458,14 @@ class StoreTests(unittest.TestCase):
                         "media_preserved": True,
                         "archived_media": [{"path": "/data/source.mp4"}],
                     },
-                    "things_extracted": [
+                    "entries_extracted": [
                         {
                             "extracted_name": "The Creative Act",
                             "type_name": "Book",
                             "description": "A book about creativity.",
                         }
                     ],
-                    "resolved_things": [
+                    "resolved_entries": [
                         {
                             "status": "not_applicable",
                             "extracted": {
@@ -374,13 +478,13 @@ class StoreTests(unittest.TestCase):
                 },
             )
 
-            things = list_things(db_path)
-            self.assertEqual(things[0]["type"], "Book")
-            self.assertIsNone(things[0]["latitude"])
-            self.assertEqual(things[0]["resolution_status"], "not_applicable")
+            entries = list_entries(db_path)
+            self.assertEqual(entries[0]["type"], "Book")
+            self.assertIsNone(entries[0]["latitude"])
+            self.assertEqual(entries[0]["resolution_status"], "not_applicable")
 
             sources = list_sources(db_path)
-            self.assertEqual(sources[0]["thing_count"], 1)
+            self.assertEqual(sources[0]["entry_count"], 1)
             self.assertFalse(sources[0]["media_preserved"])
             self.assertEqual(sources[0]["summary"], "A creator recommends a book.")
             self.assertFalse(sources[0]["needs_review"])
@@ -394,12 +498,12 @@ class StoreTests(unittest.TestCase):
                 {
                     "source_url": "https://www.instagram.com/reel/unclear/",
                     "metadata": {"source_platform": "instagram"},
-                    "things_extracted": [],
-                    "resolved_things": [],
+                    "entries_extracted": [],
+                    "resolved_entries": [],
                 },
             )
 
-            self.assertEqual(list_things(db_path), [])
+            self.assertEqual(list_entries(db_path), [])
             sources = list_sources(db_path)
             self.assertEqual(len(sources), 1)
             self.assertTrue(sources[0]["needs_review"])
@@ -413,7 +517,7 @@ class StoreTests(unittest.TestCase):
                 {
                     "source_url": "https://www.instagram.com/reel/old/",
                     "metadata": {"source_platform": "instagram"},
-                    "resolved_things": [
+                    "resolved_entries": [
                         self.resolved_place("Old Restaurant", "places/old")
                     ],
                 },
@@ -427,9 +531,9 @@ class StoreTests(unittest.TestCase):
             self.assertEqual(activity[0]["results"][0]["name"], "Old Restaurant")
             self.assertEqual(activity[0]["status"], "completed")
             self.assertEqual(len(list_sources(db_path)), 1)
-            self.assertEqual(len(list_things(db_path)), 1)
+            self.assertEqual(len(list_entries(db_path)), 1)
 
-    def test_saved_thing_outcome_reports_new_then_added_source(self) -> None:
+    def test_saved_entry_outcome_reports_new_then_added_source(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             db_path = Path(temp_dir) / "places.db"
             init_db(db_path)
@@ -441,15 +545,15 @@ class StoreTests(unittest.TestCase):
                         {
                             "source_url": f"https://www.instagram.com/reel/{suffix}/",
                             "metadata": {"source_platform": "instagram"},
-                            "resolved_things": [
+                            "resolved_entries": [
                                 self.resolved_place("S&P Lunch", "places/shared")
                             ],
                         },
                     )
                 )
 
-            first = saved_thing_outcomes(db_path, item_ids[0])[0]
-            second = saved_thing_outcomes(db_path, item_ids[1])[0]
+            first = saved_entry_outcomes(db_path, item_ids[0])[0]
+            second = saved_entry_outcomes(db_path, item_ids[1])[0]
             self.assertTrue(first["is_new"])
             self.assertEqual(first["source_count"], 1)
             self.assertFalse(second["is_new"])
@@ -480,7 +584,7 @@ class StoreTests(unittest.TestCase):
             self.assertEqual(run["error_type"], "RuntimeError")
             self.assertEqual(run["error_message"], "Gemini overloaded")
 
-    def test_delete_thing_preserves_its_source(self) -> None:
+    def test_delete_entry_preserves_its_source(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             db_path = Path(temp_dir) / "places.db"
             init_db(db_path)
@@ -489,7 +593,7 @@ class StoreTests(unittest.TestCase):
                 {
                     "source_url": "https://www.instagram.com/reel/book/",
                     "metadata": {},
-                    "resolved_things": [
+                    "resolved_entries": [
                         {
                             "status": "not_applicable",
                             "extracted": {
@@ -500,16 +604,16 @@ class StoreTests(unittest.TestCase):
                     ],
                 },
             )
-            thing = list_things(db_path)[0]
+            entry = list_entries(db_path)[0]
 
-            result = delete_thing(db_path, thing["id"])
+            result = delete_entry(db_path, entry["id"])
 
-            self.assertEqual(result, {"deleted_things": 1, "deleted_sources": 0})
-            self.assertEqual(list_things(db_path), [])
+            self.assertEqual(result, {"deleted_entries": 1, "deleted_sources": 0})
+            self.assertEqual(list_entries(db_path), [])
             self.assertEqual(len(list_sources(db_path)), 1)
             self.assertTrue(list_sources(db_path)[0]["needs_review"])
 
-    def test_delete_things_removes_exact_card_rows_and_preserves_sources(self) -> None:
+    def test_delete_entries_removes_exact_card_rows_and_preserves_sources(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             db_path = Path(temp_dir) / "places.db"
             init_db(db_path)
@@ -519,7 +623,7 @@ class StoreTests(unittest.TestCase):
                     {
                         "source_url": f"https://www.instagram.com/reel/{suffix}/",
                         "metadata": {},
-                        "resolved_things": [self.resolved_place(name, "places/shared")],
+                        "resolved_entries": [self.resolved_place(name, "places/shared")],
                     },
                 )
             save_ingest(
@@ -527,21 +631,21 @@ class StoreTests(unittest.TestCase):
                 {
                     "source_url": "https://www.instagram.com/reel/exhibit/",
                     "metadata": {},
-                    "resolved_things": [
+                    "resolved_entries": [
                         self.resolved_place("Guest Pop-Up", "places/shared")
                     ],
                 },
             )
-            things = list_things(db_path)
-            restaurant_ids = [thing["id"] for thing in things if thing["name"] == "S&P Lunch"]
+            entries = list_entries(db_path)
+            restaurant_ids = [entry["id"] for entry in entries if entry["name"] == "S&P Lunch"]
 
-            result = delete_things(db_path, restaurant_ids)
+            result = delete_entries(db_path, restaurant_ids)
 
-            self.assertEqual(result, {"deleted_things": 1, "deleted_sources": 0})
-            self.assertEqual([thing["name"] for thing in list_things(db_path)], ["Guest Pop-Up"])
+            self.assertEqual(result, {"deleted_entries": 1, "deleted_sources": 0})
+            self.assertEqual([entry["name"] for entry in list_entries(db_path)], ["Guest Pop-Up"])
             self.assertEqual(len(list_sources(db_path)), 3)
 
-    def test_delete_things_is_atomic_when_any_id_is_missing(self) -> None:
+    def test_delete_entries_is_atomic_when_any_id_is_missing(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             db_path = Path(temp_dir) / "places.db"
             init_db(db_path)
@@ -550,13 +654,13 @@ class StoreTests(unittest.TestCase):
                 {
                     "source_url": "https://www.instagram.com/reel/one/",
                     "metadata": {},
-                    "resolved_things": [self.resolved_place("Keep Me", "places/keep")],
+                    "resolved_entries": [self.resolved_place("Keep Me", "places/keep")],
                 },
             )
-            thing = list_things(db_path)[0]
+            entry = list_entries(db_path)[0]
 
-            self.assertIsNone(delete_things(db_path, [thing["id"], 999]))
-            self.assertEqual([saved["name"] for saved in list_things(db_path)], ["Keep Me"])
+            self.assertIsNone(delete_entries(db_path, [entry["id"], 999]))
+            self.assertEqual([saved["name"] for saved in list_entries(db_path)], ["Keep Me"])
 
     def test_delete_place_removes_all_references_but_preserves_post_siblings(
         self,

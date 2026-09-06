@@ -35,8 +35,8 @@ struct SavedCategory: Identifiable, Hashable {
       )
   }
 
-  static func categories(for things: [SavedPlace]) -> [SavedCategory] {
-    let presentTypes = Set(things.map(\.displayType))
+  static func categories(for entries: [SavedEntry]) -> [SavedCategory] {
+    let presentTypes = Set(entries.map(\.displayType))
     return presentTypes
       .map(category(for:))
       .sorted { lhs, rhs in

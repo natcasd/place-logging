@@ -11,18 +11,18 @@ from pipeline import source_platform as detect_source_platform
 from source_identity import canonical_source_url
 from store import (
     delete_place,
-    delete_thing,
-    delete_things,
+    delete_entry,
+    delete_entries,
     find_processed_source,
     init_db,
     finish_ingest_run,
     list_ingest_runs,
     list_places,
     list_sources,
-    list_thing_types,
-    list_things,
+    list_entry_types,
+    list_entries,
     save_ingest,
-    saved_thing_outcomes,
+    saved_entry_outcomes,
     start_ingest_run,
     update_ingest_run,
 )
@@ -99,7 +99,7 @@ class IngestService:
             )
 
         try:
-            existing_types = list_thing_types(self.db_path)
+            existing_types = list_entry_types(self.db_path)
             result = process_ingest(
                 source_url,
                 user_prompt,
@@ -109,7 +109,7 @@ class IngestService:
             )
             report("saving")
             item_id = save_ingest(self.db_path, result)
-            outcomes = saved_thing_outcomes(self.db_path, item_id)
+            outcomes = saved_entry_outcomes(self.db_path, item_id)
             needs_review = (
                 not outcomes
                 or (result.get("metadata") or {}).get("extraction_status") == "failed"
@@ -127,7 +127,7 @@ class IngestService:
                 message=(
                     "Source saved with results needing review"
                     if needs_review
-                    else f"Saved {len(outcomes)} thing{'s' if len(outcomes) != 1 else ''}"
+                    else f"Saved {len(outcomes)} entry{'s' if len(outcomes) != 1 else ''}"
                 ),
                 item_id=item_id,
                 outcomes=outcomes,
@@ -135,7 +135,7 @@ class IngestService:
             return {
                 "ingest_id": run_id,
                 "item_id": item_id,
-                "saved_things": outcomes,
+                "saved_entries": outcomes,
                 "already_logged": False,
                 **result,
             }
@@ -153,12 +153,12 @@ class IngestService:
             raise
 
     def places(self, limit: int = 200) -> list[dict[str, Any]]:
-        """Return saved things through the legacy places interface."""
+        """Return saved entries through the legacy places interface."""
         return list_places(self.db_path, limit)
 
-    def things(self, limit: int = 200) -> list[dict[str, Any]]:
-        """Return canonical things with their source-specific recommendations."""
-        return list_things(self.db_path, limit)
+    def entries(self, limit: int = 200) -> list[dict[str, Any]]:
+        """Return canonical entries with their source-specific recommendations."""
+        return list_entries(self.db_path, limit)
 
     def sources(self, limit: int = 200) -> list[dict[str, Any]]:
         """Return every saved source, including sources needing review."""
@@ -172,10 +172,10 @@ class IngestService:
         """Delete a logical place while preserving unrelated source places."""
         return delete_place(self.db_path, place_id)
 
-    def delete_thing(self, thing_id: int) -> dict[str, int] | None:
-        """Delete one canonical thing without deleting its source posts."""
-        return delete_thing(self.db_path, thing_id)
+    def delete_entry(self, entry_id: int) -> dict[str, int] | None:
+        """Delete one canonical entry without deleting its source posts."""
+        return delete_entry(self.db_path, entry_id)
 
-    def delete_things(self, thing_ids: list[int]) -> dict[str, int] | None:
-        """Delete canonical things without deleting their source posts."""
-        return delete_things(self.db_path, thing_ids)
+    def delete_entries(self, entry_ids: list[int]) -> dict[str, int] | None:
+        """Delete canonical entries without deleting their source posts."""
+        return delete_entries(self.db_path, entry_ids)

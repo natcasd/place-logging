@@ -23,7 +23,7 @@ A single "universal save" endpoint (share sheet, DM bot, whatever — the entry 
 
 The common spine across all of these:
 1. **One ingest endpoint.** Nate doesn't pick the destination; he just sends stuff.
-2. **AI triage.** Classifies what kind of thing it is (place, product, recipe, article, media rec, etc.).
+2. **AI triage.** Classifies what kind of save it is (place, product, recipe, article, media rec, etc.).
 3. **Vertical extractors.** Each type has its own enrichment (geocode + dishes for places, price + product page for products, ingredients + steps for recipes, etc.).
 4. **Source preservation as a hard rule.** Every saved item keeps the original URL / Reel / screenshot. No exceptions.
 5. **Portable storage Nate owns.** Not siloed in a vendor app — writes through to systems he controls.

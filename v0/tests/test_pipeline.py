@@ -39,7 +39,7 @@ class YouTubeExtractionTests(unittest.TestCase):
         )
 
         self.assertIn("part of the post's main intent", prompt)
-        self.assertIn("Do not also save the host venue as a separate thing", prompt)
+        self.assertIn("Do not also save the host venue as a separate entry", prompt)
         self.assertIn("supplier, neighboring business, collaborator, or partner", prompt)
         self.assertIn("closing call-to-action", prompt)
         self.assertIn("Never use a generic class as its name", prompt)
@@ -50,12 +50,12 @@ class YouTubeExtractionTests(unittest.TestCase):
         self.assertNotIn("Existing specific type names", prompt)
 
     def test_schema_allows_only_controlled_types(self) -> None:
-        type_schema = pipeline.EXTRACTION_RESPONSE_SCHEMA["properties"]["things"]["items"]["properties"]["type_name"]
+        type_schema = pipeline.EXTRACTION_RESPONSE_SCHEMA["properties"]["entries"]["items"]["properties"]["type_name"]
 
-        self.assertEqual(type_schema["enum"], list(pipeline.THING_TYPES))
+        self.assertEqual(type_schema["enum"], list(pipeline.ENTRY_TYPES))
 
-    def test_removes_generic_unnamed_things(self) -> None:
-        things = pipeline._remove_generic_thing_names(
+    def test_removes_generic_unnamed_entries(self) -> None:
+        entries = pipeline._remove_generic_entry_names(
             [
                 {"extracted_name": "Cafe", "type_name": "Café"},
                 {"extracted_name": "Theodora", "type_name": "Restaurant"},
@@ -63,10 +63,10 @@ class YouTubeExtractionTests(unittest.TestCase):
             ]
         )
 
-        self.assertEqual(things, [{"extracted_name": "Theodora", "type_name": "Restaurant"}])
+        self.assertEqual(entries, [{"extracted_name": "Theodora", "type_name": "Restaurant"}])
 
-    def test_removes_timing_from_stable_things_only(self) -> None:
-        things = pipeline._remove_invalid_timing_fields(
+    def test_removes_timing_from_stable_entries_only(self) -> None:
+        entries = pipeline._remove_invalid_timing_fields(
             [
                 {
                     "extracted_name": "S&P Lunch",
@@ -83,10 +83,10 @@ class YouTubeExtractionTests(unittest.TestCase):
             ]
         )
 
-        self.assertNotIn("recurrence_text", things[0])
-        self.assertEqual(things[1]["starts_at"], "2026-09-01")
-        self.assertEqual(things[1]["ends_at"], "2026-10-01")
-        self.assertEqual(things[1]["recurrence_text"], "Sundays through October")
+        self.assertNotIn("recurrence_text", entries[0])
+        self.assertEqual(entries[1]["starts_at"], "2026-09-01")
+        self.assertEqual(entries[1]["ends_at"], "2026-10-01")
+        self.assertEqual(entries[1]["recurrence_text"], "Sundays through October")
 
     @patch("pipeline._client")
     def test_sends_youtube_url_directly_to_gemini(self, mock_client: MagicMock) -> None:
@@ -103,7 +103,7 @@ class YouTubeExtractionTests(unittest.TestCase):
         )
 
         self.assertEqual(places[0]["extracted_name"], "Mission Sandwich Social")
-        properties = pipeline.EXTRACTION_RESPONSE_SCHEMA["properties"]["things"]["items"]["properties"]
+        properties = pipeline.EXTRACTION_RESPONSE_SCHEMA["properties"]["entries"]["items"]["properties"]
         self.assertIn("timestamp_seconds", properties)
         self.assertIn("type_name", properties)
         self.assertIn("description", properties)
@@ -502,8 +502,8 @@ class InstagramExtractionTests(unittest.TestCase):
 
 class ProcessIngestTests(unittest.TestCase):
     @patch.dict("pipeline.os.environ", {"GOOGLE_PLACES_API_KEY": "test"})
-    def test_temporary_thing_rejects_unmatched_single_google_candidate(self) -> None:
-        thing = {
+    def test_temporary_entry_rejects_unmatched_single_google_candidate(self) -> None:
+        entry = {
             "extracted_name": "HiFi Pursuit Listening Room Dream No. 3",
             "type_name": "Exhibit",
             "location_query": "HiFi Pursuit Listening Room Dream No. 3, New York City",
@@ -515,14 +515,14 @@ class ProcessIngestTests(unittest.TestCase):
         }
 
         with patch("pipeline.requests.post", return_value=response):
-            result = pipeline.resolve(thing)
+            result = pipeline.resolve(entry)
 
         self.assertEqual(result["status"], "needs_review")
         self.assertIn("does not match", result["reason"])
 
     @patch.dict("pipeline.os.environ", {"GOOGLE_PLACES_API_KEY": "test"})
-    def test_temporary_thing_accepts_matching_host_venue(self) -> None:
-        thing = {
+    def test_temporary_entry_accepts_matching_host_venue(self) -> None:
+        entry = {
             "extracted_name": "HiFi Pursuit Listening Room Dream No. 3",
             "type_name": "Exhibit",
             "location_query": "Cooper Hewitt, Smithsonian Design Museum, New York City",
@@ -533,7 +533,7 @@ class ProcessIngestTests(unittest.TestCase):
         response.json.return_value = {"places": [candidate]}
 
         with patch("pipeline.requests.post", return_value=response):
-            result = pipeline.resolve(thing)
+            result = pipeline.resolve(entry)
 
         self.assertEqual(result, {"status": "auto", "place": candidate})
 
@@ -546,7 +546,7 @@ class ProcessIngestTests(unittest.TestCase):
     ) -> None:
         mock_extract.return_value = {
             "source_content": {"summary": "A test post."},
-            "things": [{"extracted_name": "Test Place"}],
+            "entries": [{"extracted_name": "Test Place"}],
         }
         mock_resolve.return_value = {"status": "unresolved", "reason": "test"}
         stages = []
@@ -576,8 +576,8 @@ class ProcessIngestTests(unittest.TestCase):
                 Path("/unused"),
             )
 
-    def test_non_location_thing_skips_google_places(self) -> None:
-        thing = {
+    def test_non_location_entry_skips_google_places(self) -> None:
+        entry = {
             "extracted_name": "The Creative Act",
             "type_name": "Book",
             "description": "A book to read.",
@@ -585,20 +585,20 @@ class ProcessIngestTests(unittest.TestCase):
         }
 
         with patch("pipeline.requests.post") as mock_post:
-            result = pipeline.resolve(thing)
+            result = pipeline.resolve(entry)
 
         self.assertEqual(result["status"], "not_applicable")
         mock_post.assert_not_called()
 
-    def test_new_thing_without_location_query_skips_google_places(self) -> None:
-        thing = {
+    def test_new_entry_without_location_query_skips_google_places(self) -> None:
+        entry = {
             "extracted_name": "A Song",
             "type_name": "Song",
             "description": "A song from the Reel.",
         }
 
         with patch("pipeline.requests.post") as mock_post:
-            result = pipeline.resolve(thing)
+            result = pipeline.resolve(entry)
 
         self.assertEqual(result["status"], "not_applicable")
         mock_post.assert_not_called()
@@ -626,7 +626,7 @@ class ProcessIngestTests(unittest.TestCase):
             )
             mock_extract.return_value = {
                 "source_content": {"summary": "A test post."},
-                "things": [{"extracted_name": "Test Place"}],
+                "entries": [{"extracted_name": "Test Place"}],
             }
             mock_resolve.return_value = {"status": "unresolved", "reason": "test"}
             stages = []
@@ -668,7 +668,7 @@ class ProcessIngestTests(unittest.TestCase):
             )
             mock_extract.return_value = {
                 "source_content": {"summary": "Preserved analysis"},
-                "things": [{"extracted_name": "Test Thing"}],
+                "entries": [{"extracted_name": "Test Entry"}],
             }
             mock_resolve.return_value = {"status": "not_applicable"}
 
@@ -712,8 +712,8 @@ class ProcessIngestTests(unittest.TestCase):
                     Path(temp_dir),
                 )
 
-            self.assertEqual(result["things_extracted"], [])
-            self.assertEqual(result["resolved_things"], [])
+            self.assertEqual(result["entries_extracted"], [])
+            self.assertEqual(result["resolved_entries"], [])
             self.assertEqual(result["metadata"]["extraction_status"], "failed")
             self.assertEqual(
                 result["metadata"]["extraction_error"]["type"],

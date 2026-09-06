@@ -2,7 +2,7 @@
 
 The default mode sends saved source context and existing row descriptions to
 Gemini, then writes a reviewable JSON plan without modifying SQLite. ``--apply``
-backs up the database and updates only ``thing_type`` for unchanged rows.
+backs up the database and updates only ``entry_type`` for unchanged rows.
 """
 from __future__ import annotations
 
@@ -34,11 +34,11 @@ CLASSIFICATION_SCHEMA = {
             "items": {
                 "type": "object",
                 "properties": {
-                    "thing_id": {"type": "integer"},
+                    "entry_id": {"type": "integer"},
                     "type_name": {"type": "string"},
                     "reason": {"type": "string"},
                 },
-                "required": ["thing_id", "type_name", "reason"],
+                "required": ["entry_id", "type_name", "reason"],
             },
         }
     },
@@ -68,7 +68,7 @@ def find_candidates(con: sqlite3.Connection) -> list[dict[str, Any]]:
                   i.source_url, i.raw_payload_json
              FROM places AS p
              JOIN items AS i ON i.id = p.item_id
-            WHERE lower(trim(p.thing_type)) = 'place'
+            WHERE lower(trim(p.entry_type)) = 'place'
             ORDER BY p.item_id, p.ordinal"""
     ).fetchall()
     groups: dict[int, dict[str, Any]] = {}
@@ -87,12 +87,12 @@ def find_candidates(con: sqlite3.Connection) -> list[dict[str, Any]]:
                     "caption": _trimmed(metadata.get("caption_or_description"), 4000),
                     "summary": _trimmed(source_content.get("summary"), 2000),
                 },
-                "things": [],
+                "entries": [],
             }
             groups[row["item_id"]] = group
-        group["things"].append(
+        group["entries"].append(
             {
-                "thing_id": row["id"],
+                "entry_id": row["id"],
                 "ordinal": row["ordinal"],
                 "name": row["extracted_name"],
                 "description": _trimmed(row["description"], 2000),
@@ -105,14 +105,14 @@ def find_candidates(con: sqlite3.Connection) -> list[dict[str, Any]]:
 
 def _batches(
     groups: list[dict[str, Any]],
-    maximum_things: int = 15,
+    maximum_entries: int = 15,
 ) -> list[list[dict[str, Any]]]:
     batches: list[list[dict[str, Any]]] = []
     current: list[dict[str, Any]] = []
     current_count = 0
     for group in groups:
-        group_count = len(group["things"])
-        if current and current_count + group_count > maximum_things:
+        group_count = len(group["entries"])
+        if current and current_count + group_count > maximum_entries:
             batches.append(current)
             current = []
             current_count = 0
@@ -130,7 +130,7 @@ def _classify_batch(
     prompt = f"""Reclassify existing saved recommendations whose old generic type is Place.
 
 This is a type-only migration. Return exactly one classification for every
-thing_id supplied. Do not add, remove, merge, or rename records. Use the saved
+entry_id supplied. Do not add, remove, merge, or rename records. Use the saved
 source context, name, description, address, and location query as evidence.
 
 Category rule:
@@ -156,25 +156,25 @@ Saved source groups and records:
     parsed = json.loads(response.text)
     classifications = parsed.get("classifications") or []
     expected_ids = {
-        thing["thing_id"] for group in groups for thing in group["things"]
+        entry["entry_id"] for group in groups for entry in group["entries"]
     }
     by_id: dict[int, dict[str, Any]] = {}
     for classification in classifications:
-        thing_id = classification.get("thing_id")
+        entry_id = classification.get("entry_id")
         type_name = " ".join(str(classification.get("type_name") or "").split()).strip()
-        if thing_id not in expected_ids or thing_id in by_id:
-            raise ValueError("Gemini returned an unexpected or duplicate thing_id")
+        if entry_id not in expected_ids or entry_id in by_id:
+            raise ValueError("Gemini returned an unexpected or duplicate entry_id")
         if not type_name or type_name.casefold() == "place":
-            raise ValueError(f"Gemini returned an invalid type for thing {thing_id}")
-        by_id[thing_id] = {
-            "thing_id": thing_id,
+            raise ValueError(f"Gemini returned an invalid type for entry {entry_id}")
+        by_id[entry_id] = {
+            "entry_id": entry_id,
             "type_name": type_name[:80].title(),
             "reason": _trimmed(classification.get("reason"), 500) or "",
         }
     if set(by_id) != expected_ids:
         missing = sorted(expected_ids - set(by_id))
-        raise ValueError(f"Gemini omitted thing ids: {missing}")
-    return [by_id[thing_id] for thing_id in sorted(by_id)]
+        raise ValueError(f"Gemini omitted entry ids: {missing}")
+    return [by_id[entry_id] for entry_id in sorted(by_id)]
 
 
 def _write_plan(plan_path: Path, plan: dict[str, Any]) -> None:
@@ -193,13 +193,13 @@ def create_plan(
     con = sqlite3.connect(db_path)
     try:
         groups = find_candidates(con)
-        candidate_rows = [thing for group in groups for thing in group["things"]]
+        candidate_rows = [entry for group in groups for entry in group["entries"]]
         existing_types = [
             row[0]
             for row in con.execute(
-                """SELECT DISTINCT thing_type FROM places
-                    WHERE thing_type IS NOT NULL AND trim(thing_type) != ''
-                    ORDER BY thing_type COLLATE NOCASE"""
+                """SELECT DISTINCT entry_type FROM places
+                    WHERE entry_type IS NOT NULL AND trim(entry_type) != ''
+                    ORDER BY entry_type COLLATE NOCASE"""
             ).fetchall()
         ]
         if plan_path.exists():
@@ -221,18 +221,18 @@ def create_plan(
             _write_plan(plan_path, plan)
 
         successful_ids = {
-            update["thing_id"]
+            update["entry_id"]
             for result in plan.get("results", [])
             if result.get("method") == "gemini_classification"
             for update in result.get("updates", [])
         }
         pending_groups = []
         for group in groups:
-            pending_things = [
-                thing for thing in group["things"] if thing["thing_id"] not in successful_ids
+            pending_entries = [
+                entry for entry in group["entries"] if entry["entry_id"] not in successful_ids
             ]
-            if pending_things:
-                pending_groups.append({**group, "things": pending_things})
+            if pending_entries:
+                pending_groups.append({**group, "entries": pending_entries})
         plan["results"] = [
             result
             for result in plan.get("results", [])
@@ -241,15 +241,15 @@ def create_plan(
 
         batches = _batches(pending_groups)
         for index, batch in enumerate(batches, start=1):
-            ids = [thing["thing_id"] for group in batch for thing in group["things"]]
-            print(f"[{index}/{len(batches)}] classifying {len(ids)} things", flush=True)
+            ids = [entry["entry_id"] for group in batch for entry in group["entries"]]
+            print(f"[{index}/{len(batches)}] classifying {len(ids)} entries", flush=True)
             try:
                 updates = _classify_batch(batch, existing_types)
                 result = {"method": "gemini_classification", "updates": updates}
             except Exception as exc:
                 result = {
                     "method": "error",
-                    "thing_ids": ids,
+                    "entry_ids": ids,
                     "updates": [],
                     "error": f"{type(exc).__name__}: {exc}",
                 }
@@ -274,7 +274,7 @@ def apply_plan(db_path: Path, plan_path: Path, backup_dir: Path) -> tuple[int, P
         for result in plan.get("results", [])
         for update in result.get("updates", [])
     ]
-    update_ids = [update["thing_id"] for update in updates]
+    update_ids = [update["entry_id"] for update in updates]
     if (
         len(updates) != plan.get("candidate_count")
         or len(set(update_ids)) != len(update_ids)
@@ -296,20 +296,20 @@ def apply_plan(db_path: Path, plan_path: Path, backup_dir: Path) -> tuple[int, P
         source.execute("BEGIN IMMEDIATE")
         for update in updates:
             current = source.execute(
-                "SELECT thing_type FROM places WHERE id = ?",
-                (update["thing_id"],),
+                "SELECT entry_type FROM places WHERE id = ?",
+                (update["entry_id"],),
             ).fetchone()
             if current is None or current[0].strip().casefold() != "place":
                 raise RuntimeError(
-                    f"Thing row {update['thing_id']} changed after plan creation; aborting"
+                    f"Entry row {update['entry_id']} changed after plan creation; aborting"
                 )
             source.execute(
-                "UPDATE places SET thing_type = ? WHERE id = ?",
-                (update["type_name"], update["thing_id"]),
+                "UPDATE places SET entry_type = ? WHERE id = ?",
+                (update["type_name"], update["entry_id"]),
             )
             applied += 1
         remaining = source.execute(
-            "SELECT COUNT(*) FROM places WHERE lower(trim(thing_type)) = 'place'"
+            "SELECT COUNT(*) FROM places WHERE lower(trim(entry_type)) = 'place'"
         ).fetchone()[0]
         if remaining:
             raise RuntimeError(f"Backfill would leave {remaining} generic Place rows")

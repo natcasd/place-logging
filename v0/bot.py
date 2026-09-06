@@ -37,15 +37,15 @@ def _format_timestamp(value: object) -> str | None:
 def _format_result(result: dict) -> str:
     if result.get("already_logged"):
         return "Already logged"
-    resolved = result.get("resolved_things", result.get("resolved_places", []))
-    outcomes = result.get("saved_things") or []
+    resolved = result.get("resolved_entries", result.get("resolved_places", []))
+    outcomes = result.get("saved_entries") or []
     if not resolved:
         if (result.get("metadata") or {}).get("extraction_status") == "failed":
             return (
                 "⚠️ Source saved for review, but extraction did not complete. "
                 "It can be retried later."
             )
-        return "⚠️ Source saved, but no individual things were extracted."
+        return "⚠️ Source saved, but no individual entries were extracted."
 
     lines = []
     for index, r in enumerate(resolved):
@@ -53,7 +53,7 @@ def _format_result(result: dict) -> str:
         outcome = outcomes[index] if index < len(outcomes) else {}
         status = r.get("status")
         name = outcome.get("name") or extracted.get("extracted_name", "?")
-        thing_type = outcome.get("type") or extracted.get("type_name")
+        entry_type = outcome.get("type") or extracted.get("type_name")
         description = extracted.get("description") or extracted.get("why_its_cool")
         dishes = extracted.get("dishes") or []
         dishes_str = ", ".join(dishes[:3]) + ("…" if len(dishes) > 3 else "")
@@ -66,8 +66,8 @@ def _format_result(result: dict) -> str:
             addr = place.get("shortFormattedAddress") or place.get("formattedAddress", "")
             url = place.get("googleMapsUri", "")
             lines.append(f"✅ *{name}*")
-            if thing_type:
-                lines.append(f"📁 {thing_type}")
+            if entry_type:
+                lines.append(f"📁 {entry_type}")
             if venue and venue != name:
                 lines.append(f"📍 {venue}")
             if addr:
@@ -82,8 +82,8 @@ def _format_result(result: dict) -> str:
                 lines.append(f"🗺 [view on Google Maps]({url})")
         elif status == "not_applicable":
             lines.append(f"✅ *{name}*")
-            if thing_type:
-                lines.append(f"📁 {thing_type}")
+            if entry_type:
+                lines.append(f"📁 {entry_type}")
             if description:
                 lines.append(description)
             if slide_index:
@@ -99,7 +99,7 @@ def _format_result(result: dict) -> str:
 
         if outcome:
             if outcome.get("is_new"):
-                lines.append("🆕 New Thing")
+                lines.append("🆕 New Entry")
             else:
                 lines.append(
                     f"➕ Added source · {outcome.get('source_count', 1)} total"

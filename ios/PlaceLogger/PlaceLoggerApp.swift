@@ -29,8 +29,8 @@ final class PlaceLoggerRouter: ObservableObject {
 }
 
 enum PlaceLoggerDestination: Equatable {
-  case mapThing(Int)
-  case savedThing(Int)
+  case mapEntry(Int)
+  case savedEntry(Int)
   case activity(Int)
   case legacyItem(Int)
 }
@@ -58,13 +58,13 @@ final class PlaceLoggerAppDelegate: NSObject, UIApplicationDelegate,
     didReceive response: UNNotificationResponse
   ) async {
     let userInfo = response.notification.request.content.userInfo
-    let thingID = Self.intValue(userInfo["thing_id"])
+    let entryID = Self.intValue(userInfo["entry_id"])
     let ingestID = Self.intValue(userInfo["ingest_id"])
     let itemID = Self.intValue(userInfo["item_id"])
     let hasLocation = Self.boolValue(userInfo["has_location"])
     let destination: PlaceLoggerDestination?
-    if let thingID {
-      destination = hasLocation ? .mapThing(thingID) : .savedThing(thingID)
+    if let entryID {
+      destination = hasLocation ? .mapEntry(entryID) : .savedEntry(entryID)
     } else if let ingestID {
       destination = .activity(ingestID)
     } else if let itemID {

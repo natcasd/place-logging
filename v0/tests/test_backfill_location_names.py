@@ -66,7 +66,7 @@ class LocationNameBackfillTests(unittest.TestCase):
                 {
                     "source_url": "https://www.instagram.com/reel/met/",
                     "metadata": {},
-                    "resolved_things": [
+                    "resolved_entries": [
                         {
                             "status": "resolved",
                             "extracted": {

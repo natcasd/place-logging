@@ -31,9 +31,9 @@ def find_candidates(con: sqlite3.Connection) -> list[dict[str, Any]]:
     con.row_factory = sqlite3.Row
     rows = con.execute(
         """SELECT l.id AS location_id, l.google_place_id,
-                  GROUP_CONCAT(DISTINCT t.name) AS thing_names
+                  GROUP_CONCAT(DISTINCT t.name) AS entry_names
              FROM locations AS l
-             LEFT JOIN things AS t ON t.location_id = l.id
+             LEFT JOIN entries AS t ON t.location_id = l.id
             WHERE l.display_name IS NULL OR trim(l.display_name) = ''
             GROUP BY l.id
             ORDER BY l.id"""
@@ -42,7 +42,7 @@ def find_candidates(con: sqlite3.Connection) -> list[dict[str, Any]]:
         {
             "location_id": row["location_id"],
             "google_place_id": row["google_place_id"],
-            "thing_names": (row["thing_names"] or "").split(","),
+            "entry_names": (row["entry_names"] or "").split(","),
         }
         for row in rows
     ]

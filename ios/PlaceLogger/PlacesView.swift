@@ -4,7 +4,7 @@ import SwiftUI
 
 @MainActor
 final class PlacesModel: ObservableObject {
-  @Published var places: [SavedPlace] = []
+  @Published var places: [SavedEntry] = []
   @Published var activity: [IngestActivity] = []
   @Published var isLoading = false
   @Published var errorMessage: String?
@@ -16,9 +16,9 @@ final class PlacesModel: ObservableObject {
     isLoading = true
     defer { isLoading = false }
     do {
-      async let loadedThings = api.fetchThings()
+      async let loadedEntries = api.fetchEntries()
       async let loadedActivity = api.fetchActivity()
-      places = try await loadedThings
+      places = try await loadedEntries
       activity = try await loadedActivity
       errorMessage = nil
     } catch {
@@ -36,15 +36,15 @@ final class PlacesModel: ObservableObject {
     await load()
   }
 
-  func delete(_ place: SavedPlace) async throws {
-    try await api.deleteThing(id: place.id)
+  func delete(_ place: SavedEntry) async throws {
+    try await api.deleteEntry(id: place.id)
     places.removeAll { $0.id == place.id }
     activity = try await api.fetchActivity()
   }
 
-  func deleteThingCard(_ thing: SavedPlace) async throws {
-    try await api.deleteThing(id: thing.id)
-    places.removeAll { $0.id == thing.id }
+  func deleteEntryCard(_ entry: SavedEntry) async throws {
+    try await api.deleteEntry(id: entry.id)
+    places.removeAll { $0.id == entry.id }
     activity = try await api.fetchActivity()
   }
 }
@@ -55,14 +55,14 @@ struct PlacesView: View {
   @Environment(\.scenePhase) private var scenePhase
   @State private var path: [PlacesNavigation] = []
   @State private var selectedTab: PlacesTab = .aroundMe
-  @State private var requestedMapThingID: Int?
+  @State private var requestedMapEntryID: Int?
   @State private var aroundMeFilterType: String?
 
   var body: some View {
     NavigationStack(path: $path) {
       Group {
         if model.isLoading && model.places.isEmpty && model.activity.isEmpty {
-          ProgressView("Loading saved things…")
+          ProgressView("Loading saved entries…")
         } else if let error = model.errorMessage,
                   model.places.isEmpty && model.activity.isEmpty {
           ContentUnavailableView {
@@ -77,10 +77,10 @@ struct PlacesView: View {
             PlacesMap(
               places: model.places,
               isRefreshing: model.isLoading,
-              requestedThingID: $requestedMapThingID,
+              requestedEntryID: $requestedMapEntryID,
               selectedType: $aroundMeFilterType,
               refresh: { await model.load() },
-              deleteThingCard: { thing in try await model.deleteThingCard(thing) }
+              deleteEntryCard: { entry in try await model.deleteEntryCard(entry) }
             )
               .tabItem {
                 Label("Around Me", systemImage: "location")
@@ -122,9 +122,9 @@ struct PlacesView: View {
       }
       .navigationDestination(for: PlacesNavigation.self) { destination in
         switch destination {
-        case .thing(let thingID):
+        case .entry(let entryID):
           SavedItemView(
-            places: model.places.filter { $0.id == thingID },
+            places: model.places.filter { $0.id == entryID },
             isLoading: model.isLoading
           )
         case .activity(let ingestID):
@@ -135,8 +135,8 @@ struct PlacesView: View {
           }
         case .legacyItem(let itemID):
           SavedItemView(
-            places: model.places.filter { thing in
-              thing.itemID == itemID || thing.sources.contains { $0.itemID == itemID }
+            places: model.places.filter { entry in
+              entry.itemID == itemID || entry.sources.contains { $0.itemID == itemID }
             },
             isLoading: model.isLoading
           )
@@ -160,20 +160,20 @@ struct PlacesView: View {
       guard let destination = router.pendingDestination else { return }
       await model.ensureLoaded()
       switch destination {
-      case .mapThing(let thingID):
-        if let thing = model.places.first(where: { $0.id == thingID }),
-           thing.latitude != nil, thing.longitude != nil, thing.isCurrentlyRelevant {
+      case .mapEntry(let entryID):
+        if let entry = model.places.first(where: { $0.id == entryID }),
+           entry.latitude != nil, entry.longitude != nil, entry.isCurrentlyRelevant {
           path = []
           selectedTab = .aroundMe
           aroundMeFilterType = nil
-          requestedMapThingID = thingID
+          requestedMapEntryID = entryID
         } else {
           selectedTab = .saved
-          path = [.thing(thingID)]
+          path = [.entry(entryID)]
         }
-      case .savedThing(let thingID):
+      case .savedEntry(let entryID):
         selectedTab = .saved
-        path = [.thing(thingID)]
+        path = [.entry(entryID)]
       case .activity(let ingestID):
         selectedTab = .activity
         path = [.activity(ingestID)]
@@ -197,14 +197,14 @@ private enum PlacesTab: Hashable {
 }
 
 private enum PlacesNavigation: Hashable {
-  case thing(Int)
+  case entry(Int)
   case activity(Int)
   case legacyItem(Int)
   case category(String)
 }
 
 private struct PlacesList: View {
-  let places: [SavedPlace]
+  let places: [SavedEntry]
   let refresh: () async -> Void
 
   private var categories: [SavedCategory] { SavedCategory.categories(for: places) }
@@ -213,7 +213,7 @@ private struct PlacesList: View {
     Group {
       if places.isEmpty {
         ContentUnavailableView(
-          "No Saved Things",
+          "No Saved Entries",
           systemImage: "tray",
           description: Text("Share an Instagram Reel or YouTube video to get started.")
         )
@@ -290,15 +290,15 @@ private struct SavedCategoryTile: View {
 
 private struct SavedCategoryList: View {
   let category: SavedCategory
-  let places: [SavedPlace]
+  let places: [SavedEntry]
   let refresh: () async -> Void
-  let deletePlace: (SavedPlace) async throws -> Void
+  let deletePlace: (SavedEntry) async throws -> Void
   let viewAroundMe: () -> Void
-  @State private var pendingDeletion: SavedPlace?
+  @State private var pendingDeletion: SavedEntry?
   @State private var deletionError: String?
   @State private var searchText = ""
 
-  private var filteredPlaces: [SavedPlace] {
+  private var filteredPlaces: [SavedEntry] {
     let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
     guard !query.isEmpty else { return places }
     return places.filter {
@@ -319,7 +319,7 @@ private struct SavedCategoryList: View {
       }
 
       ForEach(filteredPlaces) { place in
-        NavigationLink(value: PlacesNavigation.thing(place.id)) {
+        NavigationLink(value: PlacesNavigation.entry(place.id)) {
           PlaceRow(place: place)
         }
         .swipeActions {
@@ -335,7 +335,7 @@ private struct SavedCategoryList: View {
     .searchable(text: $searchText, prompt: "Search \(category.title.lowercased())")
     .refreshable { await refresh() }
     .confirmationDialog(
-      pendingDeletion.map { "Delete \($0.name)?" } ?? "Delete Thing?",
+      pendingDeletion.map { "Delete \($0.name)?" } ?? "Delete Entry?",
       isPresented: Binding(
         get: { pendingDeletion != nil },
         set: { if !$0 { pendingDeletion = nil } }
@@ -343,7 +343,7 @@ private struct SavedCategoryList: View {
       titleVisibility: .visible
     ) {
       if let place = pendingDeletion {
-        Button("Delete Thing", role: .destructive) {
+        Button("Delete Entry", role: .destructive) {
           pendingDeletion = nil
           Task {
             do {
@@ -356,10 +356,10 @@ private struct SavedCategoryList: View {
       }
       Button("Cancel", role: .cancel) { pendingDeletion = nil }
     } message: {
-      if let place = pendingDeletion { Text(deleteMessage(thing: place)) }
+      if let place = pendingDeletion { Text(deleteMessage(entry: place)) }
     }
     .alert(
-      "Couldn’t Delete Thing",
+      "Couldn’t Delete Entry",
       isPresented: Binding(
         get: { deletionError != nil },
         set: { if !$0 { deletionError = nil } }
@@ -372,11 +372,11 @@ private struct SavedCategoryList: View {
   }
 }
 
-private struct MappedThingGroup: Identifiable {
-  let thing: SavedPlace
+private struct MappedEntryGroup: Identifiable {
+  let entry: SavedEntry
 
-  var id: Int { thing.id }
-  var primary: SavedPlace { thing }
+  var id: Int { entry.id }
+  var primary: SavedEntry { entry }
   var name: String { primary.name }
   var type: String { primary.displayType }
   var sourceCount: Int { primary.sources.count }
@@ -385,16 +385,16 @@ private struct MappedThingGroup: Identifiable {
 
 private struct MappedPlaceGroup: Identifiable {
   let id: String
-  var places: [SavedPlace]
+  var places: [SavedEntry]
 
-  var primary: SavedPlace { places[0] }
+  var primary: SavedEntry { places[0] }
   var name: String {
     if let googleName = places.compactMap(\.locationName).first(where: { !$0.isEmpty }) {
       return googleName
     }
-    return places.first(where: { !$0.isTemporaryLocationThing })?.name ?? primary.name
+    return places.first(where: { !$0.isTemporaryLocationEntry })?.name ?? primary.name
   }
-  var thingGroups: [MappedThingGroup] { places.map { MappedThingGroup(thing: $0) } }
+  var entryGroups: [MappedEntryGroup] { places.map { MappedEntryGroup(entry: $0) } }
   var coordinate: CLLocationCoordinate2D {
     CLLocationCoordinate2D(
       latitude: primary.latitude ?? 0,
@@ -402,7 +402,7 @@ private struct MappedPlaceGroup: Identifiable {
     )
   }
 
-  static func make(from places: [SavedPlace]) -> [MappedPlaceGroup] {
+  static func make(from places: [SavedEntry]) -> [MappedPlaceGroup] {
     var groups: [MappedPlaceGroup] = []
     var indexes: [String: Int] = [:]
 
@@ -420,8 +420,8 @@ private struct MappedPlaceGroup: Identifiable {
   }
 }
 
-private extension SavedPlace {
-  var isTemporaryLocationThing: Bool {
+private extension SavedEntry {
+  var isTemporaryLocationEntry: Bool {
     if startsAt != nil || endsAt != nil || recurrenceText != nil { return true }
     let normalizedType = displayType.lowercased()
     return [
@@ -510,15 +510,15 @@ private struct ActivityDetail: View {
       }
 
       if !activity.results.isEmpty {
-        Section("Things from this post") {
+        Section("Entries from this post") {
           ForEach(activity.results) { result in
-            NavigationLink(value: PlacesNavigation.thing(result.thingID)) {
+            NavigationLink(value: PlacesNavigation.entry(result.entryID)) {
               VStack(alignment: .leading, spacing: 4) {
                 Text(result.name)
                   .font(.headline)
                 HStack(spacing: 8) {
                   Text(result.type)
-                  Text(result.isNew ? "New Thing" : "Added source · \(result.sourceCount) total")
+                  Text(result.isNew ? "New Entry" : "Added source · \(result.sourceCount) total")
                 }
                 .font(.caption)
                 .foregroundStyle(.secondary)
@@ -582,12 +582,12 @@ private extension IngestActivity {
 }
 
 private struct PlacesMap: View {
-  let places: [SavedPlace]
+  let places: [SavedEntry]
   let isRefreshing: Bool
-  @Binding var requestedThingID: Int?
+  @Binding var requestedEntryID: Int?
   @Binding var selectedType: String?
   let refresh: () async -> Void
-  let deleteThingCard: (SavedPlace) async throws -> Void
+  let deleteEntryCard: (SavedEntry) async throws -> Void
   @StateObject private var locationModel = LocationModel()
   @StateObject private var searchModel = MapSearchModel()
   @State private var cameraPosition: MapCameraPosition = .automatic
@@ -616,7 +616,7 @@ private struct PlacesMap: View {
       ContentUnavailableView(
         "Nothing Nearby Yet",
         systemImage: "mappin.slash",
-        description: Text("Current things appear here after their locations are resolved.")
+        description: Text("Current entries appear here after their locations are resolved.")
       )
     } else {
       Map(position: $cameraPosition, selection: $selectedGroupID) {
@@ -673,14 +673,14 @@ private struct PlacesMap: View {
       .task {
         locationModel.requestCurrentLocation()
       }
-      .task(id: requestedThingID) {
-        guard let thingID = requestedThingID,
+      .task(id: requestedEntryID) {
+        guard let entryID = requestedEntryID,
               let group = groups.first(where: { group in
-                group.places.contains { $0.id == thingID }
+                group.places.contains { $0.id == entryID }
               })
         else { return }
         var focusedPlaces = group.places
-        if let index = focusedPlaces.firstIndex(where: { $0.id == thingID }) {
+        if let index = focusedPlaces.firstIndex(where: { $0.id == entryID }) {
           focusedPlaces.insert(focusedPlaces.remove(at: index), at: 0)
         }
         let focusedGroup = MappedPlaceGroup(id: group.id, places: focusedPlaces)
@@ -694,7 +694,7 @@ private struct PlacesMap: View {
         )
         selectedGroupID = focusedGroup.id
         detailGroup = focusedGroup
-        requestedThingID = nil
+        requestedEntryID = nil
       }
       .alert(
         "Search Failed",
@@ -827,7 +827,7 @@ private struct PlacesMap: View {
       }) { group in
         NavigationStack {
           PlaceDetailSheet(group: group) {
-            try await deleteThingCard($0.primary)
+            try await deleteEntryCard($0.primary)
           }
         }
         .presentationDetents([.fraction(0.58), .large])
@@ -868,36 +868,36 @@ private struct PlacesMap: View {
 
 private struct PlaceDetailSheet: View {
   let group: MappedPlaceGroup
-  let deleteThing: (MappedThingGroup) async throws -> Void
+  let deleteEntry: (MappedEntryGroup) async throws -> Void
   @Environment(\.dismiss) private var dismiss
-  @State private var pendingDeletion: MappedThingGroup?
-  @State private var deletingThingID: Int?
+  @State private var pendingDeletion: MappedEntryGroup?
+  @State private var deletingEntryID: Int?
   @State private var deletionError: String?
 
   var body: some View {
     ScrollView {
       LazyVStack(alignment: .leading, spacing: 20) {
-        if let thing = group.thingGroups.first, group.thingGroups.count == 1 {
-          SingleThingLocationDetails(
-            thing: thing,
+        if let entry = group.entryGroups.first, group.entryGroups.count == 1 {
+          SingleEntryLocationDetails(
+            entry: entry,
             address: group.primary.formattedAddress,
             mapsURL: group.primary.appleMapsURL,
-            isDeleting: deletingThingID == thing.id,
-            requestDeletion: { pendingDeletion = thing }
+            isDeleting: deletingEntryID == entry.id,
+            requestDeletion: { pendingDeletion = entry }
           )
         } else {
           LocationHeader(group: group)
 
-          Text("Things at this location")
+          Text("Entries at this location")
             .font(.caption.weight(.semibold))
             .foregroundStyle(.secondary)
             .textCase(.uppercase)
 
-          ForEach(group.thingGroups) { thing in
-            ThingAtLocationCard(
-              thing: thing,
-              isDeleting: deletingThingID == thing.id,
-              requestDeletion: { pendingDeletion = thing }
+          ForEach(group.entryGroups) { entry in
+            EntryAtLocationCard(
+              entry: entry,
+              isDeleting: deletingEntryID == entry.id,
+              requestDeletion: { pendingDeletion = entry }
             )
           }
         }
@@ -907,21 +907,21 @@ private struct PlaceDetailSheet: View {
       .padding(.bottom, 28)
     }
     .confirmationDialog(
-      pendingDeletion.map { "Delete \($0.name)?" } ?? "Delete Thing?",
+      pendingDeletion.map { "Delete \($0.name)?" } ?? "Delete Entry?",
       isPresented: Binding(
         get: { pendingDeletion != nil },
         set: { if !$0 { pendingDeletion = nil } }
       ),
       titleVisibility: .visible
     ) {
-      if let thing = pendingDeletion {
-        Button("Delete Thing", role: .destructive) {
+      if let entry = pendingDeletion {
+        Button("Delete Entry", role: .destructive) {
           pendingDeletion = nil
           Task {
-            deletingThingID = thing.id
-            defer { deletingThingID = nil }
+            deletingEntryID = entry.id
+            defer { deletingEntryID = nil }
             do {
-              try await deleteThing(thing)
+              try await deleteEntry(entry)
               dismiss()
             } catch {
               deletionError = error.localizedDescription
@@ -931,12 +931,12 @@ private struct PlaceDetailSheet: View {
       }
       Button("Cancel", role: .cancel) { pendingDeletion = nil }
     } message: {
-      if let thing = pendingDeletion {
-        Text(logicalThingDeleteMessage(thing))
+      if let entry = pendingDeletion {
+        Text(logicalEntryDeleteMessage(entry))
       }
     }
     .alert(
-      "Couldn’t Delete Thing",
+      "Couldn’t Delete Entry",
       isPresented: Binding(
         get: { deletionError != nil },
         set: { if !$0 { deletionError = nil } }
@@ -949,18 +949,18 @@ private struct PlaceDetailSheet: View {
   }
 }
 
-private func deleteMessage(thing: SavedPlace) -> String {
-  let references = thing.sources.count == 1
+private func deleteMessage(entry: SavedEntry) -> String {
+  let references = entry.sources.count == 1
     ? "its saved reference"
-    : "its \(thing.sources.count) saved references"
-  return "This removes \(thing.name) and \(references). Original source posts stay saved."
+    : "its \(entry.sources.count) saved references"
+  return "This removes \(entry.name) and \(references). Original source posts stay saved."
 }
 
-private func logicalThingDeleteMessage(_ thing: MappedThingGroup) -> String {
-  let references = thing.sourceCount == 1
+private func logicalEntryDeleteMessage(_ entry: MappedEntryGroup) -> String {
+  let references = entry.sourceCount == 1
     ? "its saved reference"
-    : "its \(thing.sourceCount) saved references"
-  return "This removes \(thing.name) and \(references). Original source posts and other things at this location stay saved."
+    : "its \(entry.sourceCount) saved references"
+  return "This removes \(entry.name) and \(references). Original source posts and other entries at this location stay saved."
 }
 
 private struct LocationHeader: View {
@@ -976,7 +976,7 @@ private struct LocationHeader: View {
             .font(.subheadline)
             .foregroundStyle(.secondary)
         }
-        Text("\(group.thingGroups.count) saved things")
+        Text("\(group.entryGroups.count) saved entries")
           .font(.caption)
           .foregroundStyle(.secondary)
       }
@@ -997,8 +997,8 @@ private struct LocationHeader: View {
   }
 }
 
-private struct SingleThingLocationDetails: View {
-  let thing: MappedThingGroup
+private struct SingleEntryLocationDetails: View {
+  let entry: MappedEntryGroup
   let address: String?
   let mapsURL: URL?
   let isDeleting: Bool
@@ -1007,13 +1007,13 @@ private struct SingleThingLocationDetails: View {
   var body: some View {
     HStack(alignment: .firstTextBaseline, spacing: 8) {
       VStack(alignment: .leading, spacing: 5) {
-        Text(thing.name)
+        Text(entry.name)
           .font(.title2.bold())
-        ThingMetadata(thing: thing)
+        EntryMetadata(entry: entry)
       }
 
       Spacer(minLength: 8)
-      ThingActions(
+      EntryActions(
         mapsURL: mapsURL,
         isDeleting: isDeleting,
         requestDeletion: requestDeletion
@@ -1026,14 +1026,14 @@ private struct SingleThingLocationDetails: View {
         .foregroundStyle(.secondary)
     }
 
-    ThingContent(thing: thing)
+    EntryContent(entry: entry)
 
-    SourceLinks(thing: thing.primary)
+    SourceLinks(entry: entry.primary)
   }
 }
 
-private struct ThingAtLocationCard: View {
-  let thing: MappedThingGroup
+private struct EntryAtLocationCard: View {
+  let entry: MappedEntryGroup
   let isDeleting: Bool
   let requestDeletion: () -> Void
 
@@ -1041,49 +1041,49 @@ private struct ThingAtLocationCard: View {
     VStack(alignment: .leading, spacing: 12) {
       HStack(alignment: .firstTextBaseline, spacing: 8) {
         VStack(alignment: .leading, spacing: 5) {
-          Text(thing.name)
+          Text(entry.name)
             .font(.headline)
-          ThingMetadata(thing: thing)
+          EntryMetadata(entry: entry)
         }
 
         Spacer(minLength: 8)
-        ThingActions(
+        EntryActions(
           mapsURL: nil,
           isDeleting: isDeleting,
           requestDeletion: requestDeletion
         )
       }
 
-      ThingContent(thing: thing)
+      EntryContent(entry: entry)
 
-      SourceLinks(thing: thing.primary)
+      SourceLinks(entry: entry.primary)
     }
     .padding(14)
     .background(.secondary.opacity(0.1), in: RoundedRectangle(cornerRadius: 14))
   }
 }
 
-private struct ThingMetadata: View {
-  let thing: MappedThingGroup
+private struct EntryMetadata: View {
+  let entry: MappedEntryGroup
 
   var body: some View {
     HStack(spacing: 8) {
-      Text(thing.type)
+      Text(entry.type)
         .font(.caption.weight(.semibold))
         .foregroundStyle(.secondary)
-      if let availability = thing.primary.availabilityText {
+      if let availability = entry.primary.availabilityText {
         Label(availability, systemImage: "calendar")
           .font(.caption)
           .foregroundStyle(.secondary)
       }
-      Text("\(thing.sourceCount) \(thing.sourceCount == 1 ? "post" : "posts")")
+      Text("\(entry.sourceCount) \(entry.sourceCount == 1 ? "post" : "posts")")
         .font(.caption)
         .foregroundStyle(.secondary)
     }
   }
 }
 
-private struct ThingActions: View {
+private struct EntryActions: View {
   let mapsURL: URL?
   let isDeleting: Bool
   let requestDeletion: () -> Void
@@ -1105,7 +1105,7 @@ private struct ThingActions: View {
           .frame(width: 34, height: 34)
       } else {
         Menu {
-          Button("Delete Thing", systemImage: "trash", role: .destructive) {
+          Button("Delete Entry", systemImage: "trash", role: .destructive) {
             requestDeletion()
           }
         } label: {
@@ -1119,20 +1119,20 @@ private struct ThingActions: View {
   }
 }
 
-private struct ThingContent: View {
-  let thing: MappedThingGroup
+private struct EntryContent: View {
+  let entry: MappedEntryGroup
 
   var body: some View {
-    if !thing.primary.detailedDescription.isEmpty {
-      Text(thing.primary.detailedDescription)
+    if !entry.primary.detailedDescription.isEmpty {
+      Text(entry.primary.detailedDescription)
         .font(.subheadline)
     }
 
-    if !thing.dishes.isEmpty {
+    if !entry.dishes.isEmpty {
       VStack(alignment: .leading, spacing: 5) {
-        Text("Things to Try")
+        Text("Entries to Try")
           .font(.subheadline.weight(.semibold))
-        Text(thing.dishes.joined(separator: " · "))
+        Text(entry.dishes.joined(separator: " · "))
           .font(.subheadline)
           .foregroundStyle(.orange)
       }
@@ -1141,14 +1141,14 @@ private struct ThingContent: View {
 }
 
 private struct SourceLinks: View {
-  let thing: SavedPlace
+  let entry: SavedEntry
 
   var body: some View {
     VStack(alignment: .leading, spacing: 8) {
       Text("Saved from \(sourceCount) \(sourceCount == 1 ? "post" : "posts")")
         .font(.subheadline.weight(.semibold))
 
-      ForEach(thing.sources) { source in
+      ForEach(entry.sources) { source in
         Link(destination: source.linkedSourceURL) {
           HStack(spacing: 12) {
             Image(systemName: source.sourceSystemImage)
@@ -1177,13 +1177,13 @@ private struct SourceLinks: View {
   }
 
   private var sourceCount: Int {
-    thing.sources.count
+    entry.sources.count
   }
 
 }
 
 private struct SavedItemView: View {
-  let places: [SavedPlace]
+  let places: [SavedEntry]
   let isLoading: Bool
 
   var body: some View {
@@ -1209,7 +1209,7 @@ private struct SavedItemView: View {
 }
 
 private struct PlaceRow: View {
-  let place: SavedPlace
+  let place: SavedEntry
 
   var body: some View {
     VStack(alignment: .leading, spacing: 7) {
