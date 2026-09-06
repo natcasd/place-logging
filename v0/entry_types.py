@@ -5,7 +5,7 @@ import unicodedata
 from typing import Any
 
 
-THING_TYPES = (
+ENTRY_TYPES = (
     "Restaurant",
     "Café",
     "Bar",
@@ -29,6 +29,8 @@ THING_TYPES = (
     "Unknown",
 )
 
+TEMPORARY_ENTRY_TYPES = frozenset({"Concert", "Pop-up", "Exhibit"})
+
 
 def normalized_type_label(value: Any) -> str:
     """Normalize labels for matching while ignoring capitalization and accents."""
@@ -40,7 +42,7 @@ def normalized_type_label(value: Any) -> str:
     )
 
 
-_CANONICAL_TYPES = {normalized_type_label(name): name for name in THING_TYPES}
+_CANONICAL_TYPES = {normalized_type_label(name): name for name in ENTRY_TYPES}
 
 _TYPE_ALIASES = {
     "cafe": "Café",
@@ -63,7 +65,12 @@ _TYPE_ALIASES = {
 }
 
 
-def canonical_thing_type(value: Any) -> str:
+def canonical_entry_type(value: Any) -> str:
     """Return the allowed display type, with Unknown for unsupported values."""
     normalized = normalized_type_label(value)
     return _CANONICAL_TYPES.get(normalized, _TYPE_ALIASES.get(normalized, "Unknown"))
+
+
+def supports_timing(value: Any) -> bool:
+    """Only transient recommendation types own dates or recurring schedules."""
+    return canonical_entry_type(value) in TEMPORARY_ENTRY_TYPES

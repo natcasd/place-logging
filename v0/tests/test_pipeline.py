@@ -39,21 +39,23 @@ class YouTubeExtractionTests(unittest.TestCase):
         )
 
         self.assertIn("part of the post's main intent", prompt)
-        self.assertIn("Do not also save the host venue as a separate thing", prompt)
+        self.assertIn("Do not also save the host venue as a separate entry", prompt)
         self.assertIn("supplier, neighboring business, collaborator, or partner", prompt)
         self.assertIn("closing call-to-action", prompt)
         self.assertIn("Never use a generic class as its name", prompt)
         self.assertIn("Restaurant, Café, Bar, Bakery", prompt)
         self.assertIn("Use Exhibit for a museum or gallery exhibition", prompt)
+        self.assertIn("ONLY for a Concert, Pop-up, or Exhibit", prompt)
+        self.assertIn("Never put business hours", prompt)
         self.assertNotIn("Existing specific type names", prompt)
 
     def test_schema_allows_only_controlled_types(self) -> None:
-        type_schema = pipeline.EXTRACTION_RESPONSE_SCHEMA["properties"]["things"]["items"]["properties"]["type_name"]
+        type_schema = pipeline.EXTRACTION_RESPONSE_SCHEMA["properties"]["entries"]["items"]["properties"]["type_name"]
 
-        self.assertEqual(type_schema["enum"], list(pipeline.THING_TYPES))
+        self.assertEqual(type_schema["enum"], list(pipeline.ENTRY_TYPES))
 
-    def test_removes_generic_unnamed_things(self) -> None:
-        things = pipeline._remove_generic_thing_names(
+    def test_removes_generic_unnamed_entries(self) -> None:
+        entries = pipeline._remove_generic_entry_names(
             [
                 {"extracted_name": "Cafe", "type_name": "Café"},
                 {"extracted_name": "Theodora", "type_name": "Restaurant"},
@@ -61,7 +63,30 @@ class YouTubeExtractionTests(unittest.TestCase):
             ]
         )
 
-        self.assertEqual(things, [{"extracted_name": "Theodora", "type_name": "Restaurant"}])
+        self.assertEqual(entries, [{"extracted_name": "Theodora", "type_name": "Restaurant"}])
+
+    def test_removes_timing_from_stable_entries_only(self) -> None:
+        entries = pipeline._remove_invalid_timing_fields(
+            [
+                {
+                    "extracted_name": "S&P Lunch",
+                    "type_name": "Restaurant",
+                    "recurrence_text": "Thursday - Sunday",
+                },
+                {
+                    "extracted_name": "Sunday Supper",
+                    "type_name": "Pop-up",
+                    "starts_at": "2026-09-01",
+                    "ends_at": "2026-10-01",
+                    "recurrence_text": "Sundays through October",
+                },
+            ]
+        )
+
+        self.assertNotIn("recurrence_text", entries[0])
+        self.assertEqual(entries[1]["starts_at"], "2026-09-01")
+        self.assertEqual(entries[1]["ends_at"], "2026-10-01")
+        self.assertEqual(entries[1]["recurrence_text"], "Sundays through October")
 
     @patch("pipeline._client")
     def test_sends_youtube_url_directly_to_gemini(self, mock_client: MagicMock) -> None:
@@ -78,7 +103,7 @@ class YouTubeExtractionTests(unittest.TestCase):
         )
 
         self.assertEqual(places[0]["extracted_name"], "Mission Sandwich Social")
-        properties = pipeline.EXTRACTION_RESPONSE_SCHEMA["properties"]["things"]["items"]["properties"]
+        properties = pipeline.EXTRACTION_RESPONSE_SCHEMA["properties"]["entries"]["items"]["properties"]
         self.assertIn("timestamp_seconds", properties)
         self.assertIn("type_name", properties)
         self.assertIn("description", properties)
@@ -477,8 +502,8 @@ class InstagramExtractionTests(unittest.TestCase):
 
 class ProcessIngestTests(unittest.TestCase):
     @patch.dict("pipeline.os.environ", {"GOOGLE_PLACES_API_KEY": "test"})
-    def test_temporary_thing_rejects_unmatched_single_google_candidate(self) -> None:
-        thing = {
+    def test_temporary_entry_rejects_unmatched_single_google_candidate(self) -> None:
+        entry = {
             "extracted_name": "HiFi Pursuit Listening Room Dream No. 3",
             "type_name": "Exhibit",
             "location_query": "HiFi Pursuit Listening Room Dream No. 3, New York City",
@@ -490,14 +515,14 @@ class ProcessIngestTests(unittest.TestCase):
         }
 
         with patch("pipeline.requests.post", return_value=response):
-            result = pipeline.resolve(thing)
+            result = pipeline.resolve(entry)
 
         self.assertEqual(result["status"], "needs_review")
         self.assertIn("does not match", result["reason"])
 
     @patch.dict("pipeline.os.environ", {"GOOGLE_PLACES_API_KEY": "test"})
-    def test_temporary_thing_accepts_matching_host_venue(self) -> None:
-        thing = {
+    def test_temporary_entry_accepts_matching_host_venue(self) -> None:
+        entry = {
             "extracted_name": "HiFi Pursuit Listening Room Dream No. 3",
             "type_name": "Exhibit",
             "location_query": "Cooper Hewitt, Smithsonian Design Museum, New York City",
@@ -508,7 +533,7 @@ class ProcessIngestTests(unittest.TestCase):
         response.json.return_value = {"places": [candidate]}
 
         with patch("pipeline.requests.post", return_value=response):
-            result = pipeline.resolve(thing)
+            result = pipeline.resolve(entry)
 
         self.assertEqual(result, {"status": "auto", "place": candidate})
 
@@ -521,7 +546,7 @@ class ProcessIngestTests(unittest.TestCase):
     ) -> None:
         mock_extract.return_value = {
             "source_content": {"summary": "A test post."},
-            "things": [{"extracted_name": "Test Place"}],
+            "entries": [{"extracted_name": "Test Place"}],
         }
         mock_resolve.return_value = {"status": "unresolved", "reason": "test"}
         stages = []
@@ -551,8 +576,8 @@ class ProcessIngestTests(unittest.TestCase):
                 Path("/unused"),
             )
 
-    def test_non_location_thing_skips_google_places(self) -> None:
-        thing = {
+    def test_non_location_entry_skips_google_places(self) -> None:
+        entry = {
             "extracted_name": "The Creative Act",
             "type_name": "Book",
             "description": "A book to read.",
@@ -560,20 +585,20 @@ class ProcessIngestTests(unittest.TestCase):
         }
 
         with patch("pipeline.requests.post") as mock_post:
-            result = pipeline.resolve(thing)
+            result = pipeline.resolve(entry)
 
         self.assertEqual(result["status"], "not_applicable")
         mock_post.assert_not_called()
 
-    def test_new_thing_without_location_query_skips_google_places(self) -> None:
-        thing = {
+    def test_new_entry_without_location_query_skips_google_places(self) -> None:
+        entry = {
             "extracted_name": "A Song",
             "type_name": "Song",
             "description": "A song from the Reel.",
         }
 
         with patch("pipeline.requests.post") as mock_post:
-            result = pipeline.resolve(thing)
+            result = pipeline.resolve(entry)
 
         self.assertEqual(result["status"], "not_applicable")
         mock_post.assert_not_called()
@@ -601,7 +626,7 @@ class ProcessIngestTests(unittest.TestCase):
             )
             mock_extract.return_value = {
                 "source_content": {"summary": "A test post."},
-                "things": [{"extracted_name": "Test Place"}],
+                "entries": [{"extracted_name": "Test Place"}],
             }
             mock_resolve.return_value = {"status": "unresolved", "reason": "test"}
             stages = []
@@ -616,23 +641,19 @@ class ProcessIngestTests(unittest.TestCase):
             self.assertFalse(video.exists())
             self.assertFalse(cleanup_dir.exists())
             self.assertTrue(Path(temp_dir).exists())
-            source_dirs = list((Path(temp_dir) / "sources").iterdir())
-            self.assertEqual(len(source_dirs), 1)
-            self.assertTrue((source_dirs[0] / "001-post.mp4").exists())
+            self.assertFalse((Path(temp_dir) / "sources").exists())
             self.assertEqual(
                 stages,
-                ["fetching", "archiving", "extracting", "resolving"],
+                ["fetching", "extracting", "resolving"],
             )
 
     @patch("pipeline.resolve")
-    @patch("pipeline.archive_media", side_effect=OSError("disk full"))
     @patch("pipeline.extract_bundle")
     @patch("pipeline.fetch")
-    def test_archive_failure_still_preserves_source_record_payload(
+    def test_instagram_keeps_source_record_payload_without_archiving(
         self,
         mock_fetch: MagicMock,
         mock_extract: MagicMock,
-        _mock_archive: MagicMock,
         mock_resolve: MagicMock,
     ) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -647,16 +668,15 @@ class ProcessIngestTests(unittest.TestCase):
             )
             mock_extract.return_value = {
                 "source_content": {"summary": "Preserved analysis"},
-                "things": [{"extracted_name": "Test Thing"}],
+                "entries": [{"extracted_name": "Test Entry"}],
             }
             mock_resolve.return_value = {"status": "not_applicable"}
 
-            with self.assertLogs("pipeline", level="ERROR"):
-                result = pipeline.process_ingest(
-                    "https://www.instagram.com/reel/abc/",
-                    None,
-                    Path(temp_dir),
-                )
+            result = pipeline.process_ingest(
+                "https://www.instagram.com/reel/abc/",
+                None,
+                Path(temp_dir),
+            )
 
             self.assertFalse(result["metadata"]["media_preserved"])
             self.assertEqual(
@@ -665,14 +685,12 @@ class ProcessIngestTests(unittest.TestCase):
             )
             self.assertFalse(cleanup_dir.exists())
 
-    @patch("pipeline.archive_media")
     @patch("pipeline.extract_bundle", side_effect=FakeGeminiError(503))
     @patch("pipeline.fetch")
-    def test_exhausted_extraction_preserves_archived_source_for_review(
+    def test_exhausted_extraction_preserves_source_record_for_review(
         self,
         mock_fetch: MagicMock,
         _mock_extract: MagicMock,
-        mock_archive: MagicMock,
     ) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             cleanup_dir = Path(temp_dir) / "instagram-ingest"
@@ -687,10 +705,6 @@ class ProcessIngestTests(unittest.TestCase):
                 },
                 cleanup_dir,
             )
-            mock_archive.return_value = [
-                {"path": "/data/downloads/sources/post.mp4", "bytes": 100}
-            ]
-
             with self.assertLogs("pipeline", level="ERROR"):
                 result = pipeline.process_ingest(
                     "https://www.instagram.com/reel/abc/",
@@ -698,14 +712,14 @@ class ProcessIngestTests(unittest.TestCase):
                     Path(temp_dir),
                 )
 
-            self.assertEqual(result["things_extracted"], [])
-            self.assertEqual(result["resolved_things"], [])
+            self.assertEqual(result["entries_extracted"], [])
+            self.assertEqual(result["resolved_entries"], [])
             self.assertEqual(result["metadata"]["extraction_status"], "failed")
             self.assertEqual(
                 result["metadata"]["extraction_error"]["type"],
                 "FakeGeminiError",
             )
-            self.assertTrue(result["metadata"]["media_preserved"])
+            self.assertFalse(result["metadata"]["media_preserved"])
             self.assertEqual(
                 result["metadata"]["caption_or_description"],
                 "Saved caption",

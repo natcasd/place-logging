@@ -6,14 +6,14 @@ import unittest
 from pathlib import Path
 
 from backfill_duplicate_sources import apply_plan, create_plan
-from store import init_db, list_things, save_ingest
+from store import init_db, list_entries, save_ingest
 
 
 class DuplicateSourceBackfillTests(unittest.TestCase):
     @staticmethod
-    def result(url: str, things: list[tuple[str, str | None]]) -> dict:
+    def result(url: str, entries: list[tuple[str, str | None]]) -> dict:
         resolved = []
-        for name, google_id in things:
+        for name, google_id in entries:
             resolved.append(
                 {
                     "status": "resolved" if google_id else "needs_review",
@@ -35,7 +35,7 @@ class DuplicateSourceBackfillTests(unittest.TestCase):
         return {
             "source_url": url,
             "metadata": {"source_platform": "instagram", "extraction_status": "complete"},
-            "resolved_things": resolved,
+            "resolved_entries": resolved,
         }
 
     def test_keeps_newest_source_and_removes_redundant_rows(self) -> None:
@@ -91,13 +91,13 @@ class DuplicateSourceBackfillTests(unittest.TestCase):
 
             apply_plan(db_path, plan_path, root / "backups")
 
-            self.assertEqual({thing["name"] for thing in list_things(db_path)}, {"Main", "Bonus"})
+            self.assertEqual({entry["name"] for entry in list_entries(db_path)}, {"Main", "Bonus"})
             self.assertEqual(
-                {source["item_id"] for thing in list_things(db_path) for source in thing["sources"]},
+                {source["item_id"] for entry in list_entries(db_path) for source in entry["sources"]},
                 {2},
             )
 
-    def test_prefers_resolved_copy_of_same_thing(self) -> None:
+    def test_prefers_resolved_copy_of_same_entry(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
             db_path = root / "places.db"
@@ -116,10 +116,10 @@ class DuplicateSourceBackfillTests(unittest.TestCase):
 
             summary, _ = apply_plan(db_path, plan_path, root / "backups")
 
-            things = list_things(db_path)
-            self.assertEqual(summary["things_removed"], 1)
-            self.assertEqual(len(things), 1)
-            self.assertEqual(things[0]["google_place_id"], "g-court")
+            entries = list_entries(db_path)
+            self.assertEqual(summary["entries_removed"], 1)
+            self.assertEqual(len(entries), 1)
+            self.assertEqual(entries[0]["google_place_id"], "g-court")
 
 
 if __name__ == "__main__":

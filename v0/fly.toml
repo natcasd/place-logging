@@ -10,7 +10,7 @@ primary_region = 'ewr'
 
 [env]
   DB_PATH = '/data/places.db'
-  WORKDIR = '/data/downloads'
+  WORKDIR = '/tmp/place-logger-downloads'
 
 [[mounts]]
   source = 'placedata'

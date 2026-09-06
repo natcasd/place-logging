@@ -15,7 +15,7 @@ class TelegramAdapterTests(unittest.IsolatedAsyncioTestCase):
         formatted = bot._format_result(
             {
                 "metadata": {"extraction_status": "failed"},
-                "resolved_things": [],
+                "resolved_entries": [],
             }
         )
 
@@ -43,9 +43,9 @@ class TelegramAdapterTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("🖼 Slide 4", formatted)
         self.assertIn("🎬 Appears at 1:14", formatted)
 
-    def test_formats_thing_identity_and_existing_source_outcome(self) -> None:
+    def test_formats_entry_identity_and_existing_source_outcome(self) -> None:
         result = {
-            "saved_things": [
+            "saved_entries": [
                 {
                     "name": "Giacometti in the Temple of Dendur",
                     "type": "Exhibit",
@@ -53,7 +53,7 @@ class TelegramAdapterTests(unittest.IsolatedAsyncioTestCase):
                     "source_count": 2,
                 }
             ],
-            "resolved_things": [
+            "resolved_entries": [
                 {
                     "status": "auto",
                     "extracted": {

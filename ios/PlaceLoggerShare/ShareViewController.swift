@@ -151,7 +151,7 @@ private struct ShareStatusView: View {
           body: result.notificationBody,
           ingestID: result.ingestID,
           itemID: result.itemID,
-          thing: result.savedThings.count == 1 ? result.savedThings.first : nil
+          entry: result.savedEntries.count == 1 ? result.savedEntries.first : nil
         )
         complete()
       } catch {
@@ -160,7 +160,7 @@ private struct ShareStatusView: View {
           body: error.localizedDescription,
           ingestID: nil,
           itemID: nil,
-          thing: nil
+          entry: nil
         )
         state = .failed(error.localizedDescription)
       }
@@ -174,7 +174,7 @@ private enum LocalNotification {
     body: String,
     ingestID: Int?,
     itemID: Int?,
-    thing: SavedThingOutcome?
+    entry: SavedEntryOutcome?
   ) async {
     let center = UNUserNotificationCenter.current()
     let settings = await center.notificationSettings()
@@ -191,9 +191,9 @@ private enum LocalNotification {
     var userInfo: [String: Any] = [:]
     if let ingestID { userInfo["ingest_id"] = ingestID }
     if let itemID { userInfo["item_id"] = itemID }
-    if let thing {
-      userInfo["thing_id"] = thing.thingID
-      userInfo["has_location"] = thing.hasLocation
+    if let entry {
+      userInfo["entry_id"] = entry.entryID
+      userInfo["has_location"] = entry.hasLocation
     }
     content.userInfo = userInfo
 

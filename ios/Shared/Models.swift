@@ -1,11 +1,11 @@
 import Foundation
 
 struct PlacesEnvelope: Decodable {
-  let places: [SavedPlace]
+  let places: [SavedEntry]
 }
 
-struct ThingsEnvelope: Decodable {
-  let things: [SavedPlace]
+struct EntriesEnvelope: Decodable {
+  let entries: [SavedEntry]
 }
 
 struct SourcesEnvelope: Decodable {
@@ -16,7 +16,7 @@ struct ActivityEnvelope: Decodable {
   let activity: [IngestActivity]
 }
 
-struct SavedPlace: Decodable, Identifiable, Sendable {
+struct SavedEntry: Decodable, Identifiable, Sendable {
   let id: Int
   let locationID: Int?
   let itemID: Int
@@ -41,7 +41,7 @@ struct SavedPlace: Decodable, Identifiable, Sendable {
   let recurrenceText: String?
   let sourceURL: URL
   let savedAt: String
-  let sources: [SavedThingSource]
+  let sources: [SavedEntrySource]
 
   enum CodingKeys: String, CodingKey {
     case id, ordinal, name, latitude, longitude, dishes, tags
@@ -187,7 +187,7 @@ struct SavedPlace: Decodable, Identifiable, Sendable {
   }
 }
 
-struct SavedThingSource: Decodable, Identifiable, Sendable {
+struct SavedEntrySource: Decodable, Identifiable, Sendable {
   let id: Int
   let itemID: Int
   let ordinal: Int
@@ -294,7 +294,7 @@ struct SavedSource: Decodable, Identifiable, Sendable {
   let summary: String?
   let mediaCount: Int
   let mediaPreserved: Bool
-  let thingCount: Int
+  let entryCount: Int
   let needsReview: Bool
   let savedAt: String
 
@@ -304,7 +304,7 @@ struct SavedSource: Decodable, Identifiable, Sendable {
     case sourcePlatform = "source_platform"
     case mediaCount = "media_count"
     case mediaPreserved = "media_preserved"
-    case thingCount = "thing_count"
+    case entryCount = "entry_count"
     case needsReview = "needs_review"
     case savedAt = "saved_at"
   }
@@ -318,28 +318,28 @@ struct SavedSource: Decodable, Identifiable, Sendable {
 struct IngestResponse: Decodable, Sendable {
   let ingestID: Int
   let itemID: Int
-  let savedThings: [SavedThingOutcome]
+  let savedEntries: [SavedEntryOutcome]
   let alreadyLogged: Bool?
 
   var notificationTitle: String {
     if alreadyLogged == true { return "Already logged" }
-    guard savedThings.count == 1, let thing = savedThings.first else {
-      return savedThings.isEmpty ? "Nothing found" : "Logged " + Self.typeCountSummary(savedThings)
+    guard savedEntries.count == 1, let entry = savedEntries.first else {
+      return savedEntries.isEmpty ? "Nothing found" : "Logged " + Self.typeCountSummary(savedEntries)
     }
-    return thing.isNew
-      ? "Logged \(thing.type) · \(thing.name)"
-      : "Logged a new source to \(thing.type) - \(thing.name)"
+    return entry.isNew
+      ? "Logged \(entry.type) · \(entry.name)"
+      : "Logged a new source to \(entry.type) - \(entry.name)"
   }
 
   var notificationBody: String {
     if alreadyLogged == true { return "" }
-    guard !savedThings.isEmpty else {
+    guard !savedEntries.isEmpty else {
       return "The source was saved for review."
     }
-    if savedThings.count == 1, let thing = savedThings.first {
-      return thing.isNew
-        ? "Logged a new \(thing.type) from this post."
-        : "This \(thing.type) now has \(thing.sourceCount) logged sources."
+    if savedEntries.count == 1, let entry = savedEntries.first {
+      return entry.isNew
+        ? "Logged a new \(entry.type) from this post."
+        : "This \(entry.type) now has \(entry.sourceCount) logged sources."
     }
     return ""
   }
@@ -347,17 +347,17 @@ struct IngestResponse: Decodable, Sendable {
   enum CodingKeys: String, CodingKey {
     case ingestID = "ingest_id"
     case itemID = "item_id"
-    case savedThings = "saved_things"
+    case savedEntries = "saved_entries"
     case alreadyLogged = "already_logged"
   }
 
-  private static func typeCountSummary(_ things: [SavedThingOutcome]) -> String {
+  private static func typeCountSummary(_ entries: [SavedEntryOutcome]) -> String {
     var orderedTypes: [String] = []
     var counts: [String: Int] = [:]
 
-    for thing in things {
-      let type = thing.type.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-      let label = type.isEmpty ? "thing" : type
+    for entry in entries {
+      let type = entry.type.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+      let label = type.isEmpty ? "entry" : type
       if counts[label] == nil {
         orderedTypes.append(label)
       }
@@ -395,8 +395,8 @@ struct IngestResponse: Decodable, Sendable {
   }
 }
 
-struct SavedThingOutcome: Decodable, Identifiable, Sendable, Hashable {
-  let thingID: Int
+struct SavedEntryOutcome: Decodable, Identifiable, Sendable, Hashable {
+  let entryID: Int
   let name: String
   let type: String
   let locationID: Int?
@@ -407,12 +407,12 @@ struct SavedThingOutcome: Decodable, Identifiable, Sendable, Hashable {
   let isNew: Bool
   let sourceCount: Int
 
-  var id: Int { thingID }
+  var id: Int { entryID }
   var hasLocation: Bool { locationID != nil && latitude != nil && longitude != nil }
 
   enum CodingKeys: String, CodingKey {
     case name, type, latitude, longitude
-    case thingID = "thing_id"
+    case entryID = "entry_id"
     case locationID = "location_id"
     case locationName = "location_name"
     case resolutionStatus = "resolution_status"
@@ -436,7 +436,7 @@ struct IngestActivity: Decodable, Identifiable, Sendable {
   let startedAt: String
   let updatedAt: String
   let completedAt: String?
-  let results: [SavedThingOutcome]
+  let results: [SavedEntryOutcome]
   let events: [IngestActivityEvent]
 
   var title: String {

@@ -8,11 +8,11 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
-import backfill_thing_types as backfill
+import backfill_entry_types as backfill
 from store import init_db
 
 
-class BackfillThingTypesTests(unittest.TestCase):
+class BackfillEntryTypesTests(unittest.TestCase):
     def make_db(self, root: Path) -> Path:
         db_path = root / "places.db"
         init_db(db_path)
@@ -21,7 +21,7 @@ class BackfillThingTypesTests(unittest.TestCase):
             con.execute(
                 """INSERT INTO items
                    (id, vertical, source_url, raw_payload_json)
-                   VALUES (1, 'thing', 'https://example.com/post', ?)""",
+                   VALUES (1, 'entry', 'https://example.com/post', ?)""",
                 (
                     json.dumps(
                         {
@@ -35,14 +35,14 @@ class BackfillThingTypesTests(unittest.TestCase):
             con.execute(
                 """INSERT INTO places
                    (id, item_id, ordinal, extracted_name, resolution_status,
-                    thing_type, description, formatted_address)
+                    entry_type, description, formatted_address)
                    VALUES (10, 1, 0, 'Dinner', 'auto', 'Place',
                            'A restaurant serving dinner.', 'New York, NY')"""
             )
             con.execute(
                 """INSERT INTO places
                    (id, item_id, ordinal, extracted_name, resolution_status,
-                    thing_type, description)
+                    entry_type, description)
                    VALUES (11, 1, 1, 'Museum', 'auto', 'Museum', 'An art museum.')"""
             )
             con.commit()
@@ -62,18 +62,18 @@ class BackfillThingTypesTests(unittest.TestCase):
             self.assertEqual(len(groups), 1)
             self.assertEqual(groups[0]["source_context"]["creator"], "creator")
             self.assertEqual(
-                [thing["thing_id"] for thing in groups[0]["things"]],
+                [entry["entry_id"] for entry in groups[0]["entries"]],
                 [10],
             )
 
-    @patch("backfill_thing_types._client")
+    @patch("backfill_entry_types._client")
     def test_classifies_every_id_with_specific_type(self, mock_client: MagicMock) -> None:
         mock_client.return_value.models.generate_content.return_value = SimpleNamespace(
             text=json.dumps(
                 {
                     "classifications": [
                         {
-                            "thing_id": 10,
+                            "entry_id": 10,
                             "type_name": "restaurant",
                             "reason": "It serves dinner.",
                         }
@@ -85,7 +85,7 @@ class BackfillThingTypesTests(unittest.TestCase):
             {
                 "item_id": 1,
                 "source_context": {},
-                "things": [{"thing_id": 10, "name": "Dinner"}],
+                "entries": [{"entry_id": 10, "name": "Dinner"}],
             }
         ]
 
@@ -113,7 +113,7 @@ class BackfillThingTypesTests(unittest.TestCase):
                                 "method": "gemini_classification",
                                 "updates": [
                                     {
-                                        "thing_id": 10,
+                                        "entry_id": 10,
                                         "type_name": "Restaurant",
                                         "reason": "It serves dinner.",
                                     }
@@ -135,7 +135,7 @@ class BackfillThingTypesTests(unittest.TestCase):
             con = sqlite3.connect(db_path)
             try:
                 rows = con.execute(
-                    "SELECT id, thing_type FROM places ORDER BY id"
+                    "SELECT id, entry_type FROM places ORDER BY id"
                 ).fetchall()
             finally:
                 con.close()

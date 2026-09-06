@@ -8,6 +8,7 @@
 
 /* Begin PBXBuildFile section */
 		064A3063186D6FA1DE5DCC64 /* ShareViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 14F9A82FE76648FCA9EB4AE7 /* ShareViewController.swift */; };
+		16A4DDC42F963A621D2A47BF /* SavedCategory.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0A5DF9D7C729E03A9AA36BF /* SavedCategory.swift */; };
 		26C4D2D6EDA00B35597DCDA7 /* PlaceLoggerShare.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = ED4E058694F66A65E2067927 /* PlaceLoggerShare.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		2B3C761B0F6580623D93432B /* PlaceLoggerAPI.swift in Sources */ = {isa = PBXBuildFile; fileRef = CD439B1B2B56ED9548B3A7D6 /* PlaceLoggerAPI.swift */; };
 		35FA7C74B90CA3C91792B341 /* PlaceLoggerAPI.swift in Sources */ = {isa = PBXBuildFile; fileRef = CD439B1B2B56ED9548B3A7D6 /* PlaceLoggerAPI.swift */; };
@@ -55,6 +56,7 @@
 		84E6A5828324B0E8949325D2 /* PlacesView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlacesView.swift; sourceTree = "<group>"; };
 		9065EE50C75A067C2E5FDFAF /* Models.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models.swift; sourceTree = "<group>"; };
 		AFD08F150E5FA09C074BB8E5 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		C0A5DF9D7C729E03A9AA36BF /* SavedCategory.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SavedCategory.swift; sourceTree = "<group>"; };
 		C3073F44E078202B89E6435C /* PlaceLogger.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = PlaceLogger.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		CD439B1B2B56ED9548B3A7D6 /* PlaceLoggerAPI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlaceLoggerAPI.swift; sourceTree = "<group>"; };
 		DEC84888F492275FE45F6B68 /* APIConfig.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = APIConfig.swift; sourceTree = "<group>"; };
@@ -120,6 +122,7 @@
 				F78E9211232784677A89E816 /* MapSearchModel.swift */,
 				3966F5FA07BE13D9F432C431 /* PlaceLoggerApp.swift */,
 				84E6A5828324B0E8949325D2 /* PlacesView.swift */,
+				C0A5DF9D7C729E03A9AA36BF /* SavedCategory.swift */,
 			);
 			path = PlaceLogger;
 			sourceTree = "<group>";
@@ -237,6 +240,7 @@
 				2B3C761B0F6580623D93432B /* PlaceLoggerAPI.swift in Sources */,
 				6B9118EB245C5AE58643E039 /* PlaceLoggerApp.swift in Sources */,
 				D8CD16D2D03261DA49C75A82 /* PlacesView.swift in Sources */,
+				16A4DDC42F963A621D2A47BF /* SavedCategory.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

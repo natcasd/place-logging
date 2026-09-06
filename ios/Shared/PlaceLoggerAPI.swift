@@ -7,7 +7,7 @@ struct PlaceLoggerAPI: Sendable {
     self.session = session
   }
 
-  func fetchPlaces(limit: Int = 200) async throws -> [SavedPlace] {
+  func fetchPlaces(limit: Int = 200) async throws -> [SavedEntry] {
     var components = URLComponents(
       url: APIConfig.baseURL.appending(path: "/api/v1/places"),
       resolvingAgainstBaseURL: false
@@ -18,15 +18,15 @@ struct PlaceLoggerAPI: Sendable {
     return try JSONDecoder().decode(PlacesEnvelope.self, from: data).places
   }
 
-  func fetchThings(limit: Int = 200) async throws -> [SavedPlace] {
+  func fetchEntries(limit: Int = 1_000) async throws -> [SavedEntry] {
     var components = URLComponents(
-      url: APIConfig.baseURL.appending(path: "/api/v1/things"),
+      url: APIConfig.baseURL.appending(path: "/api/v1/entries"),
       resolvingAgainstBaseURL: false
     )
     components?.queryItems = [URLQueryItem(name: "limit", value: String(limit))]
     guard let url = components?.url else { throw PlaceLoggerError.invalidResponse }
     let data = try await perform(URLRequest(url: url))
-    return try JSONDecoder().decode(ThingsEnvelope.self, from: data).things
+    return try JSONDecoder().decode(EntriesEnvelope.self, from: data).entries
   }
 
   func fetchSources(limit: Int = 200) async throws -> [SavedSource] {
@@ -72,19 +72,19 @@ struct PlaceLoggerAPI: Sendable {
     _ = try await perform(request)
   }
 
-  func deleteThing(id: Int) async throws {
-    let url = APIConfig.baseURL.appending(path: "/api/v1/things/\(id)")
+  func deleteEntry(id: Int) async throws {
+    let url = APIConfig.baseURL.appending(path: "/api/v1/entries/\(id)")
     var request = URLRequest(url: url)
     request.httpMethod = "DELETE"
     _ = try await perform(request)
   }
 
-  func deleteThings(ids: [Int]) async throws {
-    let url = APIConfig.baseURL.appending(path: "/api/v1/things")
+  func deleteEntries(ids: [Int]) async throws {
+    let url = APIConfig.baseURL.appending(path: "/api/v1/entries")
     var request = URLRequest(url: url)
     request.httpMethod = "DELETE"
     request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-    request.httpBody = try JSONSerialization.data(withJSONObject: ["thing_ids": ids])
+    request.httpBody = try JSONSerialization.data(withJSONObject: ["entry_ids": ids])
     _ = try await perform(request)
   }
 

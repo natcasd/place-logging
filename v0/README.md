@@ -1,32 +1,33 @@
 # v0 — shared recommendation-ingest API and Telegram bot
 
-The service preserves each source post, extracts individual saved things, and
+The service preserves each source post, extracts individual saved entries, and
 optionally resolves physical locations through Google Places.
 
-## Saved-things model
+## Saved-entries model
 
-- Every ingest creates a source record, even when extraction returns no things.
-- `things` stores one canonical recommendation, `locations` stores an optional
-  Google-resolved venue, and `thing_sources` records which source recommended
-  which Thing together with that source's description and media reference.
-- A Thing has zero or one Location. Many Things can share a Location, and many
-  Sources can recommend the same Thing.
+- Every ingest creates a source record, even when extraction returns no entries.
+- `entries` stores one canonical recommendation, `locations` stores an optional
+  Google-resolved venue, and `entry_sources` records which source recommended
+  which Entry together with that source's description and media reference.
+- An Entry has zero or one Location. Many Entries can share a Location, and many
+  Sources can recommend the same Entry.
 - Matching is deliberately conservative: permanent venues match by Google Place
-  ID and compatible type; temporary things additionally require the same title
-  and dates; non-location things require the same title and type. Uncertain
+  ID and compatible type; temporary entries additionally require the same title
+  and dates; non-location entries require the same title and type. Uncertain
   recommendations remain separate.
-- Instagram media is archived under `WORKDIR/sources` on the mounted Fly volume.
-- Each extracted thing uses one stable browse type (`Restaurant`, `Café`, `Bar`,
+- Instagram media is downloaded into temporary machine storage for extraction,
+  then deleted. The source URL, caption, and extracted source text are retained.
+- Each extracted entry uses one stable browse type (`Restaurant`, `Café`, `Bar`,
   `Bakery`, `Park`, `Hiking Trail`, `Bike Route`, `Museum`, `Art Gallery`,
   `Store`, `Spa`, `Fitness`, `Concert`, `Pop-up`, `Exhibit`, `Book`, `Movie`, `Article`,
   `Song`, `Product`, or `Unknown`), plus a detailed description, optional
   availability dates, and optional Google location.
 - Resolved locations retain Google's display name and Google Place ID. Clients can
-  show one map pin per location while keeping distinct saved things at that pin.
-- Repeated saves of the same logical thing can be presented as one card with all of
+  show one map pin per location while keeping distinct saved entries at that pin.
+- Repeated saves of the same logical entry can be presented as one card with all of
   its source posts. The newest source description is displayed for now while every
   source-specific description remains stored. Deleting that card removes only its
-  Thing and source connections; source posts and other things at the same location
+  Entry and source connections; source posts and other entries at the same location
   remain saved.
 - Existing place rows migrate in place with `Unknown` as their temporary type. Before
   the first additive migration, the service creates a timestamped SQLite backup
@@ -35,9 +36,9 @@ optionally resolves physical locations through Google Places.
   scenery, background posters, host venues, suppliers, and creator CTAs unless
   independently recommended. Generic unnamed records such as `Cafe` are dropped.
 - Temporary Gemini capacity and rate-limit errors receive bounded exponential
-  retries. If extraction still fails, the source context and downloaded Instagram
-  media are saved with zero things so the source remains visible for later review.
-- `/api/v1/things` and `/api/v1/sources` power new clients. `/api/v1/places`
+  retries. If extraction still fails, the source URL, caption, and error are
+  saved with zero entries so the source remains visible for later review.
+- `/api/v1/entries` and `/api/v1/sources` power new clients. `/api/v1/places`
   remains available for released clients.
 
 ## Layout
@@ -47,7 +48,8 @@ optionally resolves physical locations through Google Places.
 - `ingest_service.py` — shared process-and-persist application service
 - `pipeline.py` — platform-aware `ingest → extract → resolve` pipeline
 - `store.py` — SQLite schema + `save_ingest()`
-- `data/` — temporary Instagram media cache + `places.db` (both gitignored)
+- `data/` — local SQLite database (gitignored); temporary Instagram media uses
+  the machine's temp directory and is deleted after each attempt
 
 ## First-time setup
 
@@ -159,18 +161,18 @@ python backfill_media_references.py \
 
 ## Generic-type backfill
 
-`backfill_thing_types.py` reclassifies every legacy `Place` row using its saved
+`backfill_entry_types.py` reclassifies every legacy `Place` row using its saved
 source context and description. Its default mode creates a checkpointed,
 reviewable plan. Applying a complete plan backs up SQLite, verifies each target
-is still generic, updates only `thing_type`, and refuses to commit if any
+is still generic, updates only `entry_type`, and refuses to commit if any
 `Place` rows would remain.
 
 ```bash
-python backfill_thing_types.py \
+python backfill_entry_types.py \
   --db-path data/places.db \
   --plan data/type-backfill-plan.json
 
-python backfill_thing_types.py \
+python backfill_entry_types.py \
   --db-path data/places.db \
   --plan data/type-backfill-plan.json \
   --apply

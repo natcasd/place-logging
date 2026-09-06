@@ -5,7 +5,6 @@ Stays synchronous for simplicity; bot.py offloads to a thread via asyncio.to_thr
 """
 from __future__ import annotations
 
-import hashlib
 import json
 import logging
 import mimetypes
@@ -16,7 +15,6 @@ import subprocess
 import sys
 import tempfile
 import time
-import uuid
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -27,7 +25,7 @@ import requests
 from google import genai
 from google.genai import types
 
-from thing_types import THING_TYPES, normalized_type_label
+from entry_types import ENTRY_TYPES, normalized_type_label, supports_timing
 
 log = logging.getLogger(__name__)
 
@@ -354,41 +352,6 @@ def fetch(source_url: str, workdir: Path) -> InstagramFetch:
         raise
 
 
-# ---------- Source archive ----------
-
-
-def archive_media(
-    media_paths: list[Path],
-    workdir: Path,
-    source_url: str,
-) -> list[dict[str, Any]]:
-    """Persist source media outside the temporary extractor directory."""
-    archive_root = workdir / "sources"
-    archive_root.mkdir(parents=True, exist_ok=True)
-    source_key = hashlib.sha256(source_url.encode("utf-8")).hexdigest()[:16]
-    destination = archive_root / f"{source_key}-{uuid.uuid4().hex[:8]}"
-    destination.mkdir()
-
-    manifest = []
-    try:
-        for index, path in enumerate(media_paths, start=1):
-            archived = destination / f"{index:03d}-{path.name}"
-            shutil.copy2(path, archived)
-            manifest.append(
-                {
-                    "path": str(archived),
-                    "filename": archived.name,
-                    "mime_type": mimetypes.guess_type(archived.name)[0]
-                    or "application/octet-stream",
-                    "bytes": archived.stat().st_size,
-                }
-            )
-    except Exception:
-        shutil.rmtree(destination, ignore_errors=True)
-        raise
-    return manifest
-
-
 # ---------- Extractor ----------
 
 TYPE_NAME_GUIDANCE = """Choose exactly one primary type from this fixed list: Restaurant, Café, Bar, Bakery, Park, Hiking Trail, Bike Route, Museum, Art Gallery, Store, Spa, Fitness, Concert, Pop-up, Exhibit, Book, Movie, Article, Song, Product, or Unknown. Do not invent another type. Use Exhibit for a museum or gallery exhibition, installation, or curated show; use Pop-up for a temporary food, retail, or event offering. Use Unknown only when none of the listed types fit."""
@@ -403,17 +366,17 @@ def specific_type_names(type_names: list[str] | None) -> list[str]:
     ]
 
 
-EXTRACTOR_PROMPT = """Analyze this social post and extract the distinct recommendations that are part of the post's main intent and that someone may want to save for later. Recommendations can include physical places, temporary events, books, movies, articles, songs, products, routes, and other useful things.
+EXTRACTOR_PROMPT = """Analyze this social post and extract the distinct recommendations that are part of the post's main intent and that someone may want to save for later. Recommendations can include physical places, temporary events, books, movies, articles, songs, products, routes, and other useful entries.
 
-Be selective about what becomes a saved thing:
-- A thing must be independently recommended, endorsed, or presented as a principal subject of the post. For a list post, each intended list entry is a principal recommendation.
-- Do not create separate things for incidental mentions, scenery, background signs or posters, examples, ingredients, products merely being used, or places that only establish where the main recommendation happens.
-- A host venue can be important context. Preserve it in the main recommendation's description and use it in location_query when it anchors the recommendation. Do not also save the host venue as a separate thing unless the post independently recommends the venue itself.
-- A supplier, neighboring business, collaborator, or partner that only supports the main recommendation is context, not a separate thing.
-- A run, event, activity, or gathering that merely hosts or frames a product or place is context, not a separate thing.
+Be selective about what becomes a saved entry:
+- An entry must be independently recommended, endorsed, or presented as a principal subject of the post. For a list post, each intended list entry is a principal recommendation.
+- Do not create separate entries for incidental mentions, scenery, background signs or posters, examples, ingredients, products merely being used, or places that only establish where the main recommendation happens.
+- A host venue can be important context. Preserve it in the main recommendation's description and use it in location_query when it anchors the recommendation. Do not also save the host venue as a separate entry unless the post independently recommends the venue itself.
+- A supplier, neighboring business, collaborator, or partner that only supports the main recommendation is context, not a separate entry.
+- A run, event, activity, or gathering that merely hosts or frames a product or place is context, not a separate entry.
 - A creator's closing call-to-action (for example, comment, DM, link-in-bio, or sign up for my program) is context unless the post is primarily promoting that offering.
 - Likewise, a movie poster visible in the background is not a movie recommendation, and a city shown as a story's setting is not a travel recommendation.
-- When the evidence is ambiguous, prefer preserving the information in source_content or a recommendation's description instead of creating an extra thing.
+- When the evidence is ambiguous, prefer preserving the information in source_content or a recommendation's description instead of creating an extra entry.
 
 When multiple media items are supplied, they are the slides of one carousel in display order. Analyze all of them together. The source metadata's caption_or_description may contain the post caption or Instagram's combined carousel captions; treat that text as evidence even when an exact caption-to-slide mapping is unavailable.
 
@@ -422,21 +385,19 @@ Also preserve a source_content object with:
 - transcript: all meaningful intelligible speech, in order; use an empty string when there is none
 - on_screen_text: all meaningful visible text, in order; use an empty string when there is none
 
-Return one object per individual thing. Do not combine a list of restaurants, books, products, or events into one record.
+Return one object per individual entry. Do not combine a list of restaurants, books, products, or events into one record.
 
-For each thing, return an object with:
-- extracted_name: concise, distinct name of the thing as mentioned or shown. Never use a generic class as its name (for example, "Cafe", "Restaurant", "Store", or "Place"); if no distinct name is supported, do not return a thing.
+For each entry, return an object with:
+- extracted_name: concise, distinct name of the entry as mentioned or shown. Never use a generic class as its name (for example, "Cafe", "Restaurant", "Store", or "Place"); if no distinct name is supported, do not return an entry.
 - type_name: """ + TYPE_NAME_GUIDANCE + """
-- description: a detailed, source-grounded explanation containing the useful information conveyed about this thing. Do not add facts that are not in the source.
-- location_query: only when the thing has a physical place, area, anchor, or venue that Google Places could resolve. Use the venue for an event or exhibit. Include the name plus directly evidenced neighborhood/city/region hints. Omit this field for non-location things and when there is not enough location evidence.
+- description: a detailed, source-grounded explanation containing the useful information conveyed about this entry. Do not add facts that are not in the source.
+- location_query: only when the entry has a physical place, area, anchor, or venue that Google Places could resolve. Use the venue for an event or exhibit. Include the name plus directly evidenced neighborhood/city/region hints. Omit this field for non-location entries and when there is not enough location evidence.
 - location_hints: object with any of { neighborhood, city, region_or_country, on_screen_text, visual_landmarks } — ONLY include fields where you have direct evidence from the supplied media or caption. Omit a field rather than guess.
-- starts_at: ISO 8601 date or datetime when a temporary thing begins, only when directly supported by the source
-- ends_at: ISO 8601 date or datetime when a temporary thing ends, only when directly supported by the source
-- recurrence_text: the source's human-readable recurring schedule when relevant, such as "Sundays through October"
+- starts_at, ends_at, and recurrence_text: ONLY for a Concert, Pop-up, or Exhibit, and only when directly supported by the source. Use ISO 8601 for starts_at and ends_at; preserve a human-readable recurring schedule in recurrence_text. Never put business hours, opening days, release dates, publication dates, or other timing on stable types such as Restaurant, Café, Museum, Book, Movie, or Product. If a temporary event or limited-run offering at a stable venue is itself the main recommendation, extract that event as a Concert, Pop-up, or Exhibit and use the venue only as its location.
 - extraction_confidence: "high" | "medium" | "low"
 - timestamp_seconds: for a Reel, YouTube video, or video carousel slide, the
   non-negative number of seconds from the start of that video to the beginning
-  of the thing's main section. Omit this field when the thing cannot be tied to
+  of the entry's main section. Omit this field when the entry cannot be tied to
   a specific moment. Do not invent a timestamp from caption-only evidence.
 - slide_index: for an Instagram carousel, the 1-based slide number that most
   clearly identifies or discusses the place. The first supplied media item is
@@ -446,9 +407,9 @@ For each thing, return an object with:
   timestamp is relative to the start of that slide's video.
 
 Return ONLY valid JSON in this shape:
-{ "source_content": { "summary": "...", "transcript": "...", "on_screen_text": "..." }, "things": [ ... ] }
+{ "source_content": { "summary": "...", "transcript": "...", "on_screen_text": "..." }, "entries": [ ... ] }
 
-If NO distinct save-worthy thing is identifiable, still return source_content and use an empty things array. The source post will still be preserved.
+If NO distinct save-worthy entry is identifiable, still return source_content and use an empty entries array. The source post will still be preserved.
 """
 
 EXTRACTION_RESPONSE_SCHEMA = {
@@ -463,13 +424,13 @@ EXTRACTION_RESPONSE_SCHEMA = {
             },
             "required": ["summary", "transcript", "on_screen_text"],
         },
-        "things": {
+        "entries": {
             "type": "array",
             "items": {
                 "type": "object",
                 "properties": {
                     "extracted_name": {"type": "string"},
-                    "type_name": {"type": "string", "enum": list(THING_TYPES)},
+                    "type_name": {"type": "string", "enum": list(ENTRY_TYPES)},
                     "description": {"type": "string"},
                     "location_query": {"type": "string"},
                     "location_hints": {
@@ -505,7 +466,7 @@ EXTRACTION_RESPONSE_SCHEMA = {
             },
         }
     },
-    "required": ["source_content", "things"],
+    "required": ["source_content", "entries"],
 }
 
 # Inline media is base64-encoded in the JSON request, which adds roughly 33%
@@ -535,8 +496,8 @@ def _extraction_prompt(
     return prompt
 
 
-_GENERIC_THING_NAMES = {
-    *(normalized_type_label(thing_type) for thing_type in THING_TYPES),
+_GENERIC_ENTRY_NAMES = {
+    *(normalized_type_label(entry_type) for entry_type in ENTRY_TYPES),
     "place",
     "venue",
     "business",
@@ -550,20 +511,53 @@ _GENERIC_THING_NAMES = {
 }
 
 
-def _remove_generic_thing_names(things: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Never persist an inferred category as though it were a named Thing."""
+def _remove_generic_entry_names(entries: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Never persist an inferred category as though it were a named Entry."""
     kept = []
-    for thing in things:
-        name = normalized_type_label(thing.get("extracted_name"))
-        if not name or name in _GENERIC_THING_NAMES:
-            log.info("Discarding generic unnamed extraction %r", thing.get("extracted_name"))
+    for entry in entries:
+        name = normalized_type_label(entry.get("extracted_name"))
+        if not name or name in _GENERIC_ENTRY_NAMES:
+            log.info("Discarding generic unnamed extraction %r", entry.get("extracted_name"))
             continue
-        kept.append(thing)
+        kept.append(entry)
     return kept
 
 
+def _remove_invalid_timing_fields(
+    entries: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Do not let stable Entries acquire post-specific schedules or dates."""
+    sanitized = []
+    for original in entries:
+        entry = dict(original)
+        if not supports_timing(entry.get("type_name")):
+            removed = [
+                field
+                for field in ("starts_at", "ends_at", "recurrence_text")
+                if entry.pop(field, None) not in (None, "")
+            ]
+            if removed:
+                log.info(
+                    "Discarding timing fields %s from stable %s Entry %r",
+                    removed,
+                    entry.get("type_name"),
+                    entry.get("extracted_name"),
+                )
+        sanitized.append(entry)
+    return sanitized
+
+
+def _normalize_extracted_entries(
+    entries: list[dict[str, Any]],
+    metadata: dict[str, Any],
+) -> list[dict[str, Any]]:
+    return _remove_invalid_timing_fields(
+        _remove_generic_entry_names(_normalize_media_references(entries, metadata))
+    )
+
+
 def _normalize_media_references(
-    things: list[dict[str, Any]],
+    entries: list[dict[str, Any]],
     metadata: dict[str, Any],
 ) -> list[dict[str, Any]]:
     """Drop impossible timestamps and slide indexes before persistence."""
@@ -571,34 +565,34 @@ def _normalize_media_references(
     is_instagram = metadata.get("source_platform") == "instagram"
     is_carousel = is_instagram and len(media_types) > 1
 
-    for thing in things:
-        timestamp = thing.get("timestamp_seconds")
+    for entry in entries:
+        timestamp = entry.get("timestamp_seconds")
         if (
             isinstance(timestamp, bool)
             or not isinstance(timestamp, (int, float))
             or timestamp < 0
         ):
-            thing.pop("timestamp_seconds", None)
+            entry.pop("timestamp_seconds", None)
 
-        slide_index = thing.get("slide_index")
+        slide_index = entry.get("slide_index")
         if (
             not is_carousel
             or isinstance(slide_index, bool)
             or not isinstance(slide_index, int)
             or not 1 <= slide_index <= len(media_types)
         ):
-            thing.pop("slide_index", None)
+            entry.pop("slide_index", None)
             slide_index = None
 
-        if not is_instagram or "timestamp_seconds" not in thing:
+        if not is_instagram or "timestamp_seconds" not in entry:
             continue
         if is_carousel:
             if slide_index is None or media_types[slide_index - 1] != "video":
-                thing.pop("timestamp_seconds", None)
+                entry.pop("timestamp_seconds", None)
         elif media_types and media_types[0] != "video":
-            thing.pop("timestamp_seconds", None)
+            entry.pop("timestamp_seconds", None)
 
-    return things
+    return entries
 
 
 def extract_bundle(
@@ -607,7 +601,7 @@ def extract_bundle(
     user_prompt: str | None = None,
     existing_types: list[str] | None = None,
 ) -> dict[str, Any]:
-    """Analyze downloaded Instagram media and return source content plus things."""
+    """Analyze downloaded Instagram media and return source content plus entries."""
     client = _client()
     paths = [media_paths] if isinstance(media_paths, Path) else media_paths
     media_size = sum(path.stat().st_size for path in paths)
@@ -642,12 +636,10 @@ def extract_bundle(
     )
 
     parsed = json.loads(response.text)
-    extracted = parsed.get("things", parsed.get("places", []))
+    extracted = parsed.get("entries", parsed.get("places", []))
     return {
         "source_content": parsed.get("source_content") or {},
-        "things": _remove_generic_thing_names(
-            _normalize_media_references(extracted, metadata)
-        ),
+        "entries": _normalize_extracted_entries(extracted, metadata),
     }
 
 
@@ -657,13 +649,13 @@ def extract(
     user_prompt: str | None = None,
     existing_types: list[str] | None = None,
 ) -> list[dict[str, Any]]:
-    """Compatibility wrapper returning only individual saved things."""
+    """Compatibility wrapper returning only individual saved entries."""
     return extract_bundle(
         media_paths,
         metadata,
         user_prompt,
         existing_types,
-    )["things"]
+    )["entries"]
 
 
 def extract_youtube_bundle(
@@ -671,7 +663,7 @@ def extract_youtube_bundle(
     user_prompt: str | None = None,
     existing_types: list[str] | None = None,
 ) -> dict[str, Any]:
-    """Analyze a public YouTube URL and return source content plus things."""
+    """Analyze a public YouTube URL and return source content plus entries."""
     metadata = {"source_platform": "youtube", "webpage_url": source_url}
     model = os.environ.get(
         "GEMINI_YOUTUBE_MODEL",
@@ -693,12 +685,10 @@ def extract_youtube_bundle(
         "YouTube extraction",
     )
     parsed = json.loads(response.output_text)
-    extracted = parsed.get("things", parsed.get("places", []))
+    extracted = parsed.get("entries", parsed.get("places", []))
     return {
         "source_content": parsed.get("source_content") or {},
-        "things": _remove_generic_thing_names(
-            _normalize_media_references(extracted, metadata)
-        ),
+        "entries": _normalize_extracted_entries(extracted, metadata),
     }
 
 
@@ -707,8 +697,8 @@ def extract_youtube_url(
     user_prompt: str | None = None,
     existing_types: list[str] | None = None,
 ) -> list[dict[str, Any]]:
-    """Compatibility wrapper returning only individual saved things."""
-    return extract_youtube_bundle(source_url, user_prompt, existing_types)["things"]
+    """Compatibility wrapper returning only individual saved entries."""
+    return extract_youtube_bundle(source_url, user_prompt, existing_types)["entries"]
 
 
 # ---------- Resolver ----------
@@ -981,9 +971,9 @@ def process_ingest(
         except Exception as exc:
             log.exception("YouTube extraction failed after retries; preserving source")
             _preserve_extraction_failure(metadata, exc)
-            things = []
+            entries = []
         else:
-            things = bundle["things"]
+            entries = bundle["entries"]
             metadata["source_content"] = bundle["source_content"]
             metadata["extraction_status"] = "complete"
     else:
@@ -991,21 +981,10 @@ def process_ingest(
             progress("fetching")
         fetched = fetch(source_url, workdir)
         metadata = fetched.metadata
+        # Downloaded source media is processing-only. We retain the URL and
+        # extracted text, but never copy media to persistent storage.
+        metadata["media_preserved"] = False
         try:
-            if progress:
-                progress("archiving")
-            try:
-                metadata["archived_media"] = archive_media(
-                    fetched.media_paths,
-                    workdir,
-                    source_url,
-                )
-                metadata["media_preserved"] = True
-            except Exception:
-                # The URL, caption, source analysis, and extracted things are
-                # still worth preserving if archival storage is unavailable.
-                metadata["media_preserved"] = False
-                log.exception("source media archive failed (non-fatal)")
             if progress:
                 progress("extracting")
             try:
@@ -1018,9 +997,9 @@ def process_ingest(
             except Exception as exc:
                 log.exception("Instagram extraction failed after retries; preserving source")
                 _preserve_extraction_failure(metadata, exc)
-                things = []
+                entries = []
             else:
-                things = bundle["things"]
+                entries = bundle["entries"]
                 metadata["source_content"] = bundle["source_content"]
                 metadata["extraction_status"] = "complete"
         finally:
@@ -1031,15 +1010,15 @@ def process_ingest(
 
     if progress:
         progress("resolving")
-    resolved = [{"extracted": thing, **resolve(thing)} for thing in things]
+    resolved = [{"extracted": entry, **resolve(entry)} for entry in entries]
 
     return {
         "source_url": source_url,
         "user_prompt": user_prompt,
         "metadata": metadata,
-        "things_extracted": things,
-        "resolved_things": resolved,
+        "entries_extracted": entries,
+        "resolved_entries": resolved,
         # Compatibility aliases for the Telegram bot and released iOS clients.
-        "places_extracted": things,
+        "places_extracted": entries,
         "resolved_places": resolved,
     }

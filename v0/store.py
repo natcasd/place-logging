@@ -1,4 +1,4 @@
-"""SQLite persistence for sources, canonical Things, Locations, and connections."""
+"""SQLite persistence for sources, canonical Entries, Locations, and connections."""
 from __future__ import annotations
 
 import json
@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Any
 
 from source_identity import canonical_source_url
-from thing_types import canonical_thing_type
+from entry_types import canonical_entry_type, supports_timing
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS items (
@@ -40,7 +40,7 @@ CREATE TABLE IF NOT EXISTS places (
   slide_index                INTEGER,
   resolution_status          TEXT NOT NULL,
   resolution_candidates_json TEXT,
-  thing_type                 TEXT NOT NULL DEFAULT 'Unknown',
+  entry_type                 TEXT NOT NULL DEFAULT 'Unknown',
   description                TEXT NOT NULL DEFAULT '',
   starts_at                  TEXT,
   ends_at                    TEXT,
@@ -65,11 +65,11 @@ CREATE TABLE IF NOT EXISTS locations (
   updated_at        TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
-CREATE TABLE IF NOT EXISTS things (
+CREATE TABLE IF NOT EXISTS entries (
   id              INTEGER PRIMARY KEY AUTOINCREMENT,
   name            TEXT NOT NULL,
   normalized_name TEXT NOT NULL,
-  thing_type      TEXT NOT NULL,
+  entry_type      TEXT NOT NULL,
   type_key        TEXT NOT NULL,
   identity_key    TEXT NOT NULL UNIQUE,
   location_id     INTEGER REFERENCES locations(id),
@@ -80,9 +80,9 @@ CREATE TABLE IF NOT EXISTS things (
   updated_at      TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
-CREATE TABLE IF NOT EXISTS thing_sources (
+CREATE TABLE IF NOT EXISTS entry_sources (
   id                         INTEGER PRIMARY KEY AUTOINCREMENT,
-  thing_id                   INTEGER NOT NULL REFERENCES things(id) ON DELETE CASCADE,
+  entry_id                   INTEGER NOT NULL REFERENCES entries(id) ON DELETE CASCADE,
   item_id                    INTEGER NOT NULL REFERENCES items(id) ON DELETE CASCADE,
   legacy_place_id            INTEGER UNIQUE REFERENCES places(id),
   ordinal                    INTEGER NOT NULL,
@@ -99,12 +99,12 @@ CREATE TABLE IF NOT EXISTS thing_sources (
   location_query             TEXT,
   created_at                 TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
   UNIQUE(item_id, ordinal),
-  UNIQUE(thing_id, item_id)
+  UNIQUE(entry_id, item_id)
 );
 
-CREATE INDEX IF NOT EXISTS idx_things_location ON things(location_id);
-CREATE INDEX IF NOT EXISTS idx_thing_sources_thing ON thing_sources(thing_id);
-CREATE INDEX IF NOT EXISTS idx_thing_sources_item ON thing_sources(item_id);
+CREATE INDEX IF NOT EXISTS idx_entries_location ON entries(location_id);
+CREATE INDEX IF NOT EXISTS idx_entry_sources_entry ON entry_sources(entry_id);
+CREATE INDEX IF NOT EXISTS idx_entry_sources_item ON entry_sources(item_id);
 
 CREATE TABLE IF NOT EXISTS ingest_runs (
   id              INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -138,7 +138,7 @@ CREATE INDEX IF NOT EXISTS idx_ingest_events_run ON ingest_events(ingest_run_id,
 PLACE_COLUMN_MIGRATIONS = {
     "timestamp_seconds": "REAL",
     "slide_index": "INTEGER",
-    "thing_type": "TEXT NOT NULL DEFAULT 'Unknown'",
+    "entry_type": "TEXT NOT NULL DEFAULT 'Unknown'",
     "description": "TEXT NOT NULL DEFAULT ''",
     "starts_at": "TEXT",
     "ends_at": "TEXT",
@@ -159,12 +159,134 @@ def _migrate_places(con: sqlite3.Connection) -> None:
         row[1]
         for row in con.execute("PRAGMA table_info(places)").fetchall()
     }
+    legacy_type_column = "thing" + "_type"
+    if legacy_type_column in existing and "entry_type" not in existing:
+        con.execute(
+            f"ALTER TABLE places RENAME COLUMN {legacy_type_column} TO entry_type"
+        )
+        existing.remove(legacy_type_column)
+        existing.add("entry_type")
     for column, declaration in PLACE_COLUMN_MIGRATIONS.items():
         if column not in existing:
             con.execute(f"ALTER TABLE places ADD COLUMN {column} {declaration}")
 
 
-def _backup_before_thing_migration(
+def _has_table(con: sqlite3.Connection, name: str) -> bool:
+    return con.execute(
+        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?",
+        (name,),
+    ).fetchone() is not None
+
+
+def _backup_before_entry_terminology_migration(
+    con: sqlite3.Connection,
+    db_path: Path,
+) -> Path | None:
+    legacy_entries = "thing" + "s"
+    legacy_connections = "thing" + "_sources"
+    legacy_type_column = "thing" + "_type"
+    place_columns = {
+        row[1] for row in con.execute("PRAGMA table_info(places)").fetchall()
+    }
+    if not (
+        _has_table(con, legacy_entries)
+        or _has_table(con, legacy_connections)
+        or legacy_type_column in place_columns
+    ):
+        return None
+
+    timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    backup_path = db_path.with_name(f"{db_path.name}.pre-entry-rename-{timestamp}.bak")
+    backup = sqlite3.connect(backup_path)
+    try:
+        con.backup(backup)
+    finally:
+        backup.close()
+    return backup_path
+
+
+def _migrate_entry_table_names(con: sqlite3.Connection) -> None:
+    """Rename the previous canonical tables and columns without changing IDs."""
+    legacy_entries = "thing" + "s"
+    legacy_connections = "thing" + "_sources"
+    legacy_entry_id = "thing" + "_id"
+    legacy_entry_type = "thing" + "_type"
+
+    if _has_table(con, legacy_entries) and not _has_table(con, "entries"):
+        con.execute(f"ALTER TABLE {legacy_entries} RENAME TO entries")
+    if _has_table(con, legacy_connections) and not _has_table(con, "entry_sources"):
+        con.execute(f"ALTER TABLE {legacy_connections} RENAME TO entry_sources")
+
+    if _has_table(con, "entries"):
+        columns = {
+            row[1] for row in con.execute("PRAGMA table_info(entries)").fetchall()
+        }
+        if legacy_entry_type in columns and "entry_type" not in columns:
+            con.execute(
+                f"ALTER TABLE entries RENAME COLUMN {legacy_entry_type} TO entry_type"
+            )
+        legacy_identity_prefix = "thing" + "|"
+        con.execute(
+            """UPDATE entries
+                  SET identity_key = ? || substr(identity_key, ?)
+                WHERE identity_key LIKE ?""",
+            (
+                "entry|",
+                len(legacy_identity_prefix) + 1,
+                legacy_identity_prefix + "%",
+            ),
+        )
+
+    if _has_table(con, "entry_sources"):
+        columns = {
+            row[1]
+            for row in con.execute("PRAGMA table_info(entry_sources)").fetchall()
+        }
+        if legacy_entry_id in columns and "entry_id" not in columns:
+            con.execute(
+                f"ALTER TABLE entry_sources RENAME COLUMN {legacy_entry_id} TO entry_id"
+            )
+
+    # Renamed SQLite indexes keep their former names. Replace them with the
+    # canonical names so future schema inspection also speaks in Entries.
+    for prefix, suffix in (
+        ("idx_" + legacy_entries + "_", "location"),
+        ("idx_" + legacy_connections + "_", "thing"),
+        ("idx_" + legacy_connections + "_", "item"),
+    ):
+        con.execute(f"DROP INDEX IF EXISTS {prefix}{suffix}")
+    con.execute("UPDATE items SET vertical = 'entry' WHERE vertical = ?", ("thing",))
+
+    # Completed Activity rows contain a JSON snapshot of their saved results.
+    # Keep that history readable by the renamed API without changing any IDs.
+    if _has_table(con, "ingest_runs"):
+        legacy_result_id = "thing" + "_id"
+        for run_id, raw_results in con.execute(
+            "SELECT id, result_json FROM ingest_runs WHERE result_json IS NOT NULL"
+        ).fetchall():
+            try:
+                results = json.loads(raw_results)
+            except (TypeError, json.JSONDecodeError):
+                continue
+            if not isinstance(results, list):
+                continue
+            changed = False
+            for result in results:
+                if (
+                    isinstance(result, dict)
+                    and legacy_result_id in result
+                    and "entry_id" not in result
+                ):
+                    result["entry_id"] = result.pop(legacy_result_id)
+                    changed = True
+            if changed:
+                con.execute(
+                    "UPDATE ingest_runs SET result_json = ? WHERE id = ?",
+                    (json.dumps(results, ensure_ascii=False), run_id),
+                )
+
+
+def _backup_before_entry_migration(
     con: sqlite3.Connection,
     db_path: Path,
 ) -> Path | None:
@@ -176,7 +298,7 @@ def _backup_before_thing_migration(
         return None
 
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-    backup_path = db_path.with_name(f"{db_path.name}.pre-things-{timestamp}.bak")
+    backup_path = db_path.with_name(f"{db_path.name}.pre-entries-{timestamp}.bak")
     backup = sqlite3.connect(backup_path)
     try:
         con.backup(backup)
@@ -190,7 +312,7 @@ def _backup_before_normalized_migration(
     db_path: Path,
 ) -> Path | None:
     normalized_exists = con.execute(
-        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'thing_sources'"
+        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'entry_sources'"
     ).fetchone()
     legacy_count = con.execute("SELECT COUNT(*) FROM places").fetchone()[0]
     if normalized_exists or not legacy_count:
@@ -211,8 +333,12 @@ def init_db(db_path: Path) -> None:
     con = _connect(db_path)
     try:
         con.executescript(SCHEMA)
-        _backup_before_thing_migration(con, db_path)
+        _backup_before_entry_terminology_migration(con, db_path)
+        _migrate_entry_table_names(con)
+        con.commit()
+        _backup_before_entry_migration(con, db_path)
         _migrate_places(con)
+        con.commit()
         _backup_before_normalized_migration(con, db_path)
         con.executescript(NORMALIZED_SCHEMA)
         _backfill_normalized_model(con)
@@ -232,24 +358,26 @@ def save_ingest(db_path: Path, result: dict[str, Any]) -> int:
                (vertical, source_url, user_prompt, raw_payload_json, llm_output_json)
                VALUES (?, ?, ?, ?, ?)""",
             (
-                "thing",
+                "entry",
                 result["source_url"],
                 result.get("user_prompt"),
                 json.dumps(result.get("metadata", {}), ensure_ascii=False),
                 json.dumps(
-                    result.get("things_extracted", result.get("places_extracted", [])),
+                    result.get("entries_extracted", result.get("places_extracted", [])),
                     ensure_ascii=False,
                 ),
             ),
         )
         item_id = cur.lastrowid
 
-        resolved_things = result.get(
-            "resolved_things",
+        resolved_entries = result.get(
+            "resolved_entries",
             result.get("resolved_places", []),
         )
-        for ordinal, r in enumerate(resolved_things):
-            extracted = r.get("extracted", {}) or {}
+        for ordinal, r in enumerate(resolved_entries):
+            extracted = _normalize_extracted_for_storage(
+                r.get("extracted", {}) or {}
+            )
             status = r.get("status", "unresolved")
             place = r.get("place", {}) or {}
             candidates = r.get("candidates", []) or []
@@ -266,7 +394,7 @@ def save_ingest(db_path: Path, result: dict[str, Any]) -> int:
                     dishes_json, why_its_cool, tags_json,
                     timestamp_seconds, slide_index,
                     resolution_status, resolution_candidates_json,
-                    thing_type, description,
+                    entry_type, description,
                     starts_at, ends_at, recurrence_text, location_query
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
@@ -343,9 +471,9 @@ def find_processed_source(
                 "metadata": metadata,
                 "places_extracted": [],
                 "resolved_places": [],
-                "things_extracted": [],
-                "resolved_things": [],
-                "saved_things": _saved_thing_outcomes(con, row["id"]),
+                "entries_extracted": [],
+                "resolved_entries": [],
+                "saved_entries": _saved_entry_outcomes(con, row["id"]),
                 "already_logged": True,
             }
         return None
@@ -447,18 +575,28 @@ def finish_ingest_run(
         con.close()
 
 
-def saved_thing_outcomes(db_path: Path, item_id: int) -> list[dict[str, Any]]:
+def saved_entry_outcomes(db_path: Path, item_id: int) -> list[dict[str, Any]]:
     """Return what one Source added, including conservative match outcomes."""
     con = _connect(db_path)
     con.row_factory = sqlite3.Row
     try:
-        return _saved_thing_outcomes(con, item_id)
+        return _saved_entry_outcomes(con, item_id)
     finally:
         con.close()
 
 
 def _normalize_type_name(value: Any) -> str:
-    return canonical_thing_type(value)
+    return canonical_entry_type(value)
+
+
+def _normalize_extracted_for_storage(extracted: dict[str, Any]) -> dict[str, Any]:
+    """Canonicalize the type and enforce which Entries may own timing metadata."""
+    normalized = dict(extracted)
+    normalized["type_name"] = _normalize_type_name(normalized.get("type_name"))
+    if not supports_timing(normalized["type_name"]):
+        for field in ("starts_at", "ends_at", "recurrence_text"):
+            normalized.pop(field, None)
+    return normalized
 
 
 def _normalize_identity(value: Any) -> str:
@@ -501,8 +639,8 @@ _LOCATION_TYPE_FAMILIES = {
 }
 
 
-def _type_key(thing_type: str, *, has_location: bool, is_temporary: bool) -> str:
-    normalized = _normalize_identity(thing_type)
+def _type_key(entry_type: str, *, has_location: bool, is_temporary: bool) -> str:
+    normalized = _normalize_identity(entry_type)
     if not has_location or is_temporary:
         return normalized
     for family, markers in _LOCATION_TYPE_FAMILIES.items():
@@ -511,8 +649,8 @@ def _type_key(thing_type: str, *, has_location: bool, is_temporary: bool) -> str
     return normalized
 
 
-def _is_temporary(extracted: dict[str, Any], thing_type: str) -> bool:
-    normalized_type = _normalize_identity(thing_type)
+def _is_temporary(extracted: dict[str, Any], entry_type: str) -> bool:
+    normalized_type = _normalize_identity(entry_type)
     normalized_name = _normalize_identity(extracted.get("extracted_name"))
     return bool(
         extracted.get("starts_at")
@@ -528,13 +666,13 @@ def _is_temporary(extracted: dict[str, Any], thing_type: str) -> bool:
 
 def _identity_key(
     extracted: dict[str, Any],
-    thing_type: str,
+    entry_type: str,
     google_place_id: str | None,
 ) -> tuple[str, str, str]:
     normalized_name = _normalize_identity(extracted.get("extracted_name"))
-    temporary = _is_temporary(extracted, thing_type)
+    temporary = _is_temporary(extracted, entry_type)
     type_key = _type_key(
-        thing_type,
+        entry_type,
         has_location=bool(google_place_id),
         is_temporary=temporary,
     )
@@ -548,7 +686,7 @@ def _identity_key(
         )
         key = "|".join(
             (
-                "temporary" if temporary else "thing",
+                "temporary" if temporary else "entry",
                 location_part,
                 f"name:{normalized_name}",
                 f"type:{type_key}",
@@ -611,31 +749,32 @@ def _save_normalized_occurrence(
     candidates: list[Any],
     source_created_at: str | None = None,
 ) -> int:
+    extracted = _normalize_extracted_for_storage(extracted)
     location_id = _upsert_location(con, place)
-    thing_type = _normalize_type_name(extracted.get("type_name"))
+    entry_type = extracted["type_name"]
     identity_key, normalized_name, type_key = _identity_key(
         extracted,
-        thing_type,
+        entry_type,
         place.get("id"),
     )
     name = " ".join(str(extracted.get("extracted_name") or "Unknown").split())
     existing = con.execute(
-        "SELECT id FROM things WHERE identity_key = ?",
+        "SELECT id FROM entries WHERE identity_key = ?",
         (identity_key,),
     ).fetchone()
     if existing:
-        thing_id = existing[0]
+        entry_id = existing[0]
         con.execute(
-            """UPDATE things
+            """UPDATE entries
                SET updated_at = COALESCE(?, CURRENT_TIMESTAMP)
                WHERE id = ?
                  AND COALESCE(?, CURRENT_TIMESTAMP) >= updated_at""",
-            (source_created_at, thing_id, source_created_at),
+            (source_created_at, entry_id, source_created_at),
         )
     else:
         cursor = con.execute(
-            """INSERT INTO things (
-                 name, normalized_name, thing_type, type_key, identity_key,
+            """INSERT INTO entries (
+                 name, normalized_name, entry_type, type_key, identity_key,
                  location_id, starts_at, ends_at, recurrence_text,
                  created_at, updated_at
                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?,
@@ -644,7 +783,7 @@ def _save_normalized_occurrence(
             (
                 name,
                 normalized_name,
-                thing_type,
+                entry_type,
                 type_key,
                 identity_key,
                 location_id,
@@ -655,23 +794,23 @@ def _save_normalized_occurrence(
                 source_created_at,
             ),
         )
-        thing_id = cursor.lastrowid
+        entry_id = cursor.lastrowid
 
     con.execute(
-        """INSERT OR IGNORE INTO thing_sources (
-             thing_id, item_id, legacy_place_id, ordinal, source_name, source_type,
+        """INSERT OR IGNORE INTO entry_sources (
+             entry_id, item_id, legacy_place_id, ordinal, source_name, source_type,
              description, dishes_json, why_its_cool, tags_json,
              timestamp_seconds, slide_index, resolution_status,
              resolution_candidates_json, location_query, created_at
            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
                      COALESCE(?, CURRENT_TIMESTAMP))""",
         (
-            thing_id,
+            entry_id,
             item_id,
             legacy_place_id,
             ordinal,
             name,
-            thing_type,
+            entry_type,
             extracted.get("description") or extracted.get("why_its_cool", ""),
             json.dumps(extracted.get("dishes", []), ensure_ascii=False),
             extracted.get("why_its_cool", ""),
@@ -684,7 +823,7 @@ def _save_normalized_occurrence(
             source_created_at,
         ),
     )
-    return thing_id
+    return entry_id
 
 
 def _backfill_normalized_model(con: sqlite3.Connection) -> None:
@@ -711,7 +850,7 @@ def _backfill_normalized_model(con: sqlite3.Connection) -> None:
         "slide_index",
         "resolution_status",
         "resolution_candidates_json",
-        "thing_type",
+        "entry_type",
         "description",
         "starts_at",
         "ends_at",
@@ -724,7 +863,7 @@ def _backfill_normalized_model(con: sqlite3.Connection) -> None:
         """SELECT p.*, i.created_at AS source_created_at
            FROM places AS p
            JOIN items AS i ON i.id = p.item_id
-           LEFT JOIN thing_sources AS ts ON ts.legacy_place_id = p.id
+           LEFT JOIN entry_sources AS ts ON ts.legacy_place_id = p.id
            WHERE ts.id IS NULL
            ORDER BY i.created_at ASC, p.item_id ASC, p.ordinal ASC"""
     ).fetchall()
@@ -740,7 +879,7 @@ def _backfill_normalized_model(con: sqlite3.Connection) -> None:
         }
         extracted = {
             "extracted_name": row["extracted_name"],
-            "type_name": row["thing_type"],
+            "type_name": row["entry_type"],
             "description": row["description"],
             "dishes": json.loads(row["dishes_json"] or "[]"),
             "why_its_cool": row["why_its_cool"] or "",
@@ -765,26 +904,26 @@ def _backfill_normalized_model(con: sqlite3.Connection) -> None:
         )
 
 
-def _saved_thing_outcomes(
+def _saved_entry_outcomes(
     con: sqlite3.Connection,
     item_id: int,
 ) -> list[dict[str, Any]]:
     con.row_factory = sqlite3.Row
     rows = con.execute(
-        """SELECT t.id AS thing_id, ts.source_name AS name,
-                  ts.source_type AS thing_type, t.location_id,
+        """SELECT t.id AS entry_id, ts.source_name AS name,
+                  ts.source_type AS entry_type, t.location_id,
                   l.display_name AS location_name, l.lat, l.lng,
                   ts.resolution_status,
                   ts.id AS source_connection_id,
                   (SELECT MIN(first_ts.id)
-                     FROM thing_sources AS first_ts
-                    WHERE first_ts.thing_id = t.id) AS first_source_id,
+                     FROM entry_sources AS first_ts
+                    WHERE first_ts.entry_id = t.id) AS first_source_id,
                   (SELECT COUNT(*)
-                     FROM thing_sources AS prior_ts
-                    WHERE prior_ts.thing_id = t.id
+                     FROM entry_sources AS prior_ts
+                    WHERE prior_ts.entry_id = t.id
                       AND prior_ts.id <= ts.id) AS source_count
-             FROM thing_sources AS ts
-             JOIN things AS t ON t.id = ts.thing_id
+             FROM entry_sources AS ts
+             JOIN entries AS t ON t.id = ts.entry_id
              LEFT JOIN locations AS l ON l.id = t.location_id
             WHERE ts.item_id = ?
             ORDER BY ts.ordinal, ts.id""",
@@ -792,9 +931,9 @@ def _saved_thing_outcomes(
     ).fetchall()
     return [
         {
-            "thing_id": row["thing_id"],
+            "entry_id": row["entry_id"],
             "name": row["name"],
-            "type": row["thing_type"],
+            "type": row["entry_type"],
             "location_id": row["location_id"],
             "location_name": row["location_name"],
             "latitude": row["lat"],
@@ -819,7 +958,7 @@ def _backfill_ingest_runs(con: sqlite3.Connection) -> None:
     ).fetchall()
     for row in rows:
         metadata = _decode_json_object(row["raw_payload_json"])
-        outcomes = _saved_thing_outcomes(con, row["id"])
+        outcomes = _saved_entry_outcomes(con, row["id"])
         needs_review = (
             not outcomes
             or metadata.get("extraction_status") == "failed"
@@ -832,7 +971,7 @@ def _backfill_ingest_runs(con: sqlite3.Connection) -> None:
         message = (
             "Source saved with results needing review"
             if needs_review
-            else f"Saved {len(outcomes)} thing{'s' if len(outcomes) != 1 else ''}"
+            else f"Saved {len(outcomes)} entry{'s' if len(outcomes) != 1 else ''}"
         )
         cursor = con.execute(
             """INSERT INTO ingest_runs (
@@ -924,15 +1063,15 @@ def list_ingest_runs(db_path: Path, limit: int = 200) -> list[dict[str, Any]]:
         con.close()
 
 
-def list_things(db_path: Path, limit: int = 200) -> list[dict[str, Any]]:
-    """Return canonical things with every source-specific recommendation."""
+def list_entries(db_path: Path, limit: int = 200) -> list[dict[str, Any]]:
+    """Return canonical entries with every source-specific recommendation."""
     con = _connect(db_path)
     con.row_factory = sqlite3.Row
     try:
         selected = con.execute(
             """SELECT t.id, MAX(i.created_at) AS latest_saved_at
-               FROM things AS t
-               JOIN thing_sources AS ts ON ts.thing_id = t.id
+               FROM entries AS t
+               JOIN entry_sources AS ts ON ts.entry_id = t.id
                JOIN items AS i ON i.id = ts.item_id
                GROUP BY t.id
                ORDER BY latest_saved_at DESC, t.id DESC
@@ -941,11 +1080,11 @@ def list_things(db_path: Path, limit: int = 200) -> list[dict[str, Any]]:
         ).fetchall()
         if not selected:
             return []
-        thing_ids = [row["id"] for row in selected]
-        placeholders = ",".join("?" for _ in thing_ids)
+        entry_ids = [row["id"] for row in selected]
+        placeholders = ",".join("?" for _ in entry_ids)
         rows = con.execute(
             f"""SELECT
-                 t.id, t.name, t.thing_type, t.starts_at, t.ends_at,
+                 t.id, t.name, t.entry_type, t.starts_at, t.ends_at,
                  t.recurrence_text, t.location_id,
                  l.google_place_id, l.display_name AS location_name,
                  l.lat, l.lng, l.formatted_address, l.google_maps_url,
@@ -955,13 +1094,13 @@ def list_things(db_path: Path, limit: int = 200) -> list[dict[str, Any]]:
                  ts.tags_json, ts.timestamp_seconds, ts.slide_index,
                  ts.resolution_status, ts.location_query,
                  i.source_url, i.raw_payload_json, i.created_at
-               FROM things AS t
+               FROM entries AS t
                LEFT JOIN locations AS l ON l.id = t.location_id
-               JOIN thing_sources AS ts ON ts.thing_id = t.id
+               JOIN entry_sources AS ts ON ts.entry_id = t.id
                JOIN items AS i ON i.id = ts.item_id
                WHERE t.id IN ({placeholders})
                ORDER BY i.created_at DESC, ts.id DESC""",
-            thing_ids,
+            entry_ids,
         ).fetchall()
         by_id: dict[int, dict[str, Any]] = {}
         for row in rows:
@@ -985,9 +1124,9 @@ def list_things(db_path: Path, limit: int = 200) -> list[dict[str, Any]]:
                 "location_query": row["location_query"],
                 "saved_at": row["created_at"],
             }
-            thing = by_id.get(row["id"])
-            if thing is None:
-                thing = {
+            entry = by_id.get(row["id"])
+            if entry is None:
+                entry = {
                     "id": row["id"],
                     "location_id": row["location_id"],
                     "item_id": row["item_id"],
@@ -1005,7 +1144,7 @@ def list_things(db_path: Path, limit: int = 200) -> list[dict[str, Any]]:
                     "timestamp_seconds": source["timestamp_seconds"],
                     "slide_index": source["slide_index"],
                     "resolution_status": source["resolution_status"],
-                    "type": row["thing_type"],
+                    "type": row["entry_type"],
                     "description": source["description"],
                     "starts_at": row["starts_at"],
                     "ends_at": row["ends_at"],
@@ -1015,10 +1154,10 @@ def list_things(db_path: Path, limit: int = 200) -> list[dict[str, Any]]:
                     "saved_at": source["saved_at"],
                     "sources": [],
                 }
-                by_id[row["id"]] = thing
-            thing["sources"].append(source)
+                by_id[row["id"]] = entry
+            entry["sources"].append(source)
 
-        return [by_id[thing_id] for thing_id in thing_ids]
+        return [by_id[entry_id] for entry_id in entry_ids]
     finally:
         con.close()
 
@@ -1054,7 +1193,7 @@ def list_places(db_path: Path, limit: int = 200) -> list[dict[str, Any]]:
                 "timestamp_seconds": row["timestamp_seconds"],
                 "slide_index": row["slide_index"],
                 "resolution_status": row["resolution_status"],
-                "type": row["thing_type"] or "Unknown",
+                "type": row["entry_type"] or "Unknown",
                 "description": row["description"] or row["why_its_cool"] or "",
                 "starts_at": row["starts_at"],
                 "ends_at": row["ends_at"],
@@ -1070,16 +1209,16 @@ def list_places(db_path: Path, limit: int = 200) -> list[dict[str, Any]]:
         con.close()
 
 
-def list_thing_types(db_path: Path) -> list[str]:
-    """Return the open vocabulary currently used by saved things."""
+def list_entry_types(db_path: Path) -> list[str]:
+    """Return the open vocabulary currently used by saved entries."""
     con = _connect(db_path)
     try:
         try:
             rows = con.execute(
-                """SELECT DISTINCT thing_type
-                   FROM things
-                   WHERE thing_type IS NOT NULL AND trim(thing_type) != ''
-                   ORDER BY thing_type COLLATE NOCASE"""
+                """SELECT DISTINCT entry_type
+                   FROM entries
+                   WHERE entry_type IS NOT NULL AND trim(entry_type) != ''
+                   ORDER BY entry_type COLLATE NOCASE"""
             ).fetchall()
         except sqlite3.OperationalError:
             return []
@@ -1089,15 +1228,15 @@ def list_thing_types(db_path: Path) -> list[str]:
 
 
 def list_sources(db_path: Path, limit: int = 200) -> list[dict[str, Any]]:
-    """Return every preserved source, including sources with zero extracted things."""
+    """Return every preserved source, including sources with zero extracted entries."""
     con = _connect(db_path)
     con.row_factory = sqlite3.Row
     try:
         rows = con.execute(
             """SELECT i.id, i.source_url, i.user_prompt, i.raw_payload_json,
-                      i.created_at, COUNT(DISTINCT ts.thing_id) AS thing_count
+                      i.created_at, COUNT(DISTINCT ts.entry_id) AS entry_count
                FROM items AS i
-               LEFT JOIN thing_sources AS ts ON ts.item_id = i.id
+               LEFT JOIN entry_sources AS ts ON ts.item_id = i.id
                GROUP BY i.id
                ORDER BY i.created_at DESC, i.id DESC
                LIMIT ?""",
@@ -1106,7 +1245,6 @@ def list_sources(db_path: Path, limit: int = 200) -> list[dict[str, Any]]:
         sources = []
         for row in rows:
             metadata = _decode_json_object(row["raw_payload_json"])
-            archived_media = metadata.get("archived_media") or []
             sources.append(
                 {
                     "id": row["id"],
@@ -1116,10 +1254,12 @@ def list_sources(db_path: Path, limit: int = 200) -> list[dict[str, Any]]:
                     "creator": metadata.get("uploader"),
                     "caption": metadata.get("caption_or_description"),
                     "summary": (metadata.get("source_content") or {}).get("summary"),
-                    "media_count": metadata.get("media_count") or len(archived_media),
-                    "media_preserved": bool(metadata.get("media_preserved")),
-                    "thing_count": row["thing_count"],
-                    "needs_review": row["thing_count"] == 0,
+                    "media_count": metadata.get("media_count") or 0,
+                    # Kept for released clients; source media is no longer
+                    # retained after extraction, including legacy records.
+                    "media_preserved": False,
+                    "entry_count": row["entry_count"],
+                    "needs_review": row["entry_count"] == 0,
                     "saved_at": row["created_at"],
                 }
             )
@@ -1144,23 +1284,23 @@ def _decode_json_list(value: Any) -> list[Any]:
     return decoded if isinstance(decoded, list) else []
 
 
-def delete_thing(db_path: Path, thing_id: int) -> dict[str, int] | None:
-    """Delete one canonical thing and its connections, retaining source posts."""
+def delete_entry(db_path: Path, entry_id: int) -> dict[str, int] | None:
+    """Delete one canonical entry and its connections, retaining source posts."""
     con = _connect(db_path)
     try:
-        row = con.execute("SELECT id FROM things WHERE id = ?", (thing_id,)).fetchone()
+        row = con.execute("SELECT id FROM entries WHERE id = ?", (entry_id,)).fetchone()
         if row is None:
             return None
-        _delete_canonical_things(con, [thing_id])
+        _delete_canonical_entries(con, [entry_id])
         con.commit()
-        return {"deleted_things": 1, "deleted_sources": 0}
+        return {"deleted_entries": 1, "deleted_sources": 0}
     finally:
         con.close()
 
 
-def delete_things(db_path: Path, thing_ids: list[int]) -> dict[str, int] | None:
-    """Atomically delete canonical things while preserving every source post."""
-    unique_ids = list(dict.fromkeys(thing_ids))
+def delete_entries(db_path: Path, entry_ids: list[int]) -> dict[str, int] | None:
+    """Atomically delete canonical entries while preserving every source post."""
+    unique_ids = list(dict.fromkeys(entry_ids))
     if not unique_ids:
         return None
 
@@ -1170,32 +1310,32 @@ def delete_things(db_path: Path, thing_ids: list[int]) -> dict[str, int] | None:
         found = {
             row[0]
             for row in con.execute(
-                f"SELECT id FROM things WHERE id IN ({placeholders})",
+                f"SELECT id FROM entries WHERE id IN ({placeholders})",
                 unique_ids,
             ).fetchall()
         }
         if found != set(unique_ids):
             return None
-        _delete_canonical_things(con, unique_ids)
+        _delete_canonical_entries(con, unique_ids)
         con.commit()
-        return {"deleted_things": len(unique_ids), "deleted_sources": 0}
+        return {"deleted_entries": len(unique_ids), "deleted_sources": 0}
     finally:
         con.close()
 
 
-def _delete_canonical_things(con: sqlite3.Connection, thing_ids: list[int]) -> int:
-    placeholders = ",".join("?" for _ in thing_ids)
+def _delete_canonical_entries(con: sqlite3.Connection, entry_ids: list[int]) -> int:
+    placeholders = ",".join("?" for _ in entry_ids)
     legacy_ids = [
         row[0]
         for row in con.execute(
-            f"""SELECT legacy_place_id FROM thing_sources
-                WHERE thing_id IN ({placeholders}) AND legacy_place_id IS NOT NULL""",
-            thing_ids,
+            f"""SELECT legacy_place_id FROM entry_sources
+                WHERE entry_id IN ({placeholders}) AND legacy_place_id IS NOT NULL""",
+            entry_ids,
         ).fetchall()
     ]
     con.execute(
-        f"DELETE FROM thing_sources WHERE thing_id IN ({placeholders})",
-        thing_ids,
+        f"DELETE FROM entry_sources WHERE entry_id IN ({placeholders})",
+        entry_ids,
     )
     if legacy_ids:
         legacy_placeholders = ",".join("?" for _ in legacy_ids)
@@ -1204,8 +1344,8 @@ def _delete_canonical_things(con: sqlite3.Connection, thing_ids: list[int]) -> i
             legacy_ids,
         )
     cursor = con.execute(
-        f"DELETE FROM things WHERE id IN ({placeholders})",
-        thing_ids,
+        f"DELETE FROM entries WHERE id IN ({placeholders})",
+        entry_ids,
     )
     return cursor.rowcount
 
@@ -1215,9 +1355,9 @@ def delete_place(db_path: Path, place_id: int) -> dict[str, int] | None:
     con = _connect(db_path)
     try:
         row = con.execute(
-            """SELECT p.id, ts.thing_id
+            """SELECT p.id, ts.entry_id
                FROM places AS p
-               LEFT JOIN thing_sources AS ts ON ts.legacy_place_id = p.id
+               LEFT JOIN entry_sources AS ts ON ts.legacy_place_id = p.id
                WHERE p.id = ?""",
             (place_id,),
         ).fetchone()
@@ -1225,10 +1365,10 @@ def delete_place(db_path: Path, place_id: int) -> dict[str, int] | None:
             return None
         if row[1] is not None:
             deleted_places = con.execute(
-                "SELECT COUNT(*) FROM thing_sources WHERE thing_id = ?",
+                "SELECT COUNT(*) FROM entry_sources WHERE entry_id = ?",
                 (row[1],),
             ).fetchone()[0]
-            _delete_canonical_things(con, [row[1]])
+            _delete_canonical_entries(con, [row[1]])
         else:
             cursor = con.execute("DELETE FROM places WHERE id = ?", (place_id,))
             deleted_places = cursor.rowcount

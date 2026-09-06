@@ -131,8 +131,8 @@ def _connections(con: sqlite3.Connection, item_id: int) -> list[sqlite3.Row]:
     con.row_factory = sqlite3.Row
     return con.execute(
         """SELECT ts.*, t.starts_at, t.ends_at
-             FROM thing_sources AS ts
-             JOIN things AS t ON t.id = ts.thing_id
+             FROM entry_sources AS ts
+             JOIN entries AS t ON t.id = ts.entry_id
             WHERE ts.item_id = ?
             ORDER BY ts.ordinal, ts.id""",
         (item_id,),
@@ -140,47 +140,47 @@ def _connections(con: sqlite3.Connection, item_id: int) -> list[sqlite3.Row]:
 
 
 def _delete_connection(con: sqlite3.Connection, connection: sqlite3.Row) -> None:
-    con.execute("DELETE FROM thing_sources WHERE id = ?", (connection["id"],))
+    con.execute("DELETE FROM entry_sources WHERE id = ?", (connection["id"],))
     if connection["legacy_place_id"] is not None:
         con.execute("DELETE FROM places WHERE id = ?", (connection["legacy_place_id"],))
 
 
-def _merge_thing(con: sqlite3.Connection, old_id: int, target_id: int) -> None:
-    """Move nonredundant Source links to target, then remove the duplicate Thing."""
+def _merge_entry(con: sqlite3.Connection, old_id: int, target_id: int) -> None:
+    """Move nonredundant Source links to target, then remove the duplicate Entry."""
     if old_id == target_id:
         return
     con.row_factory = sqlite3.Row
     old_connections = con.execute(
-        "SELECT * FROM thing_sources WHERE thing_id = ? ORDER BY id", (old_id,)
+        "SELECT * FROM entry_sources WHERE entry_id = ? ORDER BY id", (old_id,)
     ).fetchall()
     for connection in old_connections:
         conflict = con.execute(
-            "SELECT 1 FROM thing_sources WHERE thing_id = ? AND item_id = ?",
+            "SELECT 1 FROM entry_sources WHERE entry_id = ? AND item_id = ?",
             (target_id, connection["item_id"]),
         ).fetchone()
         if conflict:
             _delete_connection(con, connection)
         else:
             con.execute(
-                "UPDATE thing_sources SET thing_id = ? WHERE id = ?",
+                "UPDATE entry_sources SET entry_id = ? WHERE id = ?",
                 (target_id, connection["id"]),
             )
-    con.execute("DELETE FROM things WHERE id = ?", (old_id,))
+    con.execute("DELETE FROM entries WHERE id = ?", (old_id,))
 
 
 def _merge_item(con: sqlite3.Connection, duplicate_id: int, keeper_id: int) -> None:
     keeper_connections = _connections(con, keeper_id)
     keeper_by_key = {_connection_key(row): row for row in keeper_connections}
-    keeper_thing_ids = {row["thing_id"] for row in keeper_connections}
+    keeper_entry_ids = {row["entry_id"] for row in keeper_connections}
     next_ordinal = max((row["ordinal"] for row in keeper_connections), default=-1) + 1
 
     for connection in _connections(con, duplicate_id):
         target = keeper_by_key.get(_connection_key(connection))
-        if target is not None and connection["thing_id"] != target["thing_id"]:
-            _merge_thing(con, connection["thing_id"], target["thing_id"])
-            keeper_thing_ids.add(target["thing_id"])
+        if target is not None and connection["entry_id"] != target["entry_id"]:
+            _merge_entry(con, connection["entry_id"], target["entry_id"])
+            keeper_entry_ids.add(target["entry_id"])
             continue
-        if target is not None or connection["thing_id"] in keeper_thing_ids:
+        if target is not None or connection["entry_id"] in keeper_entry_ids:
             continue
 
         # Preserve a recommendation found by only one processing pass by moving
@@ -191,11 +191,11 @@ def _merge_item(con: sqlite3.Connection, duplicate_id: int, keeper_id: int) -> N
                 (keeper_id, next_ordinal, connection["legacy_place_id"]),
             )
         con.execute(
-            "UPDATE thing_sources SET item_id = ?, ordinal = ? WHERE id = ?",
+            "UPDATE entry_sources SET item_id = ?, ordinal = ? WHERE id = ?",
             (keeper_id, next_ordinal, connection["id"]),
         )
         keeper_by_key[_connection_key(connection)] = connection
-        keeper_thing_ids.add(connection["thing_id"])
+        keeper_entry_ids.add(connection["entry_id"])
         next_ordinal += 1
 
     # Anything still attached to the redundant Source was already represented
@@ -235,9 +235,9 @@ def apply_plan(
 
     before = {
         "items": con.execute("SELECT COUNT(*) FROM items").fetchone()[0],
-        "things": con.execute("SELECT COUNT(*) FROM things").fetchone()[0],
+        "entries": con.execute("SELECT COUNT(*) FROM entries").fetchone()[0],
         "locations": con.execute("SELECT COUNT(*) FROM locations").fetchone()[0],
-        "connections": con.execute("SELECT COUNT(*) FROM thing_sources").fetchone()[0],
+        "connections": con.execute("SELECT COUNT(*) FROM entry_sources").fetchone()[0],
     }
     try:
         con.execute("BEGIN IMMEDIATE")
@@ -250,12 +250,12 @@ def apply_plan(
                 _merge_item(con, duplicate["item_id"], keeper_id)
 
         con.execute(
-            "DELETE FROM things WHERE NOT EXISTS "
-            "(SELECT 1 FROM thing_sources WHERE thing_sources.thing_id = things.id)"
+            "DELETE FROM entries WHERE NOT EXISTS "
+            "(SELECT 1 FROM entry_sources WHERE entry_sources.entry_id = entries.id)"
         )
         con.execute(
             "DELETE FROM locations WHERE NOT EXISTS "
-            "(SELECT 1 FROM things WHERE things.location_id = locations.id)"
+            "(SELECT 1 FROM entries WHERE entries.location_id = locations.id)"
         )
         foreign_key_errors = con.execute("PRAGMA foreign_key_check").fetchall()
         if foreign_key_errors:
@@ -270,15 +270,15 @@ def apply_plan(
 
     after = {
         "items": con.execute("SELECT COUNT(*) FROM items").fetchone()[0],
-        "things": con.execute("SELECT COUNT(*) FROM things").fetchone()[0],
+        "entries": con.execute("SELECT COUNT(*) FROM entries").fetchone()[0],
         "locations": con.execute("SELECT COUNT(*) FROM locations").fetchone()[0],
-        "connections": con.execute("SELECT COUNT(*) FROM thing_sources").fetchone()[0],
+        "connections": con.execute("SELECT COUNT(*) FROM entry_sources").fetchone()[0],
     }
     con.close()
     return {
         "groups_removed": len(current_groups),
         "items_removed": before["items"] - after["items"],
-        "things_removed": before["things"] - after["things"],
+        "entries_removed": before["entries"] - after["entries"],
         "locations_removed": before["locations"] - after["locations"],
         "connections_removed": before["connections"] - after["connections"],
     }, backup_path

@@ -43,8 +43,8 @@ class IngestServiceTests(unittest.TestCase):
             result = service.ingest("https://youtu.be/test")
 
             self.assertEqual(result["source_url"], "https://youtu.be/test")
-            self.assertEqual(result["saved_things"][0]["name"], "The Creative Act")
-            self.assertTrue(result["saved_things"][0]["is_new"])
+            self.assertEqual(result["saved_entries"][0]["name"], "The Creative Act")
+            self.assertTrue(result["saved_entries"][0]["is_new"])
             self.assertFalse(result["already_logged"])
             activity = list_ingest_runs(db_path)
             self.assertEqual(activity[0]["status"], "completed")
@@ -136,28 +136,28 @@ class IngestServiceTests(unittest.TestCase):
         self.assertEqual(result, {"deleted_places": 2, "deleted_items": 1})
 
     @patch(
-        "ingest_service.delete_thing",
-        return_value={"deleted_things": 1, "deleted_sources": 0},
+        "ingest_service.delete_entry",
+        return_value={"deleted_entries": 1, "deleted_sources": 0},
     )
-    def test_deletes_thing_without_deleting_source(self, mock_delete) -> None:
+    def test_deletes_entry_without_deleting_source(self, mock_delete) -> None:
         service = IngestService(Path("/tmp/test.db"), Path("/tmp/downloads"))
 
-        result = service.delete_thing(8)
+        result = service.delete_entry(8)
 
         mock_delete.assert_called_once_with(Path("/tmp/test.db"), 8)
-        self.assertEqual(result, {"deleted_things": 1, "deleted_sources": 0})
+        self.assertEqual(result, {"deleted_entries": 1, "deleted_sources": 0})
 
     @patch(
-        "ingest_service.delete_things",
-        return_value={"deleted_things": 3, "deleted_sources": 0},
+        "ingest_service.delete_entries",
+        return_value={"deleted_entries": 3, "deleted_sources": 0},
     )
-    def test_deletes_logical_thing_card_without_deleting_sources(self, mock_delete) -> None:
+    def test_deletes_logical_entry_card_without_deleting_sources(self, mock_delete) -> None:
         service = IngestService(Path("/tmp/test.db"), Path("/tmp/downloads"))
 
-        result = service.delete_things([8, 9, 10])
+        result = service.delete_entries([8, 9, 10])
 
         mock_delete.assert_called_once_with(Path("/tmp/test.db"), [8, 9, 10])
-        self.assertEqual(result, {"deleted_things": 3, "deleted_sources": 0})
+        self.assertEqual(result, {"deleted_entries": 3, "deleted_sources": 0})
 
 
 if __name__ == "__main__":

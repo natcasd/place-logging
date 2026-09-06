@@ -9,6 +9,7 @@ import json
 import logging
 import os
 import secrets
+import tempfile
 import time
 import uuid
 from contextlib import asynccontextmanager
@@ -63,8 +64,8 @@ class ShortcutIngestRequest(BaseModel):
     delivery: Literal["response_only", "telegram"] = "response_only"
 
 
-class SavedThingOutcome(BaseModel):
-    thing_id: int
+class SavedEntryOutcome(BaseModel):
+    entry_id: int
     name: str
     type: str
     location_id: int | None = None
@@ -84,9 +85,9 @@ class IngestResponse(BaseModel):
     metadata: dict[str, Any]
     places_extracted: list[dict[str, Any]]
     resolved_places: list[dict[str, Any]]
-    things_extracted: list[dict[str, Any]] = Field(default_factory=list)
-    resolved_things: list[dict[str, Any]] = Field(default_factory=list)
-    saved_things: list[SavedThingOutcome] = Field(default_factory=list)
+    entries_extracted: list[dict[str, Any]] = Field(default_factory=list)
+    resolved_entries: list[dict[str, Any]] = Field(default_factory=list)
+    saved_entries: list[SavedEntryOutcome] = Field(default_factory=list)
     already_logged: bool = False
     delivery_status: Literal["not_requested", "sent", "failed"]
 
@@ -98,7 +99,7 @@ class ShortcutDiagnosticResponse(BaseModel):
     body_sha256: str
 
 
-class SavedThingSource(BaseModel):
+class SavedEntrySource(BaseModel):
     id: int
     item_id: int
     ordinal: int
@@ -118,7 +119,7 @@ class SavedThingSource(BaseModel):
     saved_at: str
 
 
-class SavedPlace(BaseModel):
+class SavedEntry(BaseModel):
     id: int
     location_id: int | None = None
     item_id: int
@@ -144,15 +145,15 @@ class SavedPlace(BaseModel):
     location_query: str | None = None
     source_url: str
     saved_at: str
-    sources: list[SavedThingSource] = Field(default_factory=list)
+    sources: list[SavedEntrySource] = Field(default_factory=list)
 
 
 class PlacesResponse(BaseModel):
-    places: list[SavedPlace]
+    places: list[SavedEntry]
 
 
-class ThingsResponse(BaseModel):
-    things: list[SavedPlace]
+class EntriesResponse(BaseModel):
+    entries: list[SavedEntry]
 
 
 class SavedSource(BaseModel):
@@ -165,7 +166,7 @@ class SavedSource(BaseModel):
     summary: str | None = None
     media_count: int
     media_preserved: bool
-    thing_count: int
+    entry_count: int
     needs_review: bool
     saved_at: str
 
@@ -197,7 +198,7 @@ class IngestActivity(BaseModel):
     started_at: str
     updated_at: str
     completed_at: str | None = None
-    results: list[SavedThingOutcome] = Field(default_factory=list)
+    results: list[SavedEntryOutcome] = Field(default_factory=list)
     events: list[IngestActivityEvent] = Field(default_factory=list)
 
 
@@ -211,21 +212,21 @@ class DeletePlaceResponse(BaseModel):
     deleted_items: int
 
 
-class DeleteThingResponse(BaseModel):
-    thing_id: int
-    deleted_things: int
+class DeleteEntryResponse(BaseModel):
+    entry_id: int
+    deleted_entries: int
     deleted_sources: int
 
 
-class DeleteThingsRequest(BaseModel):
+class DeleteEntriesRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    thing_ids: list[int] = Field(min_length=1, max_length=100)
+    entry_ids: list[int] = Field(min_length=1, max_length=100)
 
 
-class DeleteThingsResponse(BaseModel):
-    thing_ids: list[int]
-    deleted_things: int
+class DeleteEntriesResponse(BaseModel):
+    entry_ids: list[int]
+    deleted_entries: int
     deleted_sources: int
 
 
@@ -328,9 +329,10 @@ def _require_ingest_auth(runtime: Runtime, authorization: str | None) -> None:
 
 def build_runtime() -> Runtime:
     root = Path(__file__).parent
+    default_workdir = Path(tempfile.gettempdir()) / "place-logger-downloads"
     service = IngestService(
         db_path=Path(os.environ.get("DB_PATH", root / "data" / "places.db")),
-        workdir=Path(os.environ.get("WORKDIR", root / "data" / "downloads")),
+        workdir=Path(os.environ.get("WORKDIR", default_workdir)),
     )
     service.initialize()
     allowed_ids = _allowed_ids()
@@ -447,20 +449,20 @@ def create_app(injected_runtime: Runtime | None = None) -> FastAPI:
             )
         return {"places": await asyncio.to_thread(runtime.service.places, limit)}
 
-    @application.get("/api/v1/things", response_model=ThingsResponse)
-    async def get_things(
+    @application.get("/api/v1/entries", response_model=EntriesResponse)
+    async def get_entries(
         request: Request,
         authorization: str | None = Header(default=None),
         limit: int = 200,
     ) -> dict[str, Any]:
         runtime: Runtime = request.app.state.runtime
         _require_ingest_auth(runtime, authorization)
-        if not 1 <= limit <= 500:
+        if not 1 <= limit <= 1_000:
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail="limit must be between 1 and 500",
+                detail="limit must be between 1 and 1000",
             )
-        return {"things": await asyncio.to_thread(runtime.service.things, limit)}
+        return {"entries": await asyncio.to_thread(runtime.service.entries, limit)}
 
     @application.get("/api/v1/sources", response_model=SourcesResponse)
     async def get_sources(
@@ -520,48 +522,48 @@ def create_app(injected_runtime: Runtime | None = None) -> FastAPI:
         return {"place_id": place_id, **result}
 
     @application.delete(
-        "/api/v1/things/{thing_id}",
-        response_model=DeleteThingResponse,
+        "/api/v1/entries/{entry_id}",
+        response_model=DeleteEntryResponse,
     )
-    async def delete_saved_thing(
-        thing_id: int,
+    async def delete_saved_entry(
+        entry_id: int,
         request: Request,
         authorization: str | None = Header(default=None),
     ) -> dict[str, int]:
         runtime: Runtime = request.app.state.runtime
         _require_ingest_auth(runtime, authorization)
-        result = await asyncio.to_thread(runtime.service.delete_thing, thing_id)
+        result = await asyncio.to_thread(runtime.service.delete_entry, entry_id)
         if result is None:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
-                detail="Saved thing not found",
+                detail="Saved entry not found",
             )
         return {
-            "thing_id": thing_id,
-            "deleted_things": result["deleted_things"],
+            "entry_id": entry_id,
+            "deleted_entries": result["deleted_entries"],
             "deleted_sources": result["deleted_sources"],
         }
 
     @application.delete(
-        "/api/v1/things",
-        response_model=DeleteThingsResponse,
+        "/api/v1/entries",
+        response_model=DeleteEntriesResponse,
     )
-    async def delete_saved_things(
-        payload: DeleteThingsRequest,
+    async def delete_saved_entries(
+        payload: DeleteEntriesRequest,
         request: Request,
         authorization: str | None = Header(default=None),
     ) -> dict[str, Any]:
-        """Delete canonical Things atomically while preserving source posts."""
+        """Delete canonical Entries atomically while preserving source posts."""
         runtime: Runtime = request.app.state.runtime
         _require_ingest_auth(runtime, authorization)
-        thing_ids = list(dict.fromkeys(payload.thing_ids))
-        result = await asyncio.to_thread(runtime.service.delete_things, thing_ids)
+        entry_ids = list(dict.fromkeys(payload.entry_ids))
+        result = await asyncio.to_thread(runtime.service.delete_entries, entry_ids)
         if result is None:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
-                detail="One or more saved things were not found",
+                detail="One or more saved entries were not found",
             )
-        return {"thing_ids": thing_ids, **result}
+        return {"entry_ids": entry_ids, **result}
 
     @application.post("/webhook", include_in_schema=False)
     async def telegram_webhook(
@@ -667,11 +669,11 @@ def create_app(injected_runtime: Runtime | None = None) -> FastAPI:
                 delivery_status = "failed"
                 log.exception("Ingest saved but Telegram result delivery failed")
         log.info(
-            "Ingest completed request_id=%s item_id=%s places=%s "
+            "Ingest completed request_id=%s item_id=%s entries=%s "
             "delivery_status=%s duration_ms=%s",
             getattr(request.state, "request_id", "unknown"),
             result.get("item_id"),
-            len(result.get("things_extracted", result.get("places_extracted", []))),
+            len(result.get("entries_extracted", result.get("places_extracted", []))),
             delivery_status,
             round((time.perf_counter() - ingest_started) * 1000, 1),
         )
