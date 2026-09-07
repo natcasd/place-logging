@@ -913,15 +913,13 @@ private struct PlaceDetailSheet: View {
           EntryDetailContent(
             entry: selectedEntry,
             backAction: entries.count > 1 ? { selectedEntryID = nil } : nil,
-            dismissAction: { dismiss() },
             isDeleting: deletingEntryID == selectedEntry.id,
             requestDeletion: { pendingDeletion = selectedEntry }
           )
         } else if !entries.isEmpty {
           LocationEntryPicker(
             group: MappedPlaceGroup(id: group.id, places: entries),
-            selectEntry: { selectedEntryID = $0.id },
-            dismissAction: { dismiss() }
+            selectEntry: { selectedEntryID = $0.id }
           )
         }
       }
@@ -982,7 +980,6 @@ private struct PlaceDetailSheet: View {
 private struct LocationEntryPicker: View {
   let group: MappedPlaceGroup
   let selectEntry: (SavedEntry) -> Void
-  let dismissAction: () -> Void
 
   var body: some View {
     VStack(alignment: .leading, spacing: 16) {
@@ -1006,11 +1003,6 @@ private struct LocationEntryPicker: View {
           .controlSize(.small)
         }
 
-        Button("Close", systemImage: "xmark") { dismissAction() }
-          .labelStyle(.iconOnly)
-          .buttonStyle(.bordered)
-          .controlSize(.small)
-          .accessibilityLabel("Close Location")
       }
 
       Text("\(group.entryGroups.count) saved entries at this location")
@@ -1056,27 +1048,37 @@ private struct LocationEntryPicker: View {
 private struct EntryDetailContent: View {
   let entry: SavedEntry
   let backAction: (() -> Void)?
-  let dismissAction: (() -> Void)?
   let isDeleting: Bool
   let requestDeletion: () -> Void
 
   var body: some View {
-    VStack(alignment: .leading, spacing: 20) {
+    VStack(alignment: .leading, spacing: 16) {
       HStack(alignment: .top, spacing: 8) {
         if let backAction {
           Button("Back", systemImage: "chevron.left") { backAction() }
             .labelStyle(.iconOnly)
-            .buttonStyle(.bordered)
-            .controlSize(.small)
+            .buttonStyle(.plain)
+            .frame(width: 32, height: 32)
         }
 
         VStack(alignment: .leading, spacing: 4) {
-          Text(entry.displayType)
-            .font(.caption.weight(.semibold))
-            .foregroundStyle(.secondary)
-            .textCase(.uppercase)
           Text(entry.name)
             .font(.title2.bold())
+
+          HStack(spacing: 10) {
+            Text(entry.displayType)
+              .font(.subheadline)
+              .foregroundStyle(.secondary)
+
+            if let mapsURL = entry.appleMapsURL {
+              Link(destination: mapsURL) {
+                Label("Maps", systemImage: "arrow.up.right")
+              }
+              .buttonStyle(.bordered)
+              .controlSize(.small)
+            }
+          }
+
           if let availability = entry.availabilityText {
             Label(availability, systemImage: "calendar")
               .font(.caption)
@@ -1086,18 +1088,10 @@ private struct EntryDetailContent: View {
 
         Spacer(minLength: 6)
 
-        if let mapsURL = entry.appleMapsURL {
-          Link(destination: mapsURL) {
-            Label("Maps", systemImage: "arrow.up.right")
-          }
-          .buttonStyle(.bordered)
-          .controlSize(.small)
-        }
-
         if isDeleting {
           ProgressView()
             .controlSize(.small)
-            .frame(width: 34, height: 30)
+            .frame(width: 32, height: 32)
         } else {
           Menu {
             Button("Delete Entry", systemImage: "trash", role: .destructive) {
@@ -1105,22 +1099,14 @@ private struct EntryDetailContent: View {
             }
           } label: {
             Image(systemName: "ellipsis")
+              .foregroundStyle(.secondary)
+              .frame(width: 32, height: 32)
+              .contentShape(Rectangle())
           }
-          .buttonStyle(.bordered)
-          .controlSize(.small)
+          .buttonStyle(.plain)
           .accessibilityLabel("More Actions")
         }
-
-        if let dismissAction {
-          Button("Close", systemImage: "xmark") { dismissAction() }
-            .labelStyle(.iconOnly)
-            .buttonStyle(.bordered)
-            .controlSize(.small)
-        }
       }
-
-      Text("Why you saved it")
-        .font(.headline)
 
       ForEach(entry.sources) { source in
         EntrySourceCard(source: source)
@@ -1256,7 +1242,6 @@ private struct EntryDetailPage: View {
       EntryDetailContent(
         entry: entry,
         backAction: nil,
-        dismissAction: nil,
         isDeleting: isDeleting,
         requestDeletion: { showDeleteConfirmation = true }
       )
