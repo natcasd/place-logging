@@ -125,7 +125,8 @@ struct PlacesView: View {
         case .entry(let entryID):
           SavedItemView(
             places: model.places.filter { $0.id == entryID },
-            isLoading: model.isLoading
+            isLoading: model.isLoading,
+            deleteEntry: { entry in try await model.deleteEntryCard(entry) }
           )
         case .activity(let ingestID):
           if let run = model.activity.first(where: { $0.id == ingestID }) {
@@ -138,7 +139,8 @@ struct PlacesView: View {
             places: model.places.filter { entry in
               entry.itemID == itemID || entry.sources.contains { $0.itemID == itemID }
             },
-            isLoading: model.isLoading
+            isLoading: model.isLoading,
+            deleteEntry: { entry in try await model.deleteEntryCard(entry) }
           )
         case .category(let type):
           SavedCategoryList(
@@ -593,6 +595,7 @@ private struct PlacesMap: View {
   @State private var cameraPosition: MapCameraPosition = .automatic
   @State private var selectedGroupID: String?
   @State private var detailGroup: MappedPlaceGroup?
+  @State private var preferredDetailEntryID: Int?
   @State private var searchText = ""
   @State private var searchResult: MKMapItem?
   @State private var visibleRegion: MKCoordinateRegion?
@@ -651,6 +654,7 @@ private struct PlacesMap: View {
         guard let groupID, let group = groups.first(where: { $0.id == groupID }) else {
           return
         }
+        preferredDetailEntryID = nil
         detailGroup = group
       }
       .onChange(of: searchText) { _, query in
@@ -693,6 +697,7 @@ private struct PlacesMap: View {
           )
         )
         selectedGroupID = focusedGroup.id
+        preferredDetailEntryID = entryID
         detailGroup = focusedGroup
         requestedEntryID = nil
       }
@@ -824,11 +829,13 @@ private struct PlacesMap: View {
       }
       .sheet(item: $detailGroup, onDismiss: {
         selectedGroupID = nil
+        preferredDetailEntryID = nil
       }) { group in
-        NavigationStack {
-          PlaceDetailSheet(group: group) {
-            try await deleteEntryCard($0.primary)
-          }
+        PlaceDetailSheet(
+          group: group,
+          initialEntryID: preferredDetailEntryID
+        ) { entry in
+          try await deleteEntryCard(entry)
         }
         .presentationDetents([.fraction(0.58), .large])
         .presentationDragIndicator(.visible)
@@ -868,42 +875,58 @@ private struct PlacesMap: View {
 
 private struct PlaceDetailSheet: View {
   let group: MappedPlaceGroup
-  let deleteEntry: (MappedEntryGroup) async throws -> Void
+  let deleteEntry: (SavedEntry) async throws -> Void
   @Environment(\.dismiss) private var dismiss
-  @State private var pendingDeletion: MappedEntryGroup?
+  @State private var entries: [SavedEntry]
+  @State private var selectedEntryID: Int?
+  @State private var pendingDeletion: SavedEntry?
   @State private var deletingEntryID: Int?
   @State private var deletionError: String?
 
+  init(
+    group: MappedPlaceGroup,
+    initialEntryID: Int?,
+    deleteEntry: @escaping (SavedEntry) async throws -> Void
+  ) {
+    self.group = group
+    self.deleteEntry = deleteEntry
+    _entries = State(initialValue: group.places)
+    let requestedEntryExists = initialEntryID.map { requestedID in
+      group.places.contains { $0.id == requestedID }
+    } ?? false
+    _selectedEntryID = State(
+      initialValue: requestedEntryExists
+        ? initialEntryID
+        : group.places.count == 1 ? group.places.first?.id : nil
+    )
+  }
+
+  private var selectedEntry: SavedEntry? {
+    guard let selectedEntryID else { return nil }
+    return entries.first { $0.id == selectedEntryID }
+  }
+
   var body: some View {
     ScrollView {
-      LazyVStack(alignment: .leading, spacing: 20) {
-        if let entry = group.entryGroups.first, group.entryGroups.count == 1 {
-          SingleEntryLocationDetails(
-            entry: entry,
-            address: group.primary.formattedAddress,
-            mapsURL: group.primary.appleMapsURL,
-            isDeleting: deletingEntryID == entry.id,
-            requestDeletion: { pendingDeletion = entry }
+      LazyVStack(alignment: .leading, spacing: 18) {
+        if let selectedEntry {
+          EntryDetailContent(
+            entry: selectedEntry,
+            backAction: entries.count > 1 ? { selectedEntryID = nil } : nil,
+            dismissAction: { dismiss() },
+            isDeleting: deletingEntryID == selectedEntry.id,
+            requestDeletion: { pendingDeletion = selectedEntry }
           )
-        } else {
-          LocationHeader(group: group)
-
-          Text("Entries at this location")
-            .font(.caption.weight(.semibold))
-            .foregroundStyle(.secondary)
-            .textCase(.uppercase)
-
-          ForEach(group.entryGroups) { entry in
-            EntryAtLocationCard(
-              entry: entry,
-              isDeleting: deletingEntryID == entry.id,
-              requestDeletion: { pendingDeletion = entry }
-            )
-          }
+        } else if !entries.isEmpty {
+          LocationEntryPicker(
+            group: MappedPlaceGroup(id: group.id, places: entries),
+            selectEntry: { selectedEntryID = $0.id },
+            dismissAction: { dismiss() }
+          )
         }
       }
       .padding(.horizontal)
-      .padding(.top, 18)
+      .padding(.top, 12)
       .padding(.bottom, 28)
     }
     .confirmationDialog(
@@ -917,23 +940,12 @@ private struct PlaceDetailSheet: View {
       if let entry = pendingDeletion {
         Button("Delete Entry", role: .destructive) {
           pendingDeletion = nil
-          Task {
-            deletingEntryID = entry.id
-            defer { deletingEntryID = nil }
-            do {
-              try await deleteEntry(entry)
-              dismiss()
-            } catch {
-              deletionError = error.localizedDescription
-            }
-          }
+          Task { await performDeletion(entry) }
         }
       }
       Button("Cancel", role: .cancel) { pendingDeletion = nil }
     } message: {
-      if let entry = pendingDeletion {
-        Text(logicalEntryDeleteMessage(entry))
-      }
+      if let entry = pendingDeletion { Text(deleteMessage(entry: entry)) }
     }
     .alert(
       "Couldn’t Delete Entry",
@@ -947,6 +959,250 @@ private struct PlaceDetailSheet: View {
       Text(deletionError ?? "Please try again.")
     }
   }
+
+  private func performDeletion(_ entry: SavedEntry) async {
+    deletingEntryID = entry.id
+    defer { deletingEntryID = nil }
+    do {
+      try await deleteEntry(entry)
+      entries.removeAll { $0.id == entry.id }
+      if entries.isEmpty {
+        dismiss()
+      } else if entries.count == 1 {
+        selectedEntryID = entries[0].id
+      } else {
+        selectedEntryID = nil
+      }
+    } catch {
+      deletionError = error.localizedDescription
+    }
+  }
+}
+
+private struct LocationEntryPicker: View {
+  let group: MappedPlaceGroup
+  let selectEntry: (SavedEntry) -> Void
+  let dismissAction: () -> Void
+
+  var body: some View {
+    VStack(alignment: .leading, spacing: 16) {
+      HStack(alignment: .top, spacing: 8) {
+        VStack(alignment: .leading, spacing: 4) {
+          Text("Location")
+            .font(.caption.weight(.semibold))
+            .foregroundStyle(.secondary)
+            .textCase(.uppercase)
+          Text(group.name)
+            .font(.title2.bold())
+        }
+
+        Spacer(minLength: 8)
+
+        if let mapsURL = group.primary.appleMapsURL {
+          Link(destination: mapsURL) {
+            Label("Maps", systemImage: "arrow.up.right")
+          }
+          .buttonStyle(.bordered)
+          .controlSize(.small)
+        }
+
+        Button("Close", systemImage: "xmark") { dismissAction() }
+          .labelStyle(.iconOnly)
+          .buttonStyle(.bordered)
+          .controlSize(.small)
+          .accessibilityLabel("Close Location")
+      }
+
+      Text("\(group.entryGroups.count) saved entries at this location")
+        .font(.subheadline)
+        .foregroundStyle(.secondary)
+
+      ForEach(group.entryGroups) { entryGroup in
+        Button {
+          selectEntry(entryGroup.primary)
+        } label: {
+          HStack(spacing: 12) {
+            Image(systemName: SavedCategory.category(for: entryGroup.type).icon)
+              .font(.headline)
+              .foregroundStyle(.indigo)
+              .frame(width: 42, height: 42)
+              .background(.indigo.opacity(0.12), in: RoundedRectangle(cornerRadius: 11))
+
+            VStack(alignment: .leading, spacing: 3) {
+              Text(entryGroup.name)
+                .font(.headline)
+                .foregroundStyle(.primary)
+                .multilineTextAlignment(.leading)
+              Text(entryGroup.type)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            }
+
+            Spacer(minLength: 8)
+            Image(systemName: "chevron.right")
+              .font(.caption.weight(.semibold))
+              .foregroundStyle(.tertiary)
+          }
+          .padding(13)
+          .contentShape(Rectangle())
+          .background(.secondary.opacity(0.08), in: RoundedRectangle(cornerRadius: 14))
+        }
+        .buttonStyle(.plain)
+      }
+    }
+  }
+}
+
+private struct EntryDetailContent: View {
+  let entry: SavedEntry
+  let backAction: (() -> Void)?
+  let dismissAction: (() -> Void)?
+  let isDeleting: Bool
+  let requestDeletion: () -> Void
+
+  var body: some View {
+    VStack(alignment: .leading, spacing: 20) {
+      HStack(alignment: .top, spacing: 8) {
+        if let backAction {
+          Button("Back", systemImage: "chevron.left") { backAction() }
+            .labelStyle(.iconOnly)
+            .buttonStyle(.bordered)
+            .controlSize(.small)
+        }
+
+        VStack(alignment: .leading, spacing: 4) {
+          Text(entry.displayType)
+            .font(.caption.weight(.semibold))
+            .foregroundStyle(.secondary)
+            .textCase(.uppercase)
+          Text(entry.name)
+            .font(.title2.bold())
+          if let availability = entry.availabilityText {
+            Label(availability, systemImage: "calendar")
+              .font(.caption)
+              .foregroundStyle(.secondary)
+          }
+        }
+
+        Spacer(minLength: 6)
+
+        if let mapsURL = entry.appleMapsURL {
+          Link(destination: mapsURL) {
+            Label("Maps", systemImage: "arrow.up.right")
+          }
+          .buttonStyle(.bordered)
+          .controlSize(.small)
+        }
+
+        if isDeleting {
+          ProgressView()
+            .controlSize(.small)
+            .frame(width: 34, height: 30)
+        } else {
+          Menu {
+            Button("Delete Entry", systemImage: "trash", role: .destructive) {
+              requestDeletion()
+            }
+          } label: {
+            Image(systemName: "ellipsis")
+          }
+          .buttonStyle(.bordered)
+          .controlSize(.small)
+          .accessibilityLabel("More Actions")
+        }
+
+        if let dismissAction {
+          Button("Close", systemImage: "xmark") { dismissAction() }
+            .labelStyle(.iconOnly)
+            .buttonStyle(.bordered)
+            .controlSize(.small)
+        }
+      }
+
+      Text("Why you saved it")
+        .font(.headline)
+
+      ForEach(entry.sources) { source in
+        EntrySourceCard(source: source)
+      }
+    }
+  }
+}
+
+private struct EntrySourceCard: View {
+  let source: SavedEntrySource
+
+  private var description: String {
+    let detailed = source.description.trimmingCharacters(in: .whitespacesAndNewlines)
+    if !detailed.isEmpty { return detailed }
+    return source.whyItsCool.trimmingCharacters(in: .whitespacesAndNewlines)
+  }
+
+  private var platformName: String {
+    let platform = source.sourcePlatform.trimmingCharacters(in: .whitespacesAndNewlines)
+    return platform.isEmpty ? "Original post" : platform.capitalized
+  }
+
+  private var accentColor: Color {
+    switch source.sourcePlatform.lowercased() {
+    case "instagram": return .pink
+    case "youtube": return .red
+    default: return .blue
+    }
+  }
+
+  var body: some View {
+    VStack(alignment: .leading, spacing: 0) {
+      VStack(alignment: .leading, spacing: 10) {
+        HStack(spacing: 10) {
+          Image(systemName: source.sourceSystemImage)
+            .font(.subheadline.weight(.semibold))
+            .foregroundStyle(.white)
+            .frame(width: 30, height: 30)
+            .background(accentColor, in: RoundedRectangle(cornerRadius: 8))
+
+          VStack(alignment: .leading, spacing: 2) {
+            Text(source.sourceLinkText)
+              .font(.subheadline.weight(.semibold))
+            Text(platformName)
+              .font(.caption)
+              .foregroundStyle(.secondary)
+          }
+        }
+
+        if !description.isEmpty {
+          Text(description)
+            .font(.subheadline)
+        }
+
+        if let mediaReference = source.mediaReferenceText {
+          Label(mediaReference, systemImage: source.mediaReferenceSystemImage)
+            .font(.caption)
+            .foregroundStyle(.secondary)
+        }
+      }
+      .padding(14)
+
+      Divider()
+
+      Link(destination: source.linkedSourceURL) {
+        HStack {
+          Text(source.sourcePlatform.lowercased() == "youtube"
+            ? "Watch original video"
+            : "View original post")
+          Spacer()
+          Image(systemName: "arrow.up.right")
+        }
+        .font(.subheadline.weight(.semibold))
+        .padding(.horizontal, 14)
+        .frame(height: 42)
+        .contentShape(Rectangle())
+      }
+      .buttonStyle(.plain)
+    }
+    .background(.secondary.opacity(0.08), in: RoundedRectangle(cornerRadius: 14))
+    .clipShape(RoundedRectangle(cornerRadius: 14))
+  }
 }
 
 private func deleteMessage(entry: SavedEntry) -> String {
@@ -956,255 +1212,92 @@ private func deleteMessage(entry: SavedEntry) -> String {
   return "This removes \(entry.name) and \(references). Original source posts stay saved."
 }
 
-private func logicalEntryDeleteMessage(_ entry: MappedEntryGroup) -> String {
-  let references = entry.sourceCount == 1
-    ? "its saved reference"
-    : "its \(entry.sourceCount) saved references"
-  return "This removes \(entry.name) and \(references). Original source posts and other entries at this location stay saved."
-}
-
-private struct LocationHeader: View {
-  let group: MappedPlaceGroup
-
-  var body: some View {
-    HStack(alignment: .firstTextBaseline, spacing: 8) {
-      VStack(alignment: .leading, spacing: 5) {
-        Text(group.name)
-          .font(.title2.bold())
-        if let address = group.primary.formattedAddress, !address.isEmpty {
-          Text(address)
-            .font(.subheadline)
-            .foregroundStyle(.secondary)
-        }
-        Text("\(group.entryGroups.count) saved entries")
-          .font(.caption)
-          .foregroundStyle(.secondary)
-      }
-
-      Spacer(minLength: 8)
-
-      if let mapsURL = group.primary.appleMapsURL {
-        Link(destination: mapsURL) {
-          Image(systemName: "map")
-            .font(.headline)
-            .frame(width: 36, height: 36)
-            .contentShape(Circle())
-        }
-        .buttonStyle(.plain)
-        .accessibilityLabel("Open in Maps")
-      }
-    }
-  }
-}
-
-private struct SingleEntryLocationDetails: View {
-  let entry: MappedEntryGroup
-  let address: String?
-  let mapsURL: URL?
-  let isDeleting: Bool
-  let requestDeletion: () -> Void
-
-  var body: some View {
-    HStack(alignment: .firstTextBaseline, spacing: 8) {
-      VStack(alignment: .leading, spacing: 5) {
-        Text(entry.name)
-          .font(.title2.bold())
-        EntryMetadata(entry: entry)
-      }
-
-      Spacer(minLength: 8)
-      EntryActions(
-        mapsURL: mapsURL,
-        isDeleting: isDeleting,
-        requestDeletion: requestDeletion
-      )
-    }
-
-    if let address, !address.isEmpty {
-      Text(address)
-        .font(.subheadline)
-        .foregroundStyle(.secondary)
-    }
-
-    EntryContent(entry: entry)
-
-    SourceLinks(entry: entry.primary)
-  }
-}
-
-private struct EntryAtLocationCard: View {
-  let entry: MappedEntryGroup
-  let isDeleting: Bool
-  let requestDeletion: () -> Void
-
-  var body: some View {
-    VStack(alignment: .leading, spacing: 12) {
-      HStack(alignment: .firstTextBaseline, spacing: 8) {
-        VStack(alignment: .leading, spacing: 5) {
-          Text(entry.name)
-            .font(.headline)
-          EntryMetadata(entry: entry)
-        }
-
-        Spacer(minLength: 8)
-        EntryActions(
-          mapsURL: nil,
-          isDeleting: isDeleting,
-          requestDeletion: requestDeletion
-        )
-      }
-
-      EntryContent(entry: entry)
-
-      SourceLinks(entry: entry.primary)
-    }
-    .padding(14)
-    .background(.secondary.opacity(0.1), in: RoundedRectangle(cornerRadius: 14))
-  }
-}
-
-private struct EntryMetadata: View {
-  let entry: MappedEntryGroup
-
-  var body: some View {
-    HStack(spacing: 8) {
-      Text(entry.type)
-        .font(.caption.weight(.semibold))
-        .foregroundStyle(.secondary)
-      if let availability = entry.primary.availabilityText {
-        Label(availability, systemImage: "calendar")
-          .font(.caption)
-          .foregroundStyle(.secondary)
-      }
-      Text("\(entry.sourceCount) \(entry.sourceCount == 1 ? "post" : "posts")")
-        .font(.caption)
-        .foregroundStyle(.secondary)
-    }
-  }
-}
-
-private struct EntryActions: View {
-  let mapsURL: URL?
-  let isDeleting: Bool
-  let requestDeletion: () -> Void
-
-  var body: some View {
-    HStack(spacing: 6) {
-      if let mapsURL {
-        Link(destination: mapsURL) {
-          Image(systemName: "map")
-            .frame(width: 34, height: 34)
-        }
-        .buttonStyle(.plain)
-        .accessibilityLabel("Open in Maps")
-      }
-
-      if isDeleting {
-        ProgressView()
-          .controlSize(.small)
-          .frame(width: 34, height: 34)
-      } else {
-        Menu {
-          Button("Delete Entry", systemImage: "trash", role: .destructive) {
-            requestDeletion()
-          }
-        } label: {
-          Image(systemName: "ellipsis")
-            .foregroundStyle(.secondary)
-            .frame(width: 34, height: 34)
-        }
-        .accessibilityLabel("More Actions")
-      }
-    }
-  }
-}
-
-private struct EntryContent: View {
-  let entry: MappedEntryGroup
-
-  var body: some View {
-    if !entry.primary.detailedDescription.isEmpty {
-      Text(entry.primary.detailedDescription)
-        .font(.subheadline)
-    }
-
-    if !entry.dishes.isEmpty {
-      VStack(alignment: .leading, spacing: 5) {
-        Text("Entries to Try")
-          .font(.subheadline.weight(.semibold))
-        Text(entry.dishes.joined(separator: " · "))
-          .font(.subheadline)
-          .foregroundStyle(.orange)
-      }
-    }
-  }
-}
-
-private struct SourceLinks: View {
-  let entry: SavedEntry
-
-  var body: some View {
-    VStack(alignment: .leading, spacing: 8) {
-      Text("Saved from \(sourceCount) \(sourceCount == 1 ? "post" : "posts")")
-        .font(.subheadline.weight(.semibold))
-
-      ForEach(entry.sources) { source in
-        Link(destination: source.linkedSourceURL) {
-          HStack(spacing: 12) {
-            Image(systemName: source.sourceSystemImage)
-              .font(.title3)
-              .frame(width: 28)
-
-            VStack(alignment: .leading, spacing: 3) {
-              Text(source.sourceLinkText)
-                .font(.subheadline.weight(.semibold))
-              if let mediaReference = source.mediaReferenceText {
-                Text(mediaReference)
-                  .font(.caption)
-                  .foregroundStyle(.secondary)
-              }
-            }
-
-            Spacer()
-            Image(systemName: "arrow.up.right")
-              .font(.caption.weight(.bold))
-          }
-          .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-      }
-    }
-  }
-
-  private var sourceCount: Int {
-    entry.sources.count
-  }
-
-}
-
 private struct SavedItemView: View {
   let places: [SavedEntry]
   let isLoading: Bool
+  let deleteEntry: (SavedEntry) async throws -> Void
 
   var body: some View {
     Group {
       if places.isEmpty && isLoading {
-        ProgressView("Loading saved place…")
+        ProgressView("Loading saved entry…")
       } else if places.isEmpty {
         ContentUnavailableView(
-          "Saved Place Not Found",
-          systemImage: "mappin.slash",
+          "Saved Entry Not Found",
+          systemImage: "tray",
           description: Text("Try returning to the list and refreshing.")
         )
+      } else if places.count == 1, let entry = places.first {
+        EntryDetailPage(entry: entry, deleteEntry: deleteEntry)
       } else {
-        List(places) { place in
-          PlaceRow(place: place)
+        List(places) { entry in
+          NavigationLink(value: PlacesNavigation.entry(entry.id)) {
+            PlaceRow(place: entry)
+          }
         }
         .listStyle(.plain)
       }
     }
-    .navigationTitle(places.count == 1 ? places[0].name : "Saved Places")
+    .navigationTitle(places.count == 1 ? "" : "Saved Entries")
     .navigationBarTitleDisplayMode(.inline)
+  }
+}
+
+private struct EntryDetailPage: View {
+  let entry: SavedEntry
+  let deleteEntry: (SavedEntry) async throws -> Void
+  @Environment(\.dismiss) private var dismiss
+  @State private var isDeleting = false
+  @State private var showDeleteConfirmation = false
+  @State private var deletionError: String?
+
+  var body: some View {
+    ScrollView {
+      EntryDetailContent(
+        entry: entry,
+        backAction: nil,
+        dismissAction: nil,
+        isDeleting: isDeleting,
+        requestDeletion: { showDeleteConfirmation = true }
+      )
+      .padding(.horizontal)
+      .padding(.top, 14)
+      .padding(.bottom, 28)
+    }
+    .confirmationDialog(
+      "Delete \(entry.name)?",
+      isPresented: $showDeleteConfirmation,
+      titleVisibility: .visible
+    ) {
+      Button("Delete Entry", role: .destructive) {
+        Task { await performDeletion() }
+      }
+      Button("Cancel", role: .cancel) {}
+    } message: {
+      Text(deleteMessage(entry: entry))
+    }
+    .alert(
+      "Couldn’t Delete Entry",
+      isPresented: Binding(
+        get: { deletionError != nil },
+        set: { if !$0 { deletionError = nil } }
+      )
+    ) {
+      Button("OK", role: .cancel) { deletionError = nil }
+    } message: {
+      Text(deletionError ?? "Please try again.")
+    }
+  }
+
+  private func performDeletion() async {
+    isDeleting = true
+    defer { isDeleting = false }
+    do {
+      try await deleteEntry(entry)
+      dismiss()
+    } catch {
+      deletionError = error.localizedDescription
+    }
   }
 }
 
@@ -1226,38 +1319,6 @@ private struct PlaceRow: View {
             .foregroundStyle(.secondary)
         }
       }
-
-      if let address = place.formattedAddress, !address.isEmpty {
-        Label(address, systemImage: "mappin.and.ellipse")
-          .font(.subheadline)
-          .foregroundStyle(.secondary)
-      }
-
-      if !place.detailedDescription.isEmpty {
-        Text(place.detailedDescription)
-          .font(.subheadline)
-          .lineLimit(3)
-      }
-
-      if !place.dishes.isEmpty {
-        Text(place.dishes.joined(separator: " · "))
-          .font(.caption)
-          .foregroundStyle(.orange)
-      }
-
-      if let mediaReference = place.mediaReferenceText {
-        Label(mediaReference, systemImage: place.mediaReferenceSystemImage)
-          .font(.caption.weight(.semibold))
-          .foregroundStyle(.secondary)
-      }
-
-      HStack {
-        if let mapsURL = place.appleMapsURL {
-          Link("Maps", destination: mapsURL)
-        }
-        Link(place.sourceLinkText, destination: place.linkedSourceURL)
-      }
-      .font(.caption.weight(.semibold))
     }
     .padding(.vertical, 6)
   }
