@@ -924,7 +924,7 @@ private struct PlaceDetailSheet: View {
         }
       }
       .padding(.horizontal)
-      .padding(.top, 12)
+      .padding(.top, 26)
       .padding(.bottom, 28)
     }
     .confirmationDialog(
@@ -1138,7 +1138,7 @@ private struct EntrySourceCard: View {
   }
 
   var body: some View {
-    VStack(alignment: .leading, spacing: 0) {
+    Link(destination: source.linkedSourceURL) {
       VStack(alignment: .leading, spacing: 10) {
         HStack(spacing: 10) {
           Image(systemName: source.sourceSystemImage)
@@ -1154,6 +1154,12 @@ private struct EntrySourceCard: View {
               .font(.caption)
               .foregroundStyle(.secondary)
           }
+
+          Spacer(minLength: 8)
+
+          Image(systemName: "arrow.up.right")
+            .font(.caption.weight(.bold))
+            .foregroundStyle(.blue)
         }
 
         if !description.isEmpty {
@@ -1165,29 +1171,16 @@ private struct EntrySourceCard: View {
           Label(mediaReference, systemImage: source.mediaReferenceSystemImage)
             .font(.caption)
             .foregroundStyle(.secondary)
-        }
+          }
       }
       .padding(14)
-
-      Divider()
-
-      Link(destination: source.linkedSourceURL) {
-        HStack {
-          Text(source.sourcePlatform.lowercased() == "youtube"
-            ? "Watch original video"
-            : "View original post")
-          Spacer()
-          Image(systemName: "arrow.up.right")
-        }
-        .font(.subheadline.weight(.semibold))
-        .padding(.horizontal, 14)
-        .frame(height: 42)
-        .contentShape(Rectangle())
-      }
-      .buttonStyle(.plain)
+      .frame(maxWidth: .infinity, alignment: .leading)
+      .contentShape(Rectangle())
     }
+    .buttonStyle(.plain)
     .background(.secondary.opacity(0.08), in: RoundedRectangle(cornerRadius: 14))
     .clipShape(RoundedRectangle(cornerRadius: 14))
+    .accessibilityHint("Opens the original post")
   }
 }
 
