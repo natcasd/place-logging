@@ -1129,23 +1129,36 @@ private struct EntrySourceCard: View {
     return platform.isEmpty ? "Original post" : platform.capitalized
   }
 
-  private var accentColor: Color {
-    switch source.sourcePlatform.lowercased() {
-    case "instagram": return .pink
-    case "youtube": return .red
-    default: return .blue
+  private var brandAssetName: String? {
+    let platform = source.sourcePlatform.lowercased()
+    let host = source.sourceURL.host?.lowercased() ?? ""
+    if platform.contains("instagram") || host.contains("instagram") {
+      return "InstagramBrandIcon"
     }
+    if platform.contains("youtube") || host.contains("youtube.com") || host.contains("youtu.be") {
+      return "YouTubeBrandIcon"
+    }
+    return nil
   }
 
   var body: some View {
     Link(destination: source.linkedSourceURL) {
       VStack(alignment: .leading, spacing: 10) {
         HStack(spacing: 10) {
-          Image(systemName: source.sourceSystemImage)
-            .font(.subheadline.weight(.semibold))
-            .foregroundStyle(.white)
-            .frame(width: 30, height: 30)
-            .background(accentColor, in: RoundedRectangle(cornerRadius: 8))
+          if let brandAssetName {
+            Image(brandAssetName)
+              .resizable()
+              .scaledToFit()
+              .frame(width: 30, height: 30)
+              .accessibilityHidden(true)
+          } else {
+            Image(systemName: source.sourceSystemImage)
+              .font(.subheadline.weight(.semibold))
+              .foregroundStyle(.white)
+              .frame(width: 30, height: 30)
+              .background(.blue, in: RoundedRectangle(cornerRadius: 8))
+              .accessibilityHidden(true)
+          }
 
           VStack(alignment: .leading, spacing: 2) {
             Text(source.sourceLinkText)
