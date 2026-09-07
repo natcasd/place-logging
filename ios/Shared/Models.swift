@@ -123,7 +123,9 @@ struct SavedEntry: Decodable, Identifiable, Sendable {
   var appleMapsURL: URL? {
     guard latitude != nil || formattedAddress != nil else { return nil }
     var components = URLComponents(string: "https://maps.apple.com/")
-    var items = [URLQueryItem(name: "q", value: name)]
+    let venueName = locationName?.trimmingCharacters(in: .whitespacesAndNewlines)
+    let queryName = venueName.flatMap { $0.isEmpty ? nil : $0 } ?? name
+    var items = [URLQueryItem(name: "q", value: queryName)]
     if let latitude, let longitude {
       items.append(URLQueryItem(name: "ll", value: "\(latitude),\(longitude)"))
     } else if let formattedAddress {
@@ -232,6 +234,10 @@ struct SavedEntrySource: Decodable, Identifiable, Sendable {
     case (.none, .none):
       return nil
     }
+  }
+
+  var mediaReferenceSystemImage: String {
+    slideIndex == nil ? "play.rectangle" : "rectangle.stack"
   }
 
   var linkedSourceURL: URL {
