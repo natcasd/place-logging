@@ -1508,14 +1508,14 @@ private struct AppleMapsButton: View {
           if isOpening {
             ProgressView()
               .controlSize(.mini)
-              .tint(.indigo)
+              .tint(.secondary)
           }
         }
         .font(.caption.weight(.semibold))
-        .foregroundStyle(.indigo)
+        .foregroundStyle(.secondary)
         .padding(.horizontal, 10)
         .frame(height: 32)
-        .background(.indigo.opacity(0.12), in: RoundedRectangle(cornerRadius: 10))
+        .background(.secondary.opacity(0.1), in: RoundedRectangle(cornerRadius: 10))
       }
       .buttonStyle(.plain)
       .disabled(isOpening)
@@ -1694,10 +1694,6 @@ private struct SourceMetadataCard: View {
       }
       .buttonStyle(.plain)
 
-      if let detailText, !detailText.isEmpty {
-        ExpandableDetailText(detailText)
-      }
-
       if let mediaReferenceText {
         Link(destination: sourceURL) {
           Label(mediaReferenceText, systemImage: "play.rectangle")
@@ -1705,6 +1701,10 @@ private struct SourceMetadataCard: View {
             .foregroundStyle(.secondary)
         }
         .buttonStyle(.plain)
+      }
+
+      if let detailText, !detailText.isEmpty {
+        ExpandableDetailText(detailText)
       }
     }
     .padding(14)
