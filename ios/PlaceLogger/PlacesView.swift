@@ -492,14 +492,19 @@ private struct ActivityList: View {
               Text(run.recommendationCountText)
                 .font(.subheadline.weight(.semibold))
                 .foregroundStyle(.primary)
+                .lineLimit(1)
 
               if run.needsReview {
-                Label("Needs review", systemImage: "exclamationmark.circle.fill")
+                HStack(spacing: 4) {
+                  Image(systemName: "exclamationmark.circle.fill")
+                  Text("Needs review")
+                }
                   .font(.caption.weight(.semibold))
                   .foregroundStyle(.yellow)
+                  .lineLimit(1)
               }
             }
-            .fixedSize(horizontal: true, vertical: false)
+            .layoutPriority(1)
           }
           .padding(.vertical, 7)
         }
