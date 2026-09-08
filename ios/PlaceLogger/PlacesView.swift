@@ -1000,13 +1000,7 @@ private struct LocationEntryPicker: View {
 
         Spacer(minLength: 8)
 
-        if let mapsURL = group.primary.appleMapsURL {
-          Link(destination: mapsURL) {
-            Label("Maps", systemImage: "arrow.up.right")
-          }
-          .buttonStyle(.bordered)
-          .controlSize(.small)
-        }
+        AppleMapsButton(entry: group.primary)
 
       }
 
@@ -1050,6 +1044,36 @@ private struct LocationEntryPicker: View {
   }
 }
 
+private struct AppleMapsButton: View {
+  let entry: SavedEntry
+  @Environment(\.openURL) private var openURL
+  @State private var isOpening = false
+
+  var body: some View {
+    if entry.appleMapsFallbackURL != nil {
+      Button(action: openMaps) {
+        Label(isOpening ? "Opening Maps" : "Maps", systemImage: "arrow.up.right")
+      }
+      .buttonStyle(.bordered)
+      .controlSize(.small)
+      .disabled(isOpening)
+    }
+  }
+
+  private func openMaps() {
+    guard !isOpening else { return }
+    isOpening = true
+    Task {
+      if let mapItem = await AppleMapsDestinationResolver.resolvedMapItem(for: entry) {
+        mapItem.openInMaps(launchOptions: nil)
+      } else if let fallbackURL = entry.appleMapsFallbackURL {
+        openURL(fallbackURL)
+      }
+      isOpening = false
+    }
+  }
+}
+
 private struct EntryDetailContent: View {
   let entry: SavedEntry
   let backAction: (() -> Void)?
@@ -1075,13 +1099,7 @@ private struct EntryDetailContent: View {
               .font(.subheadline)
               .foregroundStyle(.secondary)
 
-            if let mapsURL = entry.appleMapsURL {
-              Link(destination: mapsURL) {
-                Label("Maps", systemImage: "arrow.up.right")
-              }
-              .buttonStyle(.bordered)
-              .controlSize(.small)
-            }
+            AppleMapsButton(entry: entry)
           }
 
           if let availability = entry.availabilityText {
