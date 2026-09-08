@@ -159,6 +159,23 @@ class IngestServiceTests(unittest.TestCase):
         mock_delete.assert_called_once_with(Path("/tmp/test.db"), [8, 9, 10])
         self.assertEqual(result, {"deleted_entries": 3, "deleted_sources": 0})
 
+    @patch(
+        "ingest_service.confirm_activity_location",
+        return_value={"entry_id": 8, "resolution_status": "user_confirmed"},
+    )
+    def test_confirms_activity_location_candidate(self, mock_confirm) -> None:
+        service = IngestService(Path("/tmp/test.db"), Path("/tmp/downloads"))
+
+        result = service.confirm_activity_location(34, 8, "places/test")
+
+        mock_confirm.assert_called_once_with(
+            Path("/tmp/test.db"),
+            34,
+            8,
+            "places/test",
+        )
+        self.assertEqual(result["resolution_status"], "user_confirmed")
+
 
 if __name__ == "__main__":
     unittest.main()

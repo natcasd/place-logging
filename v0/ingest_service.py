@@ -10,6 +10,7 @@ from pipeline import process_ingest
 from pipeline import source_platform as detect_source_platform
 from source_identity import canonical_source_url
 from store import (
+    confirm_activity_location,
     delete_place,
     delete_entry,
     delete_entries,
@@ -179,3 +180,17 @@ class IngestService:
     def delete_entries(self, entry_ids: list[int]) -> dict[str, int] | None:
         """Delete canonical entries without deleting their source posts."""
         return delete_entries(self.db_path, entry_ids)
+
+    def confirm_activity_location(
+        self,
+        ingest_id: int,
+        entry_id: int,
+        candidate_id: str,
+    ) -> dict[str, Any] | None:
+        """Confirm a stored candidate for one Activity recommendation."""
+        return confirm_activity_location(
+            self.db_path,
+            ingest_id,
+            entry_id,
+            candidate_id,
+        )

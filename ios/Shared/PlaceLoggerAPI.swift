@@ -51,6 +51,23 @@ struct PlaceLoggerAPI: Sendable {
     return try JSONDecoder().decode(ActivityEnvelope.self, from: data).activity
   }
 
+  func confirmActivityLocation(
+    ingestID: Int,
+    entryID: Int,
+    candidateID: String
+  ) async throws {
+    let url = APIConfig.baseURL.appending(
+      path: "/api/v1/activity/\(ingestID)/entries/\(entryID)/location"
+    )
+    var request = URLRequest(url: url)
+    request.httpMethod = "POST"
+    request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+    request.httpBody = try JSONSerialization.data(
+      withJSONObject: ["candidate_id": candidateID]
+    )
+    _ = try await perform(request)
+  }
+
   func ingest(sourceURL: URL) async throws -> IngestResponse {
     let url = APIConfig.baseURL.appending(path: "/api/v1/ingests")
     var request = URLRequest(url: url)

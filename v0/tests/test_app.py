@@ -245,6 +245,51 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(response.json()["activity"][0]["results"][0]["name"], "Test Place")
         self.service.activity.assert_called_once_with(25)
 
+    def test_confirms_activity_location_candidate(self) -> None:
+        confirmed = canonical_result()["saved_entries"][0] | {
+            "source_connection_id": 21,
+            "ordinal": 0,
+            "location_id": 5,
+            "location_name": "Test Place",
+            "latitude": 40.7,
+            "longitude": -73.9,
+            "formatted_address": "123 Test St",
+            "resolution_status": "user_confirmed",
+            "review_candidates": [],
+        }
+        self.service.confirm_activity_location.return_value = confirmed
+
+        response = self.client.post(
+            "/api/v1/activity/34/entries/8/location",
+            headers={"Authorization": "Bearer api-secret"},
+            json={"candidate_id": "places/test"},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["entry"]["location_name"], "Test Place")
+        self.service.confirm_activity_location.assert_called_once_with(
+            34,
+            8,
+            "places/test",
+        )
+
+    def test_rejects_unavailable_activity_location_candidate(self) -> None:
+        self.service.confirm_activity_location.side_effect = ValueError(
+            "Select one of the available location candidates"
+        )
+
+        response = self.client.post(
+            "/api/v1/activity/34/entries/8/location",
+            headers={"Authorization": "Bearer api-secret"},
+            json={"candidate_id": "places/not-offered"},
+        )
+
+        self.assertEqual(response.status_code, 409)
+        self.assertEqual(
+            response.json(),
+            {"detail": "Select one of the available location candidates"},
+        )
+
     def test_places_rejects_excessive_limit(self) -> None:
         response = self.client.get(
             "/api/v1/places?limit=501",
