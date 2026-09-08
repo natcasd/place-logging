@@ -1066,7 +1066,16 @@ private struct AppleMapsButton: View {
       .buttonStyle(.bordered)
       .controlSize(.small)
       .disabled(isOpening)
-      .task(id: entry.id) {
+      // Let the detail sheet finish its presentation before MapKit does any
+      // lookup setup on the UI actor. A Maps tap can still start or join this
+      // same cache entry immediately.
+      .task(id: entry.id, priority: .utility) {
+        do {
+          try await Task.sleep(nanoseconds: 350_000_000)
+        } catch {
+          return
+        }
+        guard !Task.isCancelled else { return }
         await destinations.prefetch(entry)
       }
       .onDisappear {
