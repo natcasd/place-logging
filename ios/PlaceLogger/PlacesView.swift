@@ -602,7 +602,6 @@ private struct ActivityDetail: View {
                   sourcePlatform: activity.sourcePlatform,
                   creator: activity.creator,
                   primaryText: sourceTitle,
-                  secondaryText: nil,
                   detailText: sourceDescription,
                   mediaReferenceText: nil
                 )
@@ -1605,11 +1604,29 @@ private struct AppleMapsButton: View {
   var body: some View {
     if entry.appleMapsFallbackURL != nil {
       Button(action: openMaps) {
-        Label(isOpening ? "Opening Maps" : "Maps", systemImage: "arrow.up.right")
+        ZStack {
+          HStack(spacing: 5) {
+            Image(systemName: "map")
+            Image(systemName: "arrow.up.right")
+              .font(.caption.weight(.bold))
+          }
+          .opacity(isOpening ? 0 : 1)
+
+          if isOpening {
+            ProgressView()
+              .controlSize(.mini)
+              .tint(.secondary)
+          }
+        }
+        .font(.subheadline.weight(.semibold))
+        .foregroundStyle(.secondary)
+        .padding(.horizontal, 12)
+        .frame(height: 36)
+        .background(.secondary.opacity(0.1), in: RoundedRectangle(cornerRadius: 11))
       }
-      .buttonStyle(.bordered)
-      .controlSize(.small)
+      .buttonStyle(.plain)
       .disabled(isOpening)
+      .accessibilityLabel(isOpening ? "Opening Apple Maps" : "Open in Apple Maps")
       // Let the detail sheet finish its presentation before MapKit does any
       // lookup setup on the UI actor. A Maps tap can still start or join this
       // same cache entry immediately.
@@ -1714,10 +1731,8 @@ private struct SourceMetadataCard: View {
   let sourcePlatform: String
   let creator: String?
   let primaryText: String?
-  let secondaryText: String?
   let detailText: String?
   let mediaReferenceText: String?
-  @State private var isDetailExpanded = false
 
   private var platformName: String {
     let platform = sourcePlatform.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -1754,11 +1769,6 @@ private struct SourceMetadataCard: View {
     return "link"
   }
 
-  private var canExpandDetail: Bool {
-    guard let detailText else { return false }
-    return detailText.count > 120 || detailText.filter { $0 == "\n" }.count >= 3
-  }
-
   var body: some View {
     VStack(alignment: .leading, spacing: 10) {
       Link(destination: sourceURL) {
@@ -1778,15 +1788,8 @@ private struct SourceMetadataCard: View {
               .accessibilityHidden(true)
           }
 
-          VStack(alignment: .leading, spacing: 2) {
-            Text(displayTitle)
-              .font(.headline)
-            if let secondaryText, !secondaryText.isEmpty {
-              Text(secondaryText)
-                .font(.caption)
-                .foregroundStyle(.secondary)
-            }
-          }
+          Text(displayTitle)
+            .font(.headline)
 
           Spacer(minLength: 8)
 
@@ -1798,26 +1801,6 @@ private struct SourceMetadataCard: View {
       }
       .buttonStyle(.plain)
 
-      if let detailText, !detailText.isEmpty {
-        VStack(alignment: .leading, spacing: 6) {
-          Text(detailText)
-            .font(.subheadline)
-            .lineLimit(isDetailExpanded ? nil : 3)
-            .animation(.easeInOut(duration: 0.2), value: isDetailExpanded)
-
-          if canExpandDetail {
-            Button(isDetailExpanded ? "Less" : "More") {
-              withAnimation(.easeInOut(duration: 0.2)) {
-                isDetailExpanded.toggle()
-              }
-            }
-            .font(.caption.weight(.semibold))
-            .buttonStyle(.plain)
-            .foregroundStyle(.blue)
-          }
-        }
-      }
-
       if let mediaReferenceText {
         Link(destination: sourceURL) {
           Label(mediaReferenceText, systemImage: "play.rectangle")
@@ -1826,12 +1809,101 @@ private struct SourceMetadataCard: View {
         }
         .buttonStyle(.plain)
       }
+
+      if let detailText, !detailText.isEmpty {
+        ExpandableDetailText(detailText)
+      }
     }
     .padding(14)
     .frame(maxWidth: .infinity, alignment: .leading)
     .background(.secondary.opacity(0.08), in: RoundedRectangle(cornerRadius: 14))
     .clipShape(RoundedRectangle(cornerRadius: 14))
     .accessibilityHint("Opens the original post")
+  }
+}
+
+private struct CollapsedDetailHeightKey: PreferenceKey {
+  static let defaultValue: CGFloat = 0
+
+  static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+    value = max(value, nextValue())
+  }
+}
+
+private struct FullDetailHeightKey: PreferenceKey {
+  static let defaultValue: CGFloat = 0
+
+  static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+    value = max(value, nextValue())
+  }
+}
+
+private struct ExpandableDetailText: View {
+  let text: String
+  @State private var isExpanded = false
+  @State private var collapsedHeight: CGFloat = 0
+  @State private var fullHeight: CGFloat = 0
+
+  init(_ text: String) {
+    self.text = text
+  }
+
+  private var isTruncated: Bool {
+    fullHeight > collapsedHeight + 0.5
+  }
+
+  var body: some View {
+    VStack(alignment: .leading, spacing: 6) {
+      Text(text)
+        .font(.subheadline)
+        .lineLimit(isExpanded ? nil : 3)
+        .animation(.easeInOut(duration: 0.2), value: isExpanded)
+        .background {
+          measurementText(lineLimit: 3)
+            .hidden()
+            .background {
+              GeometryReader { geometry in
+                Color.clear.preference(
+                  key: CollapsedDetailHeightKey.self,
+                  value: geometry.size.height
+                )
+              }
+            }
+        }
+        .background {
+          measurementText(lineLimit: nil)
+            .hidden()
+            .background {
+              GeometryReader { geometry in
+                Color.clear.preference(
+                  key: FullDetailHeightKey.self,
+                  value: geometry.size.height
+                )
+              }
+            }
+        }
+
+      if isTruncated {
+        Button(isExpanded ? "Less" : "More") {
+          withAnimation(.easeInOut(duration: 0.2)) {
+            isExpanded.toggle()
+          }
+        }
+        .font(.caption.weight(.semibold))
+        .buttonStyle(.plain)
+        .foregroundStyle(.blue)
+      }
+    }
+    .onPreferenceChange(CollapsedDetailHeightKey.self) { collapsedHeight = $0 }
+    .onPreferenceChange(FullDetailHeightKey.self) { fullHeight = $0 }
+    .onChange(of: text) { _, _ in isExpanded = false }
+  }
+
+  private func measurementText(lineLimit: Int?) -> some View {
+    Text(text)
+      .font(.subheadline)
+      .lineLimit(lineLimit)
+      .fixedSize(horizontal: false, vertical: true)
   }
 }
 
@@ -1844,18 +1916,12 @@ private struct EntrySourceCard: View {
     return source.whyItsCool.trimmingCharacters(in: .whitespacesAndNewlines)
   }
 
-  private var platformName: String {
-    let platform = source.sourcePlatform.trimmingCharacters(in: .whitespacesAndNewlines)
-    return platform.isEmpty ? "Original post" : platform.capitalized
-  }
-
   var body: some View {
     SourceMetadataCard(
       sourceURL: source.linkedSourceURL,
       sourcePlatform: source.sourcePlatform,
       creator: source.creator,
       primaryText: source.sourceLinkText,
-      secondaryText: source.creator ?? platformName,
       detailText: description,
       mediaReferenceText: source.mediaReferenceText
     )
