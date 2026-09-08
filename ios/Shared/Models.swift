@@ -500,9 +500,9 @@ enum PlaceLoggerError: LocalizedError {
     case .missingToken:
       "The app's API token is not configured."
     case .invalidResponse:
-      "Place Logger returned an invalid response."
+      "Jot returned an invalid response."
     case .server(let status, let detail):
-      detail ?? "Place Logger returned HTTP \(status)."
+      detail ?? "Jot returned HTTP \(status)."
     case .noSharedURL:
       "Instagram did not include a usable link in this share."
     }
