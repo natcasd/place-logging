@@ -47,6 +47,28 @@ final class PlacesModel: ObservableObject {
     places.removeAll { $0.id == entry.id }
     activity = try await api.fetchActivity()
   }
+
+  func deleteActivityEntry(id: Int) async throws {
+    try await api.deleteEntry(id: id)
+    places.removeAll { $0.id == id }
+    activity = try await api.fetchActivity()
+  }
+
+  func confirmActivityLocation(
+    ingestID: Int,
+    entryID: Int,
+    candidateID: String
+  ) async throws {
+    try await api.confirmActivityLocation(
+      ingestID: ingestID,
+      entryID: entryID,
+      candidateID: candidateID
+    )
+    async let loadedEntries = api.fetchEntries()
+    async let loadedActivity = api.fetchActivity()
+    places = try await loadedEntries
+    activity = try await loadedActivity
+  }
 }
 
 struct PlacesView: View {
@@ -130,7 +152,19 @@ struct PlacesView: View {
           )
         case .activity(let ingestID):
           if let run = model.activity.first(where: { $0.id == ingestID }) {
-            ActivityDetail(activity: run)
+            ActivityDetail(
+              activity: run,
+              deleteEntry: { entryID in
+                try await model.deleteActivityEntry(id: entryID)
+              },
+              confirmLocation: { entryID, candidateID in
+                try await model.confirmActivityLocation(
+                  ingestID: ingestID,
+                  entryID: entryID,
+                  candidateID: candidateID
+                )
+              }
+            )
           } else {
             ContentUnavailableView("Activity Not Found", systemImage: "clock.badge.questionmark")
           }
@@ -485,83 +519,414 @@ private struct ActivityList: View {
 
 private struct ActivityDetail: View {
   let activity: IngestActivity
+  let deleteEntry: (Int) async throws -> Void
+  let confirmLocation: (Int, String) async throws -> Void
+  @State private var pendingDeletion: SavedEntryOutcome?
+  @State private var deletingEntryID: Int?
+  @State private var actionError: String?
+
+  private var sourceDescription: String? {
+    let summary = activity.summary?.trimmingCharacters(in: .whitespacesAndNewlines)
+    if let summary, !summary.isEmpty { return summary }
+    let caption = activity.caption?.trimmingCharacters(in: .whitespacesAndNewlines)
+    return caption.flatMap { $0.isEmpty ? nil : $0 }
+  }
+
+  private var sourceTitle: String? {
+    guard let creator = activity.creator?.trimmingCharacters(in: .whitespacesAndNewlines),
+          !creator.isEmpty else { return nil }
+    let platform = activity.sourcePlatform.lowercased() == "youtube"
+      ? "YouTube"
+      : activity.sourcePlatform.capitalized
+    return "\(creator) on \(platform)"
+  }
 
   var body: some View {
-    List {
-      Section {
-        HStack(spacing: 10) {
-          Image(systemName: activity.statusSystemImage)
-            .font(.title2)
-            .foregroundStyle(activity.statusColor)
-          VStack(alignment: .leading, spacing: 2) {
-            Text(activity.statusText)
-              .font(.headline)
-            Text(activity.startedAt)
+    ScrollView {
+      LazyVStack(alignment: .leading, spacing: 16) {
+        if activity.results.contains(where: \.hasLocation) {
+          ActivityLocationsMap(results: activity.results)
+        }
+
+        SourceMetadataCard(
+          sourceURL: activity.sourceURL,
+          sourcePlatform: activity.sourcePlatform,
+          creator: activity.creator,
+          primaryText: sourceTitle,
+          secondaryText: "Saved \(activity.startedAt)",
+          detailText: sourceDescription,
+          mediaReferenceText: nil
+        )
+
+        if activity.status == "processing" {
+          ActivityStatePanel(
+            title: activity.statusText,
+            message: activity.events.last?.message,
+            systemImage: "arrow.triangle.2.circlepath",
+            color: .blue,
+            showsProgress: true
+          )
+        } else if activity.status == "failed" {
+          ActivityStatePanel(
+            title: "Processing failed",
+            message: activity.errorMessage ?? activity.events.last?.message,
+            systemImage: "xmark.circle.fill",
+            color: .red,
+            showsProgress: false
+          )
+        }
+
+        if !activity.results.isEmpty {
+          HStack(alignment: .firstTextBaseline) {
+            Text("Recommendations")
+              .font(.title2.bold())
+            Spacer()
+            Text("\(activity.results.count) extracted")
               .font(.caption)
               .foregroundStyle(.secondary)
           }
-        }
+          .padding(.top, 4)
 
-        if let error = activity.errorMessage, !error.isEmpty {
-          Text(error)
-            .foregroundStyle(.red)
-        }
-
-        Link(destination: activity.sourceURL) {
-          Label("Open original post", systemImage: "arrow.up.right.square")
+          ForEach(activity.results.sorted { $0.ordinal < $1.ordinal }) { result in
+            ActivityRecommendationCard(
+              result: result,
+              isDeleting: deletingEntryID == result.entryID,
+              requestDeletion: { pendingDeletion = result },
+              confirmLocation: { candidateID in
+                try await confirmLocation(result.entryID, candidateID)
+              }
+            )
+          }
+        } else if activity.status != "processing" && activity.status != "failed" {
+          ContentUnavailableView(
+            "No Recommendations Kept",
+            systemImage: "tray",
+            description: Text("The original source post is still saved in Activity.")
+          )
+          .frame(maxWidth: .infinity)
+          .padding(.vertical, 32)
         }
       }
+      .padding(.horizontal)
+      .padding(.top, 12)
+      .padding(.bottom, 30)
+    }
+    .navigationTitle("Post details")
+    .navigationBarTitleDisplayMode(.inline)
+    .confirmationDialog(
+      pendingDeletion.map { "Delete \($0.name)?" } ?? "Delete Recommendation?",
+      isPresented: Binding(
+        get: { pendingDeletion != nil },
+        set: { if !$0 { pendingDeletion = nil } }
+      ),
+      titleVisibility: .visible
+    ) {
+      if let result = pendingDeletion {
+        Button("Delete Recommendation", role: .destructive) {
+          pendingDeletion = nil
+          Task { await performDeletion(result) }
+        }
+      }
+      Button("Cancel", role: .cancel) { pendingDeletion = nil }
+    } message: {
+      if let result = pendingDeletion {
+        Text(activityDeleteMessage(result))
+      }
+    }
+    .alert(
+      "Couldn’t Complete Review",
+      isPresented: Binding(
+        get: { actionError != nil },
+        set: { if !$0 { actionError = nil } }
+      )
+    ) {
+      Button("OK", role: .cancel) { actionError = nil }
+    } message: {
+      Text(actionError ?? "Please try again.")
+    }
+  }
 
-      if !activity.results.isEmpty {
-        Section("Entries from this post") {
-          ForEach(activity.results) { result in
-            NavigationLink(value: PlacesNavigation.entry(result.entryID)) {
-              VStack(alignment: .leading, spacing: 4) {
-                Text(result.name)
-                  .font(.headline)
-                HStack(spacing: 8) {
-                  Text(result.type)
-                  Text(result.isNew ? "New Entry" : "Added source · \(result.sourceCount) total")
+  private func performDeletion(_ result: SavedEntryOutcome) async {
+    deletingEntryID = result.entryID
+    defer { deletingEntryID = nil }
+    do {
+      try await deleteEntry(result.entryID)
+    } catch {
+      actionError = error.localizedDescription
+    }
+  }
+}
+
+private struct ActivityLocationsMap: View {
+  let results: [SavedEntryOutcome]
+  @State private var showsFullMap = false
+
+  private var locatedResults: [SavedEntryOutcome] {
+    results.filter(\.hasLocation)
+  }
+
+  var body: some View {
+    ActivityResultsMap(results: locatedResults, allowsInteraction: false)
+      .frame(height: 230)
+      .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+      .overlay(alignment: .topTrailing) {
+        Image(systemName: "arrow.up.left.and.arrow.down.right")
+          .font(.subheadline.weight(.semibold))
+          .padding(10)
+          .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 11))
+          .padding(10)
+      }
+      .overlay(alignment: .bottomLeading) {
+        Text("\(locatedResults.count) matched \(locatedResults.count == 1 ? "location" : "locations")")
+          .font(.caption.weight(.semibold))
+          .padding(.horizontal, 10)
+          .padding(.vertical, 8)
+          .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 11))
+          .padding(10)
+      }
+      .contentShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+      .onTapGesture { showsFullMap = true }
+      .accessibilityAddTraits(.isButton)
+      .accessibilityLabel("Show \(locatedResults.count) locations on full-screen map")
+      .fullScreenCover(isPresented: $showsFullMap) {
+        NavigationStack {
+          ActivityResultsMap(results: locatedResults, allowsInteraction: true)
+            .ignoresSafeArea(edges: .bottom)
+            .navigationTitle("Locations from this post")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+              ToolbarItem(placement: .topBarLeading) {
+                Button("Back", systemImage: "chevron.left") {
+                  showsFullMap = false
                 }
-                .font(.caption)
-                .foregroundStyle(.secondary)
-              }
-              .padding(.vertical, 3)
-            }
-          }
-        }
-      }
-
-      if let summary = activity.summary, !summary.isEmpty {
-        Section("Post summary") {
-          Text(summary)
-        }
-      } else if let caption = activity.caption, !caption.isEmpty {
-        Section("Caption") {
-          Text(caption)
-        }
-      }
-
-      if !activity.events.isEmpty {
-        Section("Processing log") {
-          ForEach(activity.events) { event in
-            HStack(alignment: .top, spacing: 10) {
-              Image(systemName: event.status == "failed" ? "xmark.circle.fill" : "checkmark.circle")
-                .foregroundStyle(event.status == "failed" ? .red : .secondary)
-              VStack(alignment: .leading, spacing: 2) {
-                Text(event.message)
-                Text(event.createdAt)
-                  .font(.caption)
-                  .foregroundStyle(.secondary)
               }
             }
-          }
+        }
+      }
+  }
+}
+
+private struct ActivityResultsMap: View {
+  let results: [SavedEntryOutcome]
+  let allowsInteraction: Bool
+
+  var body: some View {
+    Map(initialPosition: .automatic, interactionModes: allowsInteraction ? .all : []) {
+      ForEach(results) { result in
+        if let latitude = result.latitude, let longitude = result.longitude {
+          Marker(
+            result.locationName ?? result.name,
+            systemImage: SavedCategory.category(for: result.type).icon,
+            coordinate: CLLocationCoordinate2D(
+              latitude: latitude,
+              longitude: longitude
+            )
+          )
+          .tint(SavedCategory.category(for: result.type).artTint)
         }
       }
     }
-    .navigationTitle(activity.title)
-    .navigationBarTitleDisplayMode(.inline)
   }
+}
+
+private struct ActivityStatePanel: View {
+  let title: String
+  let message: String?
+  let systemImage: String
+  let color: Color
+  let showsProgress: Bool
+
+  var body: some View {
+    HStack(alignment: .top, spacing: 12) {
+      if showsProgress {
+        ProgressView()
+          .tint(color)
+      } else {
+        Image(systemName: systemImage)
+          .foregroundStyle(color)
+      }
+      VStack(alignment: .leading, spacing: 4) {
+        Text(title)
+          .font(.headline)
+        if let message, !message.isEmpty {
+          Text(message)
+            .font(.subheadline)
+            .foregroundStyle(.secondary)
+        }
+      }
+    }
+    .padding(14)
+    .frame(maxWidth: .infinity, alignment: .leading)
+    .background(color.opacity(0.1), in: RoundedRectangle(cornerRadius: 14))
+  }
+}
+
+private struct ActivityRecommendationCard: View {
+  let result: SavedEntryOutcome
+  let isDeleting: Bool
+  let requestDeletion: () -> Void
+  let confirmLocation: (String) async throws -> Void
+  @State private var isExpanded = false
+  @State private var selectedCandidateID: String?
+  @State private var isConfirming = false
+  @State private var confirmationError: String?
+
+  private var canReviewCandidates: Bool {
+    result.resolutionStatus == "needs_review" && result.reviewCandidates.count > 1
+  }
+
+  private var showsMissingLocation: Bool {
+    result.resolutionStatus == "unresolved"
+      || (result.resolutionStatus == "needs_review" && !canReviewCandidates)
+  }
+
+  var body: some View {
+    VStack(spacing: 0) {
+      HStack(alignment: .center, spacing: 12) {
+        VStack(alignment: .leading, spacing: 5) {
+          HStack(spacing: 5) {
+            Text(result.type)
+            if let mediaReference = result.mediaReferenceText {
+              Text("·")
+              Text(mediaReference)
+            }
+          }
+          .font(.caption2.weight(.semibold))
+          .foregroundStyle(.secondary)
+          .textCase(.uppercase)
+
+          Text(result.name)
+            .font(.headline)
+
+          if let address = result.formattedAddress, !address.isEmpty {
+            Text(address)
+              .font(.subheadline)
+              .foregroundStyle(.secondary)
+          } else if showsMissingLocation {
+            Label("No location matched", systemImage: "exclamationmark.triangle.fill")
+              .font(.subheadline.weight(.semibold))
+              .foregroundStyle(.yellow)
+          }
+        }
+
+        Spacer(minLength: 6)
+
+        if isDeleting || isConfirming {
+          ProgressView()
+            .controlSize(.small)
+            .frame(width: 34, height: 34)
+        } else if canReviewCandidates && !isExpanded {
+          Button {
+            withAnimation(.snappy) { isExpanded = true }
+          } label: {
+            HStack(spacing: 4) {
+              Text("Needs review")
+              Image(systemName: "chevron.right")
+                .font(.caption2.weight(.bold))
+            }
+            .font(.caption.weight(.semibold))
+            .foregroundStyle(.yellow)
+          }
+          .buttonStyle(.plain)
+        } else {
+          Button("Delete Recommendation", systemImage: "trash", role: .destructive) {
+            requestDeletion()
+          }
+          .labelStyle(.iconOnly)
+          .buttonStyle(.plain)
+          .frame(width: 34, height: 34)
+        }
+      }
+      .padding(14)
+
+      if canReviewCandidates && isExpanded {
+        Divider()
+        VStack(alignment: .leading, spacing: 12) {
+          Text("Select the location")
+            .font(.headline)
+
+          VStack(spacing: 0) {
+            ForEach(Array(result.reviewCandidates.enumerated()), id: \.element.id) { index, candidate in
+              Button {
+                selectedCandidateID = candidate.id
+              } label: {
+                HStack(spacing: 11) {
+                  Image(
+                    systemName: selectedCandidateID == candidate.id
+                      ? "checkmark.circle.fill"
+                      : "circle"
+                  )
+                  .font(.title3)
+                  .foregroundStyle(selectedCandidateID == candidate.id ? .blue : .secondary)
+
+                  VStack(alignment: .leading, spacing: 3) {
+                    Text(candidate.name)
+                      .font(.subheadline.weight(.semibold))
+                      .foregroundStyle(.primary)
+                    if let address = candidate.formattedAddress, !address.isEmpty {
+                      Text(address)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    }
+                  }
+                  Spacer()
+                }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 11)
+                .contentShape(Rectangle())
+              }
+              .buttonStyle(.plain)
+
+              if index < result.reviewCandidates.count - 1 {
+                Divider().padding(.leading, 43)
+              }
+            }
+          }
+          .background(.secondary.opacity(0.07), in: RoundedRectangle(cornerRadius: 12))
+
+          if selectedCandidateID != nil {
+            Button("Confirm Location", systemImage: "checkmark") {
+              Task { await performConfirmation() }
+            }
+            .buttonStyle(.borderedProminent)
+            .frame(maxWidth: .infinity)
+          }
+        }
+        .padding(14)
+        .transition(.opacity.combined(with: .move(edge: .top)))
+      }
+    }
+    .background(.secondary.opacity(0.08), in: RoundedRectangle(cornerRadius: 16))
+    .alert(
+      "Couldn’t Confirm Location",
+      isPresented: Binding(
+        get: { confirmationError != nil },
+        set: { if !$0 { confirmationError = nil } }
+      )
+    ) {
+      Button("OK", role: .cancel) { confirmationError = nil }
+    } message: {
+      Text(confirmationError ?? "Please try again.")
+    }
+  }
+
+  private func performConfirmation() async {
+    guard let selectedCandidateID else { return }
+    isConfirming = true
+    defer { isConfirming = false }
+    do {
+      try await confirmLocation(selectedCandidateID)
+    } catch {
+      confirmationError = error.localizedDescription
+    }
+  }
+}
+
+private func activityDeleteMessage(_ result: SavedEntryOutcome) -> String {
+  let references = result.sourceCount == 1
+    ? "its saved reference"
+    : "its \(result.sourceCount) saved references"
+  return "This removes \(result.name) and \(references). Original source posts stay saved."
 }
 
 private extension IngestActivity {
@@ -657,6 +1022,7 @@ private struct PlacesMap: View {
         }
       }
       .onChange(of: selectedGroupID) { _, groupID in
+        traceMapDetailTiming("map selection -> \(groupID ?? "nil")")
         guard let groupID else {
           dismissSelectedPlace()
           return
@@ -835,7 +1201,8 @@ private struct PlacesMap: View {
         .padding(.top, 8)
         .padding(.bottom, 6)
       }
-      .sheet(item: $detailGroup, onDismiss: {
+      .sheet(item: detailSheetBinding, onDismiss: {
+        traceMapDetailTiming("sheet onDismiss")
         clearSelectedPlace()
       }) { group in
         PlaceDetailSheet(
@@ -848,6 +1215,12 @@ private struct PlacesMap: View {
         .presentationDetents([.fraction(0.58), .large])
         .presentationDragIndicator(.visible)
         .presentationContentInteraction(.scrolls)
+        .onAppear {
+          traceMapDetailTiming("sheet content onAppear")
+        }
+        .onDisappear {
+          traceMapDetailTiming("sheet content onDisappear")
+        }
       }
     }
   }
@@ -871,14 +1244,50 @@ private struct PlacesMap: View {
     cameraPosition = .item(item, allowsAutomaticPitch: false)
   }
 
+  private var detailSheetBinding: Binding<MappedPlaceGroup?> {
+    Binding(
+      get: { detailGroup },
+      set: { group in
+        traceMapDetailTiming("sheet binding -> \(group?.id ?? "nil")")
+        detailGroup = group
+        if group == nil {
+          clearSelectedPlace()
+        }
+      }
+    )
+  }
+
   private func clearSelectedPlace() {
+    traceMapDetailTiming("clearSelectedPlace")
     selectedGroupID = nil
     dismissSelectedPlace()
   }
 
   private func dismissSelectedPlace() {
+    traceMapDetailTiming("dismissSelectedPlace")
     detailGroup = nil
     preferredDetailEntryID = nil
+  }
+
+  private func traceMapDetailTiming(_ event: String) {
+    let line = "[MapDetailTiming] \(ProcessInfo.processInfo.systemUptime) \(event)\n"
+    print(line, terminator: "")
+
+    guard let data = line.data(using: .utf8),
+          let documentsURL = FileManager.default.urls(
+            for: .documentDirectory,
+            in: .userDomainMask
+          ).first
+    else { return }
+
+    let logURL = documentsURL.appendingPathComponent("map-detail-timing.log")
+    if let handle = try? FileHandle(forWritingTo: logURL) {
+      defer { try? handle.close() }
+      try? handle.seekToEnd()
+      try? handle.write(contentsOf: data)
+    } else {
+      try? data.write(to: logURL, options: .atomic)
+    }
   }
 
   private func collapseSearch() {
@@ -1176,6 +1585,107 @@ private struct EntryDetailContent: View {
   }
 }
 
+private struct SourceMetadataCard: View {
+  let sourceURL: URL
+  let sourcePlatform: String
+  let creator: String?
+  let primaryText: String?
+  let secondaryText: String?
+  let detailText: String?
+  let mediaReferenceText: String?
+
+  private var platformName: String {
+    let platform = sourcePlatform.trimmingCharacters(in: .whitespacesAndNewlines)
+    if platform.caseInsensitiveCompare("youtube") == .orderedSame { return "YouTube" }
+    if platform.caseInsensitiveCompare("instagram") == .orderedSame { return "Instagram" }
+    return platform.isEmpty ? "Original post" : platform.capitalized
+  }
+
+  private var displayTitle: String {
+    if let primaryText, !primaryText.isEmpty { return primaryText }
+    if let creator, !creator.isEmpty { return creator }
+    return "\(platformName) post"
+  }
+
+  private var brandAssetName: String? {
+    let platform = sourcePlatform.lowercased()
+    let host = sourceURL.host?.lowercased() ?? ""
+    if platform.contains("instagram") || host.contains("instagram") {
+      return "InstagramBrandIcon"
+    }
+    if platform.contains("youtube") || host.contains("youtube.com") || host.contains("youtu.be") {
+      return "YouTubeBrandIcon"
+    }
+    return nil
+  }
+
+  private var fallbackSystemImage: String {
+    let host = sourceURL.host?.lowercased() ?? ""
+    if host.contains("instagram") { return "camera" }
+    if host.contains("youtube.com") || host.contains("youtu.be") {
+      return "play.rectangle.fill"
+    }
+    if host.contains("tiktok") { return "music.note" }
+    return "link"
+  }
+
+  var body: some View {
+    Link(destination: sourceURL) {
+      VStack(alignment: .leading, spacing: 10) {
+        HStack(spacing: 10) {
+          if let brandAssetName {
+            Image(brandAssetName)
+              .resizable()
+              .scaledToFit()
+              .frame(width: 30, height: 30)
+              .accessibilityHidden(true)
+          } else {
+            Image(systemName: fallbackSystemImage)
+              .font(.subheadline.weight(.semibold))
+              .foregroundStyle(.white)
+              .frame(width: 30, height: 30)
+              .background(.blue, in: RoundedRectangle(cornerRadius: 8))
+              .accessibilityHidden(true)
+          }
+
+          VStack(alignment: .leading, spacing: 2) {
+            Text(displayTitle)
+              .font(.subheadline.weight(.semibold))
+            Text(secondaryText ?? platformName)
+              .font(.caption)
+              .foregroundStyle(.secondary)
+          }
+
+          Spacer(minLength: 8)
+
+          Image(systemName: "arrow.up.right")
+            .font(.caption.weight(.bold))
+            .foregroundStyle(.blue)
+        }
+
+        if let detailText, !detailText.isEmpty {
+          Text(detailText)
+            .font(.subheadline)
+            .lineLimit(3)
+        }
+
+        if let mediaReferenceText {
+          Label(mediaReferenceText, systemImage: "play.rectangle")
+            .font(.caption)
+            .foregroundStyle(.secondary)
+        }
+      }
+      .padding(14)
+      .frame(maxWidth: .infinity, alignment: .leading)
+      .contentShape(Rectangle())
+    }
+    .buttonStyle(.plain)
+    .background(.secondary.opacity(0.08), in: RoundedRectangle(cornerRadius: 14))
+    .clipShape(RoundedRectangle(cornerRadius: 14))
+    .accessibilityHint("Opens the original post")
+  }
+}
+
 private struct EntrySourceCard: View {
   let source: SavedEntrySource
 
@@ -1190,71 +1700,16 @@ private struct EntrySourceCard: View {
     return platform.isEmpty ? "Original post" : platform.capitalized
   }
 
-  private var brandAssetName: String? {
-    let platform = source.sourcePlatform.lowercased()
-    let host = source.sourceURL.host?.lowercased() ?? ""
-    if platform.contains("instagram") || host.contains("instagram") {
-      return "InstagramBrandIcon"
-    }
-    if platform.contains("youtube") || host.contains("youtube.com") || host.contains("youtu.be") {
-      return "YouTubeBrandIcon"
-    }
-    return nil
-  }
-
   var body: some View {
-    Link(destination: source.linkedSourceURL) {
-      VStack(alignment: .leading, spacing: 10) {
-        HStack(spacing: 10) {
-          if let brandAssetName {
-            Image(brandAssetName)
-              .resizable()
-              .scaledToFit()
-              .frame(width: 30, height: 30)
-              .accessibilityHidden(true)
-          } else {
-            Image(systemName: source.sourceSystemImage)
-              .font(.subheadline.weight(.semibold))
-              .foregroundStyle(.white)
-              .frame(width: 30, height: 30)
-              .background(.blue, in: RoundedRectangle(cornerRadius: 8))
-              .accessibilityHidden(true)
-          }
-
-          VStack(alignment: .leading, spacing: 2) {
-            Text(source.sourceLinkText)
-              .font(.subheadline.weight(.semibold))
-            Text(platformName)
-              .font(.caption)
-              .foregroundStyle(.secondary)
-          }
-
-          Spacer(minLength: 8)
-
-          Image(systemName: "arrow.up.right")
-            .font(.caption.weight(.bold))
-            .foregroundStyle(.blue)
-        }
-
-        if !description.isEmpty {
-          Text(description)
-            .font(.subheadline)
-        }
-
-        if let mediaReference = source.mediaReferenceText {
-          Label(mediaReference, systemImage: source.mediaReferenceSystemImage)
-            .font(.caption)
-            .foregroundStyle(.secondary)
-          }
-      }
-      .padding(14)
-      .frame(maxWidth: .infinity, alignment: .leading)
-      .contentShape(Rectangle())
-    }
-    .buttonStyle(.plain)
-    .background(.secondary.opacity(0.08), in: RoundedRectangle(cornerRadius: 14))
-    .clipShape(RoundedRectangle(cornerRadius: 14))
-    .accessibilityHint("Opens the original post")
+    SourceMetadataCard(
+      sourceURL: source.linkedSourceURL,
+      sourcePlatform: source.sourcePlatform,
+      creator: source.creator,
+      primaryText: source.sourceLinkText,
+      secondaryText: source.creator ?? platformName,
+      detailText: description,
+      mediaReferenceText: source.mediaReferenceText
+    )
   }
 }
 

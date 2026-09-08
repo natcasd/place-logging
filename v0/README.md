@@ -29,6 +29,10 @@ optionally resolves physical locations through Google Places.
   source-specific description remains stored. Deleting that card removes only its
   Entry and source connections; source posts and other entries at the same location
   remain saved.
+- Activity detail shows every recommendation extracted from one source. Resolved
+  recommendations appear on its map, unresolved location-based recommendations can
+  be deleted, and ambiguous recommendations expand so the user can confirm one of
+  the stored location candidates. General field editing is intentionally absent.
 - Existing place rows migrate in place with `Unknown` as their temporary type. Before
   the first additive migration, the service creates a timestamped SQLite backup
   beside the database.
@@ -217,7 +221,6 @@ python backfill_duplicate_sources.py \
 
 ## Known gaps
 
-- Disambiguation of `needs_review` location candidates is not yet available in the UI.
 - TikTok is temporarily unsupported while its upstream downloader support is unstable.
 - Instagram download/rate-limit failures that happen before media archival are
   not yet recoverable automatically.

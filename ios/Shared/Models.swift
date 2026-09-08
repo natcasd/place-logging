@@ -406,29 +406,104 @@ struct IngestResponse: Decodable, Sendable {
   }
 }
 
+struct ReviewLocationCandidate: Decodable, Identifiable, Sendable, Hashable {
+  let id: String
+  let name: String
+  let formattedAddress: String?
+  let latitude: Double?
+  let longitude: Double?
+
+  enum CodingKeys: String, CodingKey {
+    case id, name, latitude, longitude
+    case formattedAddress = "formatted_address"
+  }
+}
+
 struct SavedEntryOutcome: Decodable, Identifiable, Sendable, Hashable {
   let entryID: Int
+  let sourceConnectionID: Int?
+  let ordinal: Int
   let name: String
   let type: String
   let locationID: Int?
   let locationName: String?
   let latitude: Double?
   let longitude: Double?
+  let formattedAddress: String?
+  let googleMapsURL: URL?
+  let timestampSeconds: Double?
+  let slideIndex: Int?
   let resolutionStatus: String
+  let reviewCandidates: [ReviewLocationCandidate]
   let isNew: Bool
   let sourceCount: Int
 
   var id: Int { entryID }
   var hasLocation: Bool { locationID != nil && latitude != nil && longitude != nil }
 
+  var mediaReferenceText: String? {
+    let timestamp = timestampSeconds.map(Self.formatTimestamp)
+    switch (slideIndex, timestamp) {
+    case let (.some(slide), .some(time)):
+      return "Slide \(slide) · Appears at \(time)"
+    case let (.some(slide), .none):
+      return "Slide \(slide)"
+    case let (.none, .some(time)):
+      return "Appears at \(time)"
+    case (.none, .none):
+      return nil
+    }
+  }
+
   enum CodingKeys: String, CodingKey {
-    case name, type, latitude, longitude
+    case name, type, ordinal, latitude, longitude
     case entryID = "entry_id"
+    case sourceConnectionID = "source_connection_id"
     case locationID = "location_id"
     case locationName = "location_name"
+    case formattedAddress = "formatted_address"
+    case googleMapsURL = "google_maps_url"
+    case timestampSeconds = "timestamp_seconds"
+    case slideIndex = "slide_index"
     case resolutionStatus = "resolution_status"
+    case reviewCandidates = "review_candidates"
     case isNew = "is_new"
     case sourceCount = "source_count"
+  }
+
+  init(from decoder: Decoder) throws {
+    let values = try decoder.container(keyedBy: CodingKeys.self)
+    entryID = try values.decode(Int.self, forKey: .entryID)
+    sourceConnectionID = try values.decodeIfPresent(Int.self, forKey: .sourceConnectionID)
+    ordinal = try values.decodeIfPresent(Int.self, forKey: .ordinal) ?? 0
+    name = try values.decode(String.self, forKey: .name)
+    type = try values.decode(String.self, forKey: .type)
+    locationID = try values.decodeIfPresent(Int.self, forKey: .locationID)
+    locationName = try values.decodeIfPresent(String.self, forKey: .locationName)
+    latitude = try values.decodeIfPresent(Double.self, forKey: .latitude)
+    longitude = try values.decodeIfPresent(Double.self, forKey: .longitude)
+    formattedAddress = try values.decodeIfPresent(String.self, forKey: .formattedAddress)
+    googleMapsURL = try values.decodeIfPresent(URL.self, forKey: .googleMapsURL)
+    timestampSeconds = try values.decodeIfPresent(Double.self, forKey: .timestampSeconds)
+    slideIndex = try values.decodeIfPresent(Int.self, forKey: .slideIndex)
+    resolutionStatus = try values.decode(String.self, forKey: .resolutionStatus)
+    reviewCandidates = try values.decodeIfPresent(
+      [ReviewLocationCandidate].self,
+      forKey: .reviewCandidates
+    ) ?? []
+    isNew = try values.decode(Bool.self, forKey: .isNew)
+    sourceCount = try values.decode(Int.self, forKey: .sourceCount)
+  }
+
+  private static func formatTimestamp(_ value: Double) -> String {
+    let totalSeconds = max(0, Int(value.rounded()))
+    let hours = totalSeconds / 3600
+    let minutes = (totalSeconds % 3600) / 60
+    let seconds = totalSeconds % 60
+    if hours > 0 {
+      return String(format: "%d:%02d:%02d", hours, minutes, seconds)
+    }
+    return String(format: "%d:%02d", minutes, seconds)
   }
 }
 
