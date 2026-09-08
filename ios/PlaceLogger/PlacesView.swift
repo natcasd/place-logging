@@ -390,6 +390,7 @@ private struct MappedPlaceGroup: Identifiable {
   var places: [SavedEntry]
 
   var primary: SavedEntry { places[0] }
+  var category: SavedCategory { SavedCategory.category(for: primary.displayType) }
   var name: String {
     if let googleName = places.compactMap(\.locationName).first(where: { !$0.isEmpty }) {
       return googleName
@@ -626,7 +627,11 @@ private struct PlacesMap: View {
         UserAnnotation()
 
         ForEach(groups) { group in
-          Marker(group.name, coordinate: group.coordinate)
+          Marker(
+            group.name,
+            systemImage: group.category.icon,
+            coordinate: group.coordinate
+          )
             .tint(.red)
             .tag(group.id)
         }
