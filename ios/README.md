@@ -1,4 +1,4 @@
-# Place Logger for iPhone
+# Jot for iPhone
 
 The native MVP contains two targets:
 

@@ -9,7 +9,7 @@
 	<key>CFBundleDevelopmentRegion</key>
 	<string>$(DEVELOPMENT_LANGUAGE)</string>
 	<key>CFBundleDisplayName</key>
-	<string>Place Logger</string>
+	<string>Jot</string>
 	<key>CFBundleExecutable</key>
 	<string>$(EXECUTABLE_NAME)</string>
 	<key>CFBundleIdentifier</key>
@@ -25,7 +25,7 @@
 	<key>CFBundleVersion</key>
 	<string>1</string>
 	<key>NSLocationWhenInUseUsageDescription</key>
-	<string>Place Logger uses your location to open the saved-place map near you and recenter it when requested.</string>
+	<string>Jot uses your location to open the saved-place map near you and recenter it when requested.</string>
 	<key>UILaunchScreen</key>
 	<dict/>
 </dict>
