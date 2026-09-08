@@ -120,18 +120,23 @@ struct SavedEntry: Decodable, Identifiable, Sendable {
     return "link"
   }
 
-  var appleMapsURL: URL? {
-    guard latitude != nil || formattedAddress != nil else { return nil }
+  /// A precise-location fallback for Apple Maps when its place search cannot
+  /// confidently identify the venue. With `ll`, Apple Maps uses `q` only as
+  /// the pin's label, so this intentionally does not claim to be a listing.
+  var appleMapsFallbackURL: URL? {
     var components = URLComponents(string: "https://maps.apple.com/")
     let venueName = locationName?.trimmingCharacters(in: .whitespacesAndNewlines)
     let queryName = venueName.flatMap { $0.isEmpty ? nil : $0 } ?? name
-    var items = [URLQueryItem(name: "q", value: queryName)]
     if let latitude, let longitude {
-      items.append(URLQueryItem(name: "ll", value: "\(latitude),\(longitude)"))
+      components?.queryItems = [
+        URLQueryItem(name: "q", value: queryName),
+        URLQueryItem(name: "ll", value: "\(latitude),\(longitude)"),
+      ]
     } else if let formattedAddress {
-      items.append(URLQueryItem(name: "address", value: formattedAddress))
+      components?.queryItems = [URLQueryItem(name: "address", value: formattedAddress)]
+    } else {
+      return nil
     }
-    components?.queryItems = items
     return components?.url
   }
 
