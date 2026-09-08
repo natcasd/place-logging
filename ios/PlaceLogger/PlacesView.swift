@@ -593,6 +593,7 @@ private struct PlacesMap: View {
   let deleteEntryCard: (SavedEntry) async throws -> Void
   @StateObject private var locationModel = LocationModel()
   @StateObject private var searchModel = MapSearchModel()
+  @StateObject private var appleMapsDestinations = AppleMapsDestinationCache()
   @State private var cameraPosition: MapCameraPosition = .automatic
   @State private var selectedGroupID: String?
   @State private var detailGroup: MappedPlaceGroup?
@@ -838,7 +839,8 @@ private struct PlacesMap: View {
       }) { group in
         PlaceDetailSheet(
           group: group,
-          initialEntryID: preferredDetailEntryID
+          initialEntryID: preferredDetailEntryID,
+          appleMapsDestinations: appleMapsDestinations
         ) { entry in
           try await deleteEntryCard(entry)
         }
@@ -881,6 +883,7 @@ private struct PlacesMap: View {
 private struct PlaceDetailSheet: View {
   let group: MappedPlaceGroup
   let deleteEntry: (SavedEntry) async throws -> Void
+  @ObservedObject var appleMapsDestinations: AppleMapsDestinationCache
   @Environment(\.dismiss) private var dismiss
   @State private var entries: [SavedEntry]
   @State private var selectedEntryID: Int?
@@ -891,10 +894,12 @@ private struct PlaceDetailSheet: View {
   init(
     group: MappedPlaceGroup,
     initialEntryID: Int?,
+    appleMapsDestinations: AppleMapsDestinationCache,
     deleteEntry: @escaping (SavedEntry) async throws -> Void
   ) {
     self.group = group
     self.deleteEntry = deleteEntry
+    self.appleMapsDestinations = appleMapsDestinations
     _entries = State(initialValue: group.places)
     let requestedEntryExists = initialEntryID.map { requestedID in
       group.places.contains { $0.id == requestedID }
@@ -919,12 +924,14 @@ private struct PlaceDetailSheet: View {
             entry: selectedEntry,
             backAction: entries.count > 1 ? { selectedEntryID = nil } : nil,
             isDeleting: deletingEntryID == selectedEntry.id,
-            requestDeletion: { pendingDeletion = selectedEntry }
+            requestDeletion: { pendingDeletion = selectedEntry },
+            appleMapsDestinations: appleMapsDestinations
           )
         } else if !entries.isEmpty {
           LocationEntryPicker(
             group: MappedPlaceGroup(id: group.id, places: entries),
-            selectEntry: { selectedEntryID = $0.id }
+            selectEntry: { selectedEntryID = $0.id },
+            appleMapsDestinations: appleMapsDestinations
           )
         }
       }
@@ -985,6 +992,7 @@ private struct PlaceDetailSheet: View {
 private struct LocationEntryPicker: View {
   let group: MappedPlaceGroup
   let selectEntry: (SavedEntry) -> Void
+  @ObservedObject var appleMapsDestinations: AppleMapsDestinationCache
 
   var body: some View {
     VStack(alignment: .leading, spacing: 16) {
@@ -1000,7 +1008,7 @@ private struct LocationEntryPicker: View {
 
         Spacer(minLength: 8)
 
-        AppleMapsButton(entry: group.primary)
+        AppleMapsButton(entry: group.primary, destinations: appleMapsDestinations)
 
       }
 
@@ -1046,6 +1054,7 @@ private struct LocationEntryPicker: View {
 
 private struct AppleMapsButton: View {
   let entry: SavedEntry
+  @ObservedObject var destinations: AppleMapsDestinationCache
   @Environment(\.openURL) private var openURL
   @State private var isOpening = false
 
@@ -1057,6 +1066,14 @@ private struct AppleMapsButton: View {
       .buttonStyle(.bordered)
       .controlSize(.small)
       .disabled(isOpening)
+      .task(id: entry.id) {
+        await destinations.prefetch(entry)
+      }
+      .onDisappear {
+        if !isOpening {
+          destinations.cancelPrefetch(for: entry)
+        }
+      }
     }
   }
 
@@ -1064,7 +1081,7 @@ private struct AppleMapsButton: View {
     guard !isOpening else { return }
     isOpening = true
     Task {
-      if let mapItem = await AppleMapsDestinationResolver.resolvedMapItem(for: entry) {
+      if let mapItem = await destinations.mapItem(for: entry) {
         mapItem.openInMaps(launchOptions: nil)
       } else if let fallbackURL = entry.appleMapsFallbackURL {
         openURL(fallbackURL)
@@ -1079,6 +1096,7 @@ private struct EntryDetailContent: View {
   let backAction: (() -> Void)?
   let isDeleting: Bool
   let requestDeletion: () -> Void
+  @ObservedObject var appleMapsDestinations: AppleMapsDestinationCache
 
   var body: some View {
     VStack(alignment: .leading, spacing: 16) {
@@ -1099,7 +1117,7 @@ private struct EntryDetailContent: View {
               .font(.subheadline)
               .foregroundStyle(.secondary)
 
-            AppleMapsButton(entry: entry)
+            AppleMapsButton(entry: entry, destinations: appleMapsDestinations)
           }
 
           if let availability = entry.availabilityText {
@@ -1265,6 +1283,7 @@ private struct EntryDetailPage: View {
   @State private var isDeleting = false
   @State private var showDeleteConfirmation = false
   @State private var deletionError: String?
+  @StateObject private var appleMapsDestinations = AppleMapsDestinationCache()
 
   var body: some View {
     ScrollView {
@@ -1272,7 +1291,8 @@ private struct EntryDetailPage: View {
         entry: entry,
         backAction: nil,
         isDeleting: isDeleting,
-        requestDeletion: { showDeleteConfirmation = true }
+        requestDeletion: { showDeleteConfirmation = true },
+        appleMapsDestinations: appleMapsDestinations
       )
       .padding(.horizontal)
       .padding(.top, 14)
