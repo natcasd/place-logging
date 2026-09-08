@@ -98,10 +98,8 @@ struct PlacesView: View {
           TabView(selection: $selectedTab) {
             PlacesMap(
               places: model.places,
-              isRefreshing: model.isLoading,
               requestedEntryID: $requestedMapEntryID,
               selectedType: $aroundMeFilterType,
-              refresh: { await model.load() },
               deleteEntryCard: { entry in try await model.deleteEntryCard(entry) }
             )
               .tabItem {
@@ -964,10 +962,8 @@ private extension IngestActivity {
 
 private struct PlacesMap: View {
   let places: [SavedEntry]
-  let isRefreshing: Bool
   @Binding var requestedEntryID: Int?
   @Binding var selectedType: String?
-  let refresh: () async -> Void
   let deleteEntryCard: (SavedEntry) async throws -> Void
   @StateObject private var locationModel = LocationModel()
   @StateObject private var searchModel = MapSearchModel()
@@ -980,6 +976,7 @@ private struct PlacesMap: View {
   @State private var searchResult: MKMapItem?
   @State private var visibleRegion: MKCoordinateRegion?
   @State private var hasChosenInitialCamera = false
+  @State private var shouldCenterOnNextLocation = false
   @State private var isSearchExpanded = false
   @FocusState private var searchIsFocused: Bool
 
@@ -1024,9 +1021,7 @@ private struct PlacesMap: View {
         }
       }
       .mapControls {
-        MapUserLocationButton()
         MapCompass()
-        MapScaleView()
       }
       .onMapCameraChange(frequency: .onEnd) { context in
         visibleRegion = context.region
@@ -1051,15 +1046,10 @@ private struct PlacesMap: View {
         }
       }
       .onReceive(locationModel.$location.compactMap { $0 }) { location in
-        guard !hasChosenInitialCamera else { return }
+        guard shouldCenterOnNextLocation || !hasChosenInitialCamera else { return }
+        shouldCenterOnNextLocation = false
         hasChosenInitialCamera = true
-        cameraPosition = .region(
-          MKCoordinateRegion(
-            center: location.coordinate,
-            latitudinalMeters: 4_000,
-            longitudinalMeters: 4_000
-          )
-        )
+        centerMap(on: location)
       }
       .task {
         locationModel.requestCurrentLocation()
@@ -1146,22 +1136,14 @@ private struct PlacesMap: View {
 
             Spacer(minLength: 0)
 
-            Button("Refresh", systemImage: "arrow.clockwise") {
-              Task { await refresh() }
+            Button("Current Location", systemImage: "location.fill") {
+              recenterOnCurrentLocation()
             }
             .labelStyle(.iconOnly)
             .buttonStyle(.plain)
             .font(.headline)
             .frame(width: 46, height: 46)
             .background(.regularMaterial, in: Circle())
-            .disabled(isRefreshing)
-            .overlay {
-              if isRefreshing {
-                ProgressView()
-                  .controlSize(.small)
-                  .frame(width: 46, height: 46)
-              }
-            }
           }
           .frame(maxWidth: .infinity, alignment: .leading)
 
@@ -1235,6 +1217,28 @@ private struct PlacesMap: View {
           traceMapDetailTiming("sheet content onDisappear")
         }
       }
+    }
+  }
+
+  private func recenterOnCurrentLocation() {
+    shouldCenterOnNextLocation = true
+    if let location = locationModel.location {
+      hasChosenInitialCamera = true
+      centerMap(on: location)
+    }
+    locationModel.requestCurrentLocation()
+  }
+
+  private func centerMap(on location: CLLocation) {
+    withAnimation(.easeInOut(duration: 0.25)) {
+      cameraPosition = .camera(
+        MapCamera(
+          centerCoordinate: location.coordinate,
+          distance: 4_000,
+          heading: 0,
+          pitch: 0
+        )
+      )
     }
   }
 
