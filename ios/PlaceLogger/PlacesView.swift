@@ -1,6 +1,7 @@
 import Combine
 import MapKit
 import SwiftUI
+import UIKit
 
 @MainActor
 final class PlacesModel: ObservableObject {
@@ -848,6 +849,11 @@ private struct PlacesMap: View {
         .presentationDetents([.fraction(0.58), .large])
         .presentationDragIndicator(.visible)
         .presentationContentInteraction(.scrolls)
+        .background(
+          SheetWillDismissObserver {
+            clearSelectedPlace()
+          }
+        )
       }
     }
   }
@@ -887,6 +893,47 @@ private struct PlacesMap: View {
     searchIsFocused = false
     withAnimation(.snappy) {
       isSearchExpanded = false
+    }
+  }
+}
+
+private struct SheetWillDismissObserver: UIViewControllerRepresentable {
+  let action: () -> Void
+
+  func makeUIViewController(context: Context) -> DismissObserverViewController {
+    DismissObserverViewController(action: action)
+  }
+
+  func updateUIViewController(_ viewController: DismissObserverViewController, context: Context) {
+    viewController.action = action
+  }
+
+  final class DismissObserverViewController: UIViewController {
+    var action: () -> Void
+    private var hasNotified = false
+
+    init(action: @escaping () -> Void) {
+      self.action = action
+      super.init(nibName: nil, bundle: nil)
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+      fatalError("init(coder:) has not been implemented")
+    }
+
+    override func viewDidAppear(_ animated: Bool) {
+      super.viewDidAppear(animated)
+      hasNotified = false
+    }
+
+    override func viewWillDisappear(_ animated: Bool) {
+      super.viewWillDisappear(animated)
+      guard !hasNotified,
+            isBeingDismissed || parent?.isBeingDismissed == true || navigationController?.isBeingDismissed == true
+      else { return }
+      hasNotified = true
+      action()
     }
   }
 }
