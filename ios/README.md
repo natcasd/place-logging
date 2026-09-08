@@ -29,11 +29,13 @@ Instagram's `img_index` parameter. Caption-only matches leave the media
 reference empty rather than guessing.
 
 The map requests foreground-only location access when first opened and starts
-at a neighborhood-level view around the device. The standard location control
-recenters after browsing elsewhere. A circular search control at the top of the
-map expands into a capsule-shaped field and provides Apple Maps suggestions for
-cities, neighborhoods, addresses, and points of interest. A circular refresh
-control remains beside it; selecting a result moves the camera while leaving
+at a neighborhood-level view around the device. A single-purpose location
+control always returns to that north-up neighborhood view after browsing
+elsewhere; it does not cycle through tracking or heading modes. A circular
+search control at the top of the map expands into a capsule-shaped field and
+provides Apple Maps suggestions for cities, neighborhoods, addresses, and
+points of interest. Manual refresh remains available from the Saved and
+Activity screens; selecting a map search result moves the camera while leaving
 saved-place pins visible.
 
 ## Generate and build
