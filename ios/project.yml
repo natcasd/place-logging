@@ -26,11 +26,11 @@ targets:
     info:
       path: PlaceLogger/Info.plist
       properties:
-        CFBundleDisplayName: Place Logger
+        CFBundleDisplayName: Jot
         UILaunchScreen: {}
         APIBaseURL: https://place-logging.fly.dev
         APIToken: $(PLACE_LOGGER_API_TOKEN)
-        NSLocationWhenInUseUsageDescription: Place Logger uses your location to open the saved-place map near you and recenter it when requested.
+        NSLocationWhenInUseUsageDescription: Jot uses your location to open the saved-place map near you and recenter it when requested.
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.natcasd.placelogger
@@ -49,7 +49,7 @@ targets:
     info:
       path: PlaceLoggerShare/Info.plist
       properties:
-        CFBundleDisplayName: Save to Place Logger
+        CFBundleDisplayName: Save to Jot
         APIBaseURL: https://place-logging.fly.dev
         APIToken: $(PLACE_LOGGER_API_TOKEN)
         NSExtension:
