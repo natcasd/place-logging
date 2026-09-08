@@ -635,8 +635,13 @@ private struct ActivityDetail: View {
                       result: result,
                       isDeleting: deletingEntryID == result.entryID,
                       requestDeletion: { pendingDeletion = result },
+                      scrollToExpandedReview: {
+                        withAnimation(.easeInOut(duration: 0.25)) {
+                          scrollProxy.scrollTo(result.reviewPanelAnchorID, anchor: .center)
+                        }
+                      },
                       scrollToConfirmation: {
-                        withAnimation(.snappy) {
+                        withAnimation(.easeInOut(duration: 0.25)) {
                           scrollProxy.scrollTo(result.confirmationAnchorID, anchor: .bottom)
                         }
                       },
@@ -824,6 +829,7 @@ private struct ActivityRecommendationCard: View {
   let result: SavedEntryOutcome
   let isDeleting: Bool
   let requestDeletion: () -> Void
+  let scrollToExpandedReview: () -> Void
   let scrollToConfirmation: () -> Void
   let confirmLocation: (String) async throws -> Void
   @State private var isExpanded = false
@@ -895,12 +901,10 @@ private struct ActivityRecommendationCard: View {
       .padding(14)
       .contentShape(Rectangle())
       .onTapGesture {
-        guard canReviewCandidates, !isDeleting, !isConfirming else { return }
-        withAnimation(.snappy) { isExpanded.toggle() }
+        toggleReview()
       }
       .accessibilityAction(named: isExpanded ? "Collapse locations" : "Review locations") {
-        guard canReviewCandidates, !isDeleting, !isConfirming else { return }
-        withAnimation(.snappy) { isExpanded.toggle() }
+        toggleReview()
       }
 
       if canReviewCandidates && isExpanded {
@@ -969,10 +973,12 @@ private struct ActivityRecommendationCard: View {
           }
         }
         .padding(14)
-        .transition(.opacity.combined(with: .move(edge: .top)))
+        .id(result.reviewPanelAnchorID)
+        .transition(.opacity)
       }
     }
     .background(.secondary.opacity(0.08), in: RoundedRectangle(cornerRadius: 16))
+    .clipShape(RoundedRectangle(cornerRadius: 16))
     .alert(
       "Couldn’t Confirm Location",
       isPresented: Binding(
@@ -987,6 +993,15 @@ private struct ActivityRecommendationCard: View {
     .onChange(of: selectedCandidateID) { _, candidateID in
       guard candidateID != nil else { return }
       DispatchQueue.main.async { scrollToConfirmation() }
+    }
+  }
+
+  private func toggleReview() {
+    guard canReviewCandidates, !isDeleting, !isConfirming else { return }
+    let willExpand = !isExpanded
+    withAnimation(.easeInOut(duration: 0.2)) { isExpanded = willExpand }
+    if willExpand {
+      DispatchQueue.main.async { scrollToExpandedReview() }
     }
   }
 
@@ -1033,6 +1048,10 @@ private func compactActivityLocation(_ formattedAddress: String) -> String {
 }
 
 private extension SavedEntryOutcome {
+  var reviewPanelAnchorID: String {
+    "activity-review-panel-\(entryID)"
+  }
+
   var confirmationAnchorID: String {
     "activity-confirmation-\(entryID)"
   }
