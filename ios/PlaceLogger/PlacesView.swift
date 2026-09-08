@@ -493,9 +493,11 @@ private struct ActivityList: View {
                 .font(.subheadline.weight(.semibold))
                 .foregroundStyle(.primary)
 
-              Text(run.compactStatusText)
-                .font(.caption.weight(.semibold))
-                .foregroundStyle(run.statusColor)
+              if run.needsReview {
+                Label("Needs review", systemImage: "exclamationmark.circle.fill")
+                  .font(.caption.weight(.semibold))
+                  .foregroundStyle(.yellow)
+              }
             }
             .fixedSize(horizontal: true, vertical: false)
           }
@@ -978,22 +980,8 @@ private extension IngestActivity {
     "\(results.count) recommendation\(results.count == 1 ? "" : "s")"
   }
 
-  var compactStatusText: String {
-    switch status {
-    case "processing": return "Processing"
-    case "partial": return "Needs review"
-    case "failed": return "Failed"
-    default: return "All good"
-    }
-  }
-
-  var statusColor: Color {
-    switch status {
-    case "processing": return .blue
-    case "partial": return .orange
-    case "failed": return .red
-    default: return .green
-    }
+  var needsReview: Bool {
+    status == "partial"
   }
 }
 
