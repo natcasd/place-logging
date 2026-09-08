@@ -657,9 +657,11 @@ private struct PlacesMap: View {
         }
       }
       .onChange(of: selectedGroupID) { _, groupID in
-        guard let groupID, let group = groups.first(where: { $0.id == groupID }) else {
+        guard let groupID else {
+          dismissSelectedPlace()
           return
         }
+        guard let group = groups.first(where: { $0.id == groupID }) else { return }
         preferredDetailEntryID = nil
         detailGroup = group
       }
@@ -834,8 +836,7 @@ private struct PlacesMap: View {
         .padding(.bottom, 6)
       }
       .sheet(item: $detailGroup, onDismiss: {
-        selectedGroupID = nil
-        preferredDetailEntryID = nil
+        clearSelectedPlace()
       }) { group in
         PlaceDetailSheet(
           group: group,
@@ -865,9 +866,19 @@ private struct PlacesMap: View {
 
   private func showSearchResult(_ item: MKMapItem) {
     hasChosenInitialCamera = true
-    selectedGroupID = nil
+    clearSelectedPlace()
     searchResult = item
     cameraPosition = .item(item, allowsAutomaticPitch: false)
+  }
+
+  private func clearSelectedPlace() {
+    selectedGroupID = nil
+    dismissSelectedPlace()
+  }
+
+  private func dismissSelectedPlace() {
+    detailGroup = nil
+    preferredDetailEntryID = nil
   }
 
   private func collapseSearch() {
