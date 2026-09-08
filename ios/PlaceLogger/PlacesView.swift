@@ -75,117 +75,70 @@ struct PlacesView: View {
   @ObservedObject var router: PlaceLoggerRouter
   @StateObject private var model = PlacesModel()
   @Environment(\.scenePhase) private var scenePhase
-  @State private var path: [PlacesNavigation] = []
+  @State private var savedPath: [PlacesNavigation] = []
+  @State private var activityPath: [PlacesNavigation] = []
   @State private var selectedTab: PlacesTab = .aroundMe
   @State private var requestedMapEntryID: Int?
   @State private var aroundMeFilterType: String?
 
   var body: some View {
-    NavigationStack(path: $path) {
-      Group {
-        if model.isLoading && model.places.isEmpty && model.activity.isEmpty {
-          ProgressView("Loading saved entries…")
-        } else if let error = model.errorMessage,
-                  model.places.isEmpty && model.activity.isEmpty {
-          ContentUnavailableView {
-            Label("Couldn’t Load Saves", systemImage: "wifi.exclamationmark")
-          } description: {
-            Text(error)
-          } actions: {
-            Button("Try Again") { Task { await model.load() } }
-          }
-        } else {
-          TabView(selection: $selectedTab) {
-            PlacesMap(
-              places: model.places,
-              requestedEntryID: $requestedMapEntryID,
-              selectedType: $aroundMeFilterType,
-              deleteEntryCard: { entry in try await model.deleteEntryCard(entry) }
-            )
-              .tabItem {
-                Label("Around Me", systemImage: "location")
-              }
-              .tag(PlacesTab.aroundMe)
-
-            PlacesList(
-              places: model.places,
-              refresh: { await model.load() }
-            )
+    Group {
+      if model.isLoading && model.places.isEmpty && model.activity.isEmpty {
+        ProgressView("Loading saved entries…")
+      } else if let error = model.errorMessage,
+                model.places.isEmpty && model.activity.isEmpty {
+        ContentUnavailableView {
+          Label("Couldn’t Load Saves", systemImage: "wifi.exclamationmark")
+        } description: {
+          Text(error)
+        } actions: {
+          Button("Try Again") { Task { await model.load() } }
+        }
+      } else {
+        TabView(selection: $selectedTab) {
+          PlacesMap(
+            places: model.places,
+            requestedEntryID: $requestedMapEntryID,
+            selectedType: $aroundMeFilterType,
+            deleteEntryCard: { entry in try await model.deleteEntryCard(entry) }
+          )
             .tabItem {
-              Label("Saved", systemImage: "tray.full")
+              Label("Around Me", systemImage: "location")
             }
-            .tag(PlacesTab.saved)
+            .tag(PlacesTab.aroundMe)
 
-            ActivityList(activity: model.activity)
-              .tabItem {
-                Label("Activity", systemImage: "clock.arrow.circlepath")
-              }
-              .tag(PlacesTab.activity)
-          }
-        }
-      }
-      .navigationTitle(selectedTab == .aroundMe ? "" : selectedTab == .saved ? "Saved" : "Activity")
-      .navigationBarTitleDisplayMode(selectedTab == .aroundMe ? .inline : .automatic)
-      .toolbar(selectedTab == .aroundMe ? .hidden : .visible, for: .navigationBar)
-      .toolbar {
-        ToolbarItem(placement: .topBarTrailing) {
-          if selectedTab != .aroundMe {
-            if model.isLoading && !model.places.isEmpty {
-              ProgressView()
-            } else {
-              Button("Refresh", systemImage: "arrow.clockwise") {
-                Task { await model.load() }
-              }
-            }
-          }
-        }
-      }
-      .navigationDestination(for: PlacesNavigation.self) { destination in
-        switch destination {
-        case .entry(let entryID):
-          SavedItemView(
-            places: model.places.filter { $0.id == entryID },
-            isLoading: model.isLoading,
-            deleteEntry: { entry in try await model.deleteEntryCard(entry) }
-          )
-        case .activity(let ingestID):
-          if let run = model.activity.first(where: { $0.id == ingestID }) {
-            ActivityDetail(
-              activity: run,
-              deleteEntry: { entryID in
-                try await model.deleteActivityEntry(id: entryID)
-              },
-              confirmLocation: { entryID, candidateID in
-                try await model.confirmActivityLocation(
-                  ingestID: ingestID,
-                  entryID: entryID,
-                  candidateID: candidateID
-                )
-              }
-            )
-          } else {
-            ContentUnavailableView("Activity Not Found", systemImage: "clock.badge.questionmark")
-          }
-        case .legacyItem(let itemID):
-          SavedItemView(
-            places: model.places.filter { entry in
-              entry.itemID == itemID || entry.sources.contains { $0.itemID == itemID }
-            },
-            isLoading: model.isLoading,
-            deleteEntry: { entry in try await model.deleteEntryCard(entry) }
-          )
-        case .category(let type):
-          SavedCategoryList(
-            category: SavedCategory.category(for: type),
-            places: model.places.filter { $0.displayType.caseInsensitiveCompare(type) == .orderedSame },
+          RootNavigationTab(
+            path: $savedPath,
+            title: "Saved",
+            isRefreshing: model.isLoading,
             refresh: { await model.load() },
-            deletePlace: { place in try await model.delete(place) },
-            viewAroundMe: {
-              aroundMeFilterType = type
-              path = []
-              selectedTab = .aroundMe
-            }
+            content: {
+              PlacesList(
+                places: model.places,
+                refresh: { await model.load() }
+              )
+            },
+            destination: { navigationDestination(for: $0) }
           )
+          .tabItem {
+            Label("Saved", systemImage: "tray.full")
+          }
+          .tag(PlacesTab.saved)
+
+          RootNavigationTab(
+            path: $activityPath,
+            title: "Activity",
+            isRefreshing: model.isLoading,
+            refresh: { await model.load() },
+            content: {
+              ActivityList(activity: model.activity)
+            },
+            destination: { navigationDestination(for: $0) }
+          )
+          .tabItem {
+            Label("Activity", systemImage: "clock.arrow.circlepath")
+          }
+          .tag(PlacesTab.activity)
         }
       }
     }
@@ -197,29 +150,84 @@ struct PlacesView: View {
       case .mapEntry(let entryID):
         if let entry = model.places.first(where: { $0.id == entryID }),
            entry.latitude != nil, entry.longitude != nil, entry.isCurrentlyRelevant {
-          path = []
+          savedPath = []
+          activityPath = []
           selectedTab = .aroundMe
           aroundMeFilterType = nil
           requestedMapEntryID = entryID
         } else {
+          activityPath = []
           selectedTab = .saved
-          path = [.entry(entryID)]
+          savedPath = [.entry(entryID)]
         }
       case .savedEntry(let entryID):
+        activityPath = []
         selectedTab = .saved
-        path = [.entry(entryID)]
+        savedPath = [.entry(entryID)]
       case .activity(let ingestID):
+        savedPath = []
         selectedTab = .activity
-        path = [.activity(ingestID)]
+        activityPath = [.activity(ingestID)]
       case .legacyItem(let itemID):
+        activityPath = []
         selectedTab = .saved
-        path = [.legacyItem(itemID)]
+        savedPath = [.legacyItem(itemID)]
       }
       router.pendingDestination = nil
     }
     .onChange(of: scenePhase) { _, phase in
       guard phase == .active else { return }
       Task { await model.load() }
+    }
+  }
+
+  @ViewBuilder
+  private func navigationDestination(for destination: PlacesNavigation) -> some View {
+    switch destination {
+    case .entry(let entryID):
+      SavedItemView(
+        places: model.places.filter { $0.id == entryID },
+        isLoading: model.isLoading,
+        deleteEntry: { entry in try await model.deleteEntryCard(entry) }
+      )
+    case .activity(let ingestID):
+      if let run = model.activity.first(where: { $0.id == ingestID }) {
+        ActivityDetail(
+          activity: run,
+          deleteEntry: { entryID in
+            try await model.deleteActivityEntry(id: entryID)
+          },
+          confirmLocation: { entryID, candidateID in
+            try await model.confirmActivityLocation(
+              ingestID: ingestID,
+              entryID: entryID,
+              candidateID: candidateID
+            )
+          }
+        )
+      } else {
+        ContentUnavailableView("Activity Not Found", systemImage: "clock.badge.questionmark")
+      }
+    case .legacyItem(let itemID):
+      SavedItemView(
+        places: model.places.filter { entry in
+          entry.itemID == itemID || entry.sources.contains { $0.itemID == itemID }
+        },
+        isLoading: model.isLoading,
+        deleteEntry: { entry in try await model.deleteEntryCard(entry) }
+      )
+    case .category(let type):
+      SavedCategoryList(
+        category: SavedCategory.category(for: type),
+        places: model.places.filter { $0.displayType.caseInsensitiveCompare(type) == .orderedSame },
+        refresh: { await model.load() },
+        deletePlace: { place in try await model.delete(place) },
+        viewAroundMe: {
+          aroundMeFilterType = type
+          savedPath = []
+          selectedTab = .aroundMe
+        }
+      )
     }
   }
 }
@@ -235,6 +243,38 @@ private enum PlacesNavigation: Hashable {
   case activity(Int)
   case legacyItem(Int)
   case category(String)
+}
+
+private struct RootNavigationTab<Content: View, Destination: View>: View {
+  @Binding var path: [PlacesNavigation]
+  let title: String
+  let isRefreshing: Bool
+  let refresh: () async -> Void
+  let content: () -> Content
+  let destination: (PlacesNavigation) -> Destination
+
+  var body: some View {
+    NavigationStack(path: $path) {
+      content()
+        .navigationTitle(title)
+        .navigationBarTitleDisplayMode(.large)
+        .toolbar {
+          ToolbarItem(placement: .topBarTrailing) {
+            if isRefreshing {
+              ProgressView()
+            } else {
+              Button("Refresh", systemImage: "arrow.clockwise") {
+                Task { await refresh() }
+              }
+            }
+          }
+        }
+        .navigationDestination(for: PlacesNavigation.self) { route in
+          destination(route)
+            .toolbar(.hidden, for: .tabBar)
+        }
+    }
+  }
 }
 
 private struct PlacesList: View {
