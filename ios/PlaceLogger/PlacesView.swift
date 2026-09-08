@@ -479,39 +479,72 @@ private struct ActivityList: View {
     } else {
       List(activity) { run in
         NavigationLink(value: PlacesNavigation.activity(run.id)) {
-          VStack(alignment: .leading, spacing: 6) {
-            HStack(spacing: 8) {
-              Image(systemName: run.statusSystemImage)
-                .foregroundStyle(run.statusColor)
-              Text(run.title)
-                .font(.headline)
-              Spacer()
-              Text(run.statusText)
+          HStack(spacing: 12) {
+            ActivitySourceIcon(activity: run)
+
+            Text(run.title)
+              .font(.headline)
+              .lineLimit(1)
+
+            Spacer(minLength: 12)
+
+            VStack(alignment: .trailing, spacing: 3) {
+              Text(run.recommendationCountText)
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(.primary)
+
+              Text(run.compactStatusText)
                 .font(.caption.weight(.semibold))
                 .foregroundStyle(run.statusColor)
             }
-
-            if !run.results.isEmpty {
-              Text(run.results.prefix(3).map { "\($0.type) · \($0.name)" }.joined(separator: ", "))
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
-                .lineLimit(2)
-            } else if let message = run.errorMessage ?? run.events.last?.message {
-              Text(message)
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
-                .lineLimit(2)
-            }
-
-            Text(run.startedAt)
-              .font(.caption)
-              .foregroundStyle(.tertiary)
+            .fixedSize(horizontal: true, vertical: false)
           }
-          .padding(.vertical, 5)
+          .padding(.vertical, 7)
         }
       }
       .listStyle(.plain)
     }
+  }
+}
+
+private struct ActivitySourceIcon: View {
+  let activity: IngestActivity
+
+  private var brandAssetName: String? {
+    let platform = activity.sourcePlatform.lowercased()
+    let host = activity.sourceURL.host?.lowercased() ?? ""
+    if platform.contains("instagram") || host.contains("instagram") {
+      return "InstagramBrandIcon"
+    }
+    if platform.contains("youtube") || host.contains("youtube.com") || host.contains("youtu.be") {
+      return "YouTubeBrandIcon"
+    }
+    return nil
+  }
+
+  private var fallbackSystemImage: String {
+    let platform = activity.sourcePlatform.lowercased()
+    let host = activity.sourceURL.host?.lowercased() ?? ""
+    if platform.contains("tiktok") || host.contains("tiktok") { return "music.note" }
+    return "link"
+  }
+
+  var body: some View {
+    Group {
+      if let brandAssetName {
+        Image(brandAssetName)
+          .resizable()
+          .scaledToFit()
+      } else {
+        Image(systemName: fallbackSystemImage)
+          .font(.subheadline.weight(.semibold))
+          .foregroundStyle(.white)
+          .frame(width: 32, height: 32)
+          .background(.blue, in: RoundedRectangle(cornerRadius: 8))
+      }
+    }
+    .frame(width: 32, height: 32)
+    .accessibilityHidden(true)
   }
 }
 
@@ -941,12 +974,16 @@ private func activityDeleteMessage(_ result: SavedEntryOutcome) -> String {
 }
 
 private extension IngestActivity {
-  var statusSystemImage: String {
+  var recommendationCountText: String {
+    "\(results.count) recommendation\(results.count == 1 ? "" : "s")"
+  }
+
+  var compactStatusText: String {
     switch status {
-    case "processing": return "arrow.triangle.2.circlepath"
-    case "partial": return "exclamationmark.circle.fill"
-    case "failed": return "xmark.circle.fill"
-    default: return "checkmark.circle.fill"
+    case "processing": return "Processing"
+    case "partial": return "Needs review"
+    case "failed": return "Failed"
+    default: return "All good"
     }
   }
 
