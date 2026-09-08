@@ -99,7 +99,7 @@ enum AppleMapsDestinationResolver {
   private static let strictCoordinateDistance: CLLocationDistance = 75
   private static let addressVerifiedDistance: CLLocationDistance = 400
 
-  static func resolvedMapItem(for entry: SavedEntry) async -> MKMapItem? {
+  static func makeSearch(for entry: SavedEntry) -> MKLocalSearch? {
     guard let coordinate = entry.coordinate else { return nil }
 
     let name = entry.mapVenueName
@@ -120,8 +120,13 @@ enum AppleMapsDestinationResolver {
       request.regionPriority = .required
     }
 
+    return MKLocalSearch(request: request)
+  }
+
+  static func resolvedMapItem(for entry: SavedEntry, using search: MKLocalSearch) async -> MKMapItem? {
+    guard let coordinate = entry.coordinate else { return nil }
     do {
-      let response = try await MKLocalSearch(request: request).start()
+      let response = try await search.start()
       let matches = response.mapItems.filter { isDirectMatch($0, for: entry, coordinate: coordinate) }
       return matches.count == 1 ? matches[0] : nil
     } catch {
@@ -190,6 +195,90 @@ enum AppleMapsDestinationResolver {
       .reduce(into: "") { $0.append($1) }
       .split(whereSeparator: \.isWhitespace)
       .joined(separator: " ")
+  }
+}
+
+/// Keeps Apple Maps lookups off the interaction path. It shares an in-flight
+/// lookup with a Maps tap, retains completed answers for the current map
+/// session, and lets a disappearing detail view cancel work that is no longer
+/// useful.
+@MainActor
+final class AppleMapsDestinationCache: ObservableObject {
+  private enum Destination {
+    case mapItem(MKMapItem)
+    case fallback
+
+    var mapItem: MKMapItem? {
+      if case let .mapItem(item) = self { return item }
+      return nil
+    }
+  }
+
+  private struct Key: Hashable {
+    let entryID: Int
+    let name: String
+    let address: String?
+    let latitude: Double?
+    let longitude: Double?
+
+    init(_ entry: SavedEntry) {
+      entryID = entry.id
+      name = entry.mapVenueName
+      address = entry.formattedAddress
+      latitude = entry.latitude
+      longitude = entry.longitude
+    }
+  }
+
+  private struct Pending {
+    let id: UUID
+    let search: MKLocalSearch
+    let task: Task<Destination, Never>
+  }
+
+  private var cached: [Key: Destination] = [:]
+  private var pending: [Key: Pending] = [:]
+
+  func prefetch(_ entry: SavedEntry) async {
+    _ = await mapItem(for: entry)
+  }
+
+  func mapItem(for entry: SavedEntry) async -> MKMapItem? {
+    let key = Key(entry)
+    if let cached = cached[key] {
+      return cached.mapItem
+    }
+    if let pending = pending[key] {
+      return (await pending.task.value).mapItem
+    }
+    guard let search = AppleMapsDestinationResolver.makeSearch(for: entry) else {
+      cached[key] = .fallback
+      return nil
+    }
+
+    let requestID = UUID()
+    let task = Task { [entry, search] in
+      if let mapItem = await AppleMapsDestinationResolver.resolvedMapItem(for: entry, using: search) {
+        return Destination.mapItem(mapItem)
+      }
+      return Destination.fallback
+    }
+    pending[key] = Pending(id: requestID, search: search, task: task)
+
+    let destination = await task.value
+    guard pending[key]?.id == requestID else { return destination.mapItem }
+    pending.removeValue(forKey: key)
+    if !task.isCancelled {
+      cached[key] = destination
+    }
+    return destination.mapItem
+  }
+
+  func cancelPrefetch(for entry: SavedEntry) {
+    let key = Key(entry)
+    guard let pending = pending.removeValue(forKey: key) else { return }
+    pending.search.cancel()
+    pending.task.cancel()
   }
 }
 
