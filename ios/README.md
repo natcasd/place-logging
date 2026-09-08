@@ -16,10 +16,11 @@ migrate these to APNs notifications sent by the backend so taps can launch the
 app and navigate to the logged result. Native shares use response-only API
 delivery, so they do not also send Telegram progress or result messages.
 
-The map shows resolved restaurants as selectable pins. Repeated saves with the
-same Google Place ID share one pin while retaining every recommendation and
-original source post in the detail sheet. Places without resolved coordinates
-remain available in the list.
+The map shows resolved places as selectable pins. Pins use the saved place
+type's icon (for example, a fork and knife for restaurants or a tree for
+parks). Repeated saves with the same Google Place ID share one pin while
+retaining every recommendation and original source post in the detail sheet.
+Places without resolved coordinates remain available in the list.
 
 New saves retain where each place appears in its source. Reel and YouTube
 results show the start of the place's main section as a timestamp. Instagram
