@@ -479,32 +479,33 @@ private struct ActivityList: View {
     } else {
       List(activity) { run in
         NavigationLink(value: PlacesNavigation.activity(run.id)) {
-          HStack(spacing: 12) {
+          HStack(alignment: .center, spacing: 12) {
             ActivitySourceIcon(activity: run)
 
-            Text(run.title)
-              .font(.headline)
-              .lineLimit(1)
-
-            Spacer(minLength: 12)
-
-            VStack(alignment: .trailing, spacing: 3) {
-              Text(run.recommendationCountText)
-                .font(.subheadline.weight(.semibold))
-                .foregroundStyle(.primary)
+            VStack(alignment: .leading, spacing: 4) {
+              Text(run.title)
+                .font(.headline)
                 .lineLimit(1)
 
-              if run.needsReview {
-                HStack(spacing: 4) {
-                  Image(systemName: "exclamationmark.circle.fill")
-                  Text("Needs review")
-                }
-                  .font(.caption.weight(.semibold))
-                  .foregroundStyle(.yellow)
+              HStack(spacing: 8) {
+                Text(run.recommendationCountText)
+                  .font(.subheadline)
+                  .foregroundStyle(.secondary)
                   .lineLimit(1)
+
+                Spacer(minLength: 8)
+
+                if run.needsReview {
+                  HStack(spacing: 4) {
+                    Image(systemName: "exclamationmark.circle.fill")
+                    Text("Needs review")
+                  }
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.yellow)
+                    .lineLimit(1)
+                }
               }
             }
-            .layoutPriority(1)
           }
           .padding(.vertical, 7)
         }
@@ -982,7 +983,7 @@ private func activityDeleteMessage(_ result: SavedEntryOutcome) -> String {
 
 private extension IngestActivity {
   var recommendationCountText: String {
-    "\(results.count) recommendation\(results.count == 1 ? "" : "s")"
+    "\(results.count) rec\(results.count == 1 ? "" : "s")"
   }
 
   var needsReview: Bool {
