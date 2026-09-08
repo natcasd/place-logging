@@ -95,6 +95,7 @@ extension MapSearchModel: @preconcurrency MKLocalSearchCompleterDelegate {
 /// canonical location Jot has already saved. A failed or ambiguous lookup is
 /// deliberately not an error: callers fall back to opening that saved
 /// coordinate instead of sending someone to a merely nearby business.
+@MainActor
 enum AppleMapsDestinationResolver {
   private static let strictCoordinateDistance: CLLocationDistance = 75
   private static let addressVerifiedDistance: CLLocationDistance = 400
@@ -233,7 +234,7 @@ final class AppleMapsDestinationCache: ObservableObject {
   private struct Pending {
     let id: UUID
     let search: MKLocalSearch
-    let task: Task<Destination, Never>
+    let task: Task<Void, Never>
   }
 
   private var cached: [Key: Destination] = [:]
@@ -249,7 +250,8 @@ final class AppleMapsDestinationCache: ObservableObject {
       return cached.mapItem
     }
     if let pending = pending[key] {
-      return (await pending.task.value).mapItem
+      await pending.task.value
+      return cached[key]?.mapItem
     }
     guard let search = AppleMapsDestinationResolver.makeSearch(for: entry) else {
       cached[key] = .fallback
@@ -257,21 +259,26 @@ final class AppleMapsDestinationCache: ObservableObject {
     }
 
     let requestID = UUID()
-    let task = Task { [entry, search] in
+    let task = Task { @MainActor [weak self, entry, search] in
+      let destination: Destination
       if let mapItem = await AppleMapsDestinationResolver.resolvedMapItem(for: entry, using: search) {
-        return Destination.mapItem(mapItem)
+        destination = .mapItem(mapItem)
+      } else {
+        destination = .fallback
       }
-      return Destination.fallback
+      guard !Task.isCancelled else { return }
+      self?.complete(destination, for: key, requestID: requestID)
     }
     pending[key] = Pending(id: requestID, search: search, task: task)
 
-    let destination = await task.value
-    guard pending[key]?.id == requestID else { return destination.mapItem }
+    await task.value
+    return cached[key]?.mapItem
+  }
+
+  private func complete(_ destination: Destination, for key: Key, requestID: UUID) {
+    guard pending[key]?.id == requestID else { return }
     pending.removeValue(forKey: key)
-    if !task.isCancelled {
-      cached[key] = destination
-    }
-    return destination.mapItem
+    cached[key] = destination
   }
 
   func cancelPrefetch(for entry: SavedEntry) {
