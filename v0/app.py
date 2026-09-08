@@ -64,15 +64,30 @@ class ShortcutIngestRequest(BaseModel):
     delivery: Literal["response_only", "telegram"] = "response_only"
 
 
+class ReviewLocationCandidate(BaseModel):
+    id: str
+    name: str
+    formatted_address: str | None = None
+    latitude: float | None = None
+    longitude: float | None = None
+
+
 class SavedEntryOutcome(BaseModel):
     entry_id: int
+    source_connection_id: int | None = None
+    ordinal: int = 0
     name: str
     type: str
     location_id: int | None = None
     location_name: str | None = None
     latitude: float | None = None
     longitude: float | None = None
+    formatted_address: str | None = None
+    google_maps_url: str | None = None
+    timestamp_seconds: float | None = Field(default=None, ge=0)
+    slide_index: int | None = Field(default=None, ge=1)
     resolution_status: str
+    review_candidates: list[ReviewLocationCandidate] = Field(default_factory=list)
     is_new: bool
     source_count: int = Field(ge=1)
 
@@ -204,6 +219,16 @@ class IngestActivity(BaseModel):
 
 class ActivityResponse(BaseModel):
     activity: list[IngestActivity]
+
+
+class ConfirmActivityLocationRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    candidate_id: str = Field(min_length=1, max_length=512)
+
+
+class ConfirmActivityLocationResponse(BaseModel):
+    entry: SavedEntryOutcome
 
 
 class DeletePlaceResponse(BaseModel):
@@ -493,6 +518,38 @@ def create_app(injected_runtime: Runtime | None = None) -> FastAPI:
                 detail="limit must be between 1 and 500",
             )
         return {"activity": await asyncio.to_thread(runtime.service.activity, limit)}
+
+    @application.post(
+        "/api/v1/activity/{ingest_id}/entries/{entry_id}/location",
+        response_model=ConfirmActivityLocationResponse,
+    )
+    async def confirm_activity_entry_location(
+        ingest_id: int,
+        entry_id: int,
+        payload: ConfirmActivityLocationRequest,
+        request: Request,
+        authorization: str | None = Header(default=None),
+    ) -> dict[str, Any]:
+        runtime: Runtime = request.app.state.runtime
+        _require_ingest_auth(runtime, authorization)
+        try:
+            result = await asyncio.to_thread(
+                runtime.service.confirm_activity_location,
+                ingest_id,
+                entry_id,
+                payload.candidate_id,
+            )
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=str(exc),
+            ) from exc
+        if result is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Activity recommendation not found",
+            )
+        return {"entry": result}
 
     @application.delete(
         "/api/v1/places/{place_id}",

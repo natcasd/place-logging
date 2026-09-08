@@ -913,7 +913,9 @@ def _saved_entry_outcomes(
         """SELECT t.id AS entry_id, ts.source_name AS name,
                   ts.source_type AS entry_type, t.location_id,
                   l.display_name AS location_name, l.lat, l.lng,
-                  ts.resolution_status,
+                  l.formatted_address, l.google_maps_url,
+                  ts.ordinal, ts.timestamp_seconds, ts.slide_index,
+                  ts.resolution_status, ts.resolution_candidates_json,
                   ts.id AS source_connection_id,
                   (SELECT MIN(first_ts.id)
                      FROM entry_sources AS first_ts
@@ -934,16 +936,71 @@ def _saved_entry_outcomes(
             "entry_id": row["entry_id"],
             "name": row["name"],
             "type": row["entry_type"],
-            "location_id": row["location_id"],
-            "location_name": row["location_name"],
-            "latitude": row["lat"],
-            "longitude": row["lng"],
+            "location_id": (
+                row["location_id"]
+                if row["resolution_status"] not in {"needs_review", "unresolved"}
+                else None
+            ),
+            "location_name": (
+                row["location_name"]
+                if row["resolution_status"] not in {"needs_review", "unresolved"}
+                else None
+            ),
+            "latitude": (
+                row["lat"]
+                if row["resolution_status"] not in {"needs_review", "unresolved"}
+                else None
+            ),
+            "longitude": (
+                row["lng"]
+                if row["resolution_status"] not in {"needs_review", "unresolved"}
+                else None
+            ),
+            "formatted_address": (
+                row["formatted_address"]
+                if row["resolution_status"] not in {"needs_review", "unresolved"}
+                else None
+            ),
+            "google_maps_url": (
+                row["google_maps_url"]
+                if row["resolution_status"] not in {"needs_review", "unresolved"}
+                else None
+            ),
+            "source_connection_id": row["source_connection_id"],
+            "ordinal": row["ordinal"],
+            "timestamp_seconds": row["timestamp_seconds"],
+            "slide_index": row["slide_index"],
             "resolution_status": row["resolution_status"],
+            "review_candidates": [
+                summary
+                for candidate in _decode_json_list(
+                    row["resolution_candidates_json"]
+                )
+                if (summary := _review_candidate_summary(candidate)) is not None
+            ],
             "is_new": row["source_connection_id"] == row["first_source_id"],
             "source_count": row["source_count"],
         }
         for row in rows
     ]
+
+
+def _review_candidate_summary(candidate: Any) -> dict[str, Any] | None:
+    """Return the stable subset of a Places candidate needed by review clients."""
+    if not isinstance(candidate, dict):
+        return None
+    candidate_id = candidate.get("id")
+    if not isinstance(candidate_id, str) or not candidate_id:
+        return None
+    display = candidate.get("displayName") or {}
+    location = candidate.get("location") or {}
+    return {
+        "id": candidate_id,
+        "name": display.get("text") or candidate_id,
+        "formatted_address": candidate.get("formattedAddress"),
+        "latitude": location.get("latitude"),
+        "longitude": location.get("longitude"),
+    }
 
 
 def _backfill_ingest_runs(con: sqlite3.Connection) -> None:
@@ -1038,6 +1095,11 @@ def list_ingest_runs(db_path: Path, limit: int = 200) -> list[dict[str, Any]]:
         for row in rows:
             metadata = _decode_json_object(row["raw_payload_json"])
             source_content = metadata.get("source_content") or {}
+            current_results = (
+                _saved_entry_outcomes(con, row["item_id"])
+                if row["item_id"] is not None
+                else _decode_json_list(row["result_json"])
+            )
             activity.append(
                 {
                     "id": row["id"],
@@ -1054,7 +1116,7 @@ def list_ingest_runs(db_path: Path, limit: int = 200) -> list[dict[str, Any]]:
                     "started_at": row["started_at"],
                     "updated_at": row["updated_at"],
                     "completed_at": row["completed_at"],
-                    "results": _decode_json_list(row["result_json"]),
+                    "results": current_results,
                     "events": events_by_run.get(row["id"], []),
                 }
             )
@@ -1284,6 +1346,189 @@ def _decode_json_list(value: Any) -> list[Any]:
     return decoded if isinstance(decoded, list) else []
 
 
+def _refresh_activity_results(
+    con: sqlite3.Connection,
+    item_id: int,
+    *,
+    empty_review_complete: bool = False,
+) -> None:
+    """Keep Activity status and its durable result snapshot aligned with review edits."""
+    outcomes = _saved_entry_outcomes(con, item_id)
+    if outcomes:
+        needs_review = any(
+            outcome["resolution_status"] in {"needs_review", "unresolved"}
+            for outcome in outcomes
+        )
+        run_status = "partial" if needs_review else "completed"
+    elif empty_review_complete:
+        run_status = "completed"
+    else:
+        run_status = "partial"
+
+    con.execute(
+        """UPDATE ingest_runs
+              SET status = ?, stage = 'completed', result_json = ?,
+                  updated_at = CURRENT_TIMESTAMP,
+                  completed_at = COALESCE(completed_at, CURRENT_TIMESTAMP)
+            WHERE item_id = ?""",
+        (run_status, json.dumps(outcomes, ensure_ascii=False), item_id),
+    )
+
+
+def confirm_activity_location(
+    db_path: Path,
+    ingest_id: int,
+    entry_id: int,
+    candidate_id: str,
+) -> dict[str, Any] | None:
+    """Confirm one stored review candidate for one Activity recommendation."""
+    con = _connect(db_path)
+    con.row_factory = sqlite3.Row
+    try:
+        row = con.execute(
+            """SELECT ts.*, t.name AS entry_name, t.entry_type,
+                      t.starts_at, t.ends_at, t.recurrence_text,
+                      r.item_id AS run_item_id
+                 FROM ingest_runs AS r
+                 JOIN entry_sources AS ts ON ts.item_id = r.item_id
+                 JOIN entries AS t ON t.id = ts.entry_id
+                WHERE r.id = ? AND ts.entry_id = ?""",
+            (ingest_id, entry_id),
+        ).fetchone()
+        if row is None:
+            return None
+        if row["resolution_status"] != "needs_review":
+            raise ValueError("This recommendation no longer needs location review")
+
+        candidates = _decode_json_list(row["resolution_candidates_json"])
+        candidate = next(
+            (
+                value
+                for value in candidates
+                if isinstance(value, dict) and value.get("id") == candidate_id
+            ),
+            None,
+        )
+        if candidate is None:
+            raise ValueError("Select one of the available location candidates")
+
+        candidate_location = candidate.get("location") or {}
+        if (
+            candidate_location.get("latitude") is None
+            or candidate_location.get("longitude") is None
+        ):
+            raise ValueError("The selected location is incomplete")
+
+        location_id = _upsert_location(con, candidate)
+        if location_id is None:
+            raise ValueError("The selected location is incomplete")
+
+        extracted = {
+            "extracted_name": row["source_name"],
+            "type_name": row["source_type"],
+            "starts_at": row["starts_at"],
+            "ends_at": row["ends_at"],
+            "recurrence_text": row["recurrence_text"],
+            "location_query": row["location_query"],
+        }
+        identity_key, normalized_name, type_key = _identity_key(
+            extracted,
+            row["source_type"],
+            candidate_id,
+        )
+        existing = con.execute(
+            "SELECT id FROM entries WHERE identity_key = ? AND id != ?",
+            (identity_key, entry_id),
+        ).fetchone()
+        resolved_entry_id = entry_id
+        if existing is not None:
+            target_entry_id = existing["id"]
+            duplicate_source = con.execute(
+                """SELECT 1 FROM entry_sources
+                    WHERE entry_id = ? AND item_id = ?""",
+                (target_entry_id, row["run_item_id"]),
+            ).fetchone()
+            if duplicate_source is not None:
+                raise ValueError(
+                    "That location is already attached to another recommendation from this post"
+                )
+            con.execute(
+                "UPDATE entry_sources SET entry_id = ? WHERE id = ?",
+                (target_entry_id, row["id"]),
+            )
+            con.execute(
+                "DELETE FROM entries WHERE id = ? AND NOT EXISTS "
+                "(SELECT 1 FROM entry_sources WHERE entry_id = ?)",
+                (entry_id, entry_id),
+            )
+            resolved_entry_id = target_entry_id
+        else:
+            con.execute(
+                """UPDATE entries
+                      SET location_id = ?, identity_key = ?, normalized_name = ?,
+                          type_key = ?, updated_at = CURRENT_TIMESTAMP
+                    WHERE id = ?""",
+                (location_id, identity_key, normalized_name, type_key, entry_id),
+            )
+
+        con.execute(
+            """UPDATE entries
+                  SET location_id = ?, updated_at = CURRENT_TIMESTAMP
+                WHERE id = ?""",
+            (location_id, resolved_entry_id),
+        )
+        con.execute(
+            """UPDATE entry_sources
+                  SET resolution_status = 'user_confirmed',
+                      resolution_candidates_json = NULL
+                WHERE id = ?""",
+            (row["id"],),
+        )
+
+        display = candidate.get("displayName") or {}
+        location = candidate_location
+        if row["legacy_place_id"] is not None:
+            con.execute(
+                """UPDATE places
+                      SET google_place_id = ?, lat = ?, lng = ?,
+                          formatted_address = ?, google_maps_url = ?,
+                          location_name = ?, resolution_status = 'user_confirmed',
+                          resolution_candidates_json = NULL
+                    WHERE id = ?""",
+                (
+                    candidate_id,
+                    location.get("latitude"),
+                    location.get("longitude"),
+                    candidate.get("formattedAddress"),
+                    candidate.get("googleMapsUri"),
+                    display.get("text"),
+                    row["legacy_place_id"],
+                ),
+            )
+
+        _refresh_activity_results(con, row["run_item_id"])
+        con.execute(
+            """INSERT INTO ingest_events (ingest_run_id, stage, status, message)
+               VALUES (?, 'reviewing', 'completed', ?)""",
+            (ingest_id, f"Confirmed location for {row['source_name']}"),
+        )
+        con.commit()
+        outcomes = _saved_entry_outcomes(con, row["run_item_id"])
+        return next(
+            (
+                outcome
+                for outcome in outcomes
+                if outcome["source_connection_id"] == row["id"]
+            ),
+            None,
+        )
+    except Exception:
+        con.rollback()
+        raise
+    finally:
+        con.close()
+
+
 def delete_entry(db_path: Path, entry_id: int) -> dict[str, int] | None:
     """Delete one canonical entry and its connections, retaining source posts."""
     con = _connect(db_path)
@@ -1291,7 +1536,15 @@ def delete_entry(db_path: Path, entry_id: int) -> dict[str, int] | None:
         row = con.execute("SELECT id FROM entries WHERE id = ?", (entry_id,)).fetchone()
         if row is None:
             return None
+        item_ids = [
+            value[0]
+            for value in con.execute(
+                "SELECT DISTINCT item_id FROM entry_sources WHERE entry_id = ?",
+                (entry_id,),
+            ).fetchall()
+        ]
         _delete_canonical_entries(con, [entry_id])
+        _record_activity_deletion(con, item_ids)
         con.commit()
         return {"deleted_entries": 1, "deleted_sources": 0}
     finally:
@@ -1316,7 +1569,16 @@ def delete_entries(db_path: Path, entry_ids: list[int]) -> dict[str, int] | None
         }
         if found != set(unique_ids):
             return None
+        item_ids = [
+            row[0]
+            for row in con.execute(
+                f"""SELECT DISTINCT item_id FROM entry_sources
+                    WHERE entry_id IN ({placeholders})""",
+                unique_ids,
+            ).fetchall()
+        ]
         _delete_canonical_entries(con, unique_ids)
+        _record_activity_deletion(con, item_ids)
         con.commit()
         return {"deleted_entries": len(unique_ids), "deleted_sources": 0}
     finally:
@@ -1348,6 +1610,24 @@ def _delete_canonical_entries(con: sqlite3.Connection, entry_ids: list[int]) -> 
         entry_ids,
     )
     return cursor.rowcount
+
+
+def _record_activity_deletion(
+    con: sqlite3.Connection,
+    item_ids: list[int],
+) -> None:
+    for item_id in item_ids:
+        _refresh_activity_results(con, item_id, empty_review_complete=True)
+        run = con.execute(
+            "SELECT id FROM ingest_runs WHERE item_id = ?",
+            (item_id,),
+        ).fetchone()
+        if run is not None:
+            con.execute(
+                """INSERT INTO ingest_events (ingest_run_id, stage, status, message)
+                   VALUES (?, 'reviewing', 'completed', 'Deleted recommendation')""",
+                (run[0],),
+            )
 
 
 def delete_place(db_path: Path, place_id: int) -> dict[str, int] | None:

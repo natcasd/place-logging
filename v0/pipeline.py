@@ -881,8 +881,7 @@ def resolve(place: dict[str, Any]) -> dict[str, Any]:
             query, candidates[0]
         ):
             return {
-                "status": "needs_review",
-                "candidates": candidates,
+                "status": "unresolved",
                 "reason": "venue query does not match Google candidate name",
             }
         return {"status": "auto", "place": candidates[0]}

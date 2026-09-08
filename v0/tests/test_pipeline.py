@@ -517,7 +517,7 @@ class ProcessIngestTests(unittest.TestCase):
         with patch("pipeline.requests.post", return_value=response):
             result = pipeline.resolve(entry)
 
-        self.assertEqual(result["status"], "needs_review")
+        self.assertEqual(result["status"], "unresolved")
         self.assertIn("does not match", result["reason"])
 
     @patch.dict("pipeline.os.environ", {"GOOGLE_PLACES_API_KEY": "test"})

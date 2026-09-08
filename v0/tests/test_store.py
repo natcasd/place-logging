@@ -8,6 +8,7 @@ from pathlib import Path
 
 import store
 from store import (
+    confirm_activity_location,
     delete_place,
     delete_entry,
     delete_entries,
@@ -584,6 +585,129 @@ class StoreTests(unittest.TestCase):
             self.assertEqual(run["error_type"], "RuntimeError")
             self.assertEqual(run["error_message"], "Gemini overloaded")
 
+    def test_confirms_stored_activity_location_candidate(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            db_path = Path(temp_dir) / "places.db"
+            init_db(db_path)
+            source_url = "https://www.instagram.com/reel/review/"
+            run_id = start_ingest_run(db_path, source_url, None, "instagram")
+            candidates = [
+                {
+                    "id": "places/penny-east-village",
+                    "displayName": {"text": "Penny"},
+                    "formattedAddress": "90 E 10th St, New York, NY",
+                    "googleMapsUri": "https://maps.google.com/penny",
+                    "location": {"latitude": 40.731, "longitude": -73.989},
+                },
+                {
+                    "id": "places/penny-brooklyn",
+                    "displayName": {"text": "Penny Williamsburg"},
+                    "formattedAddress": "2 Water St, Brooklyn, NY",
+                    "location": {"latitude": 40.703, "longitude": -73.995},
+                },
+            ]
+            item_id = save_ingest(
+                db_path,
+                {
+                    "source_url": source_url,
+                    "metadata": {"source_platform": "instagram"},
+                    "resolved_entries": [
+                        {
+                            "status": "needs_review",
+                            "extracted": {
+                                "extracted_name": "Penny",
+                                "type_name": "Restaurant",
+                                "timestamp_seconds": 66,
+                            },
+                            "candidates": candidates,
+                        }
+                    ],
+                },
+            )
+            before = saved_entry_outcomes(db_path, item_id)[0]
+            self.assertEqual(
+                [candidate["id"] for candidate in before["review_candidates"]],
+                ["places/penny-east-village", "places/penny-brooklyn"],
+            )
+            finish_ingest_run(
+                db_path,
+                run_id,
+                status="partial",
+                stage="completed",
+                message="Source saved with results needing review",
+                item_id=item_id,
+                outcomes=[before],
+            )
+
+            result = confirm_activity_location(
+                db_path,
+                run_id,
+                before["entry_id"],
+                "places/penny-east-village",
+            )
+
+            self.assertIsNotNone(result)
+            assert result is not None
+            self.assertEqual(result["resolution_status"], "user_confirmed")
+            self.assertEqual(result["location_name"], "Penny")
+            self.assertEqual(result["formatted_address"], "90 E 10th St, New York, NY")
+            self.assertEqual(result["review_candidates"], [])
+            self.assertEqual(result["timestamp_seconds"], 66)
+            activity = list_ingest_runs(db_path)[0]
+            self.assertEqual(activity["status"], "completed")
+            self.assertEqual(activity["results"][0]["resolution_status"], "user_confirmed")
+
+    def test_rejects_candidate_not_stored_for_activity_entry(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            db_path = Path(temp_dir) / "places.db"
+            init_db(db_path)
+            run_id = start_ingest_run(
+                db_path,
+                "https://www.instagram.com/reel/review/",
+                None,
+                "instagram",
+            )
+            item_id = save_ingest(
+                db_path,
+                {
+                    "source_url": "https://www.instagram.com/reel/review/",
+                    "metadata": {},
+                    "resolved_entries": [
+                        {
+                            "status": "needs_review",
+                            "extracted": {
+                                "extracted_name": "Penny",
+                                "type_name": "Restaurant",
+                            },
+                            "candidates": [
+                                {
+                                    "id": "places/allowed",
+                                    "displayName": {"text": "Penny"},
+                                }
+                            ],
+                        }
+                    ],
+                },
+            )
+            entry_id = saved_entry_outcomes(db_path, item_id)[0]["entry_id"]
+            finish_ingest_run(
+                db_path,
+                run_id,
+                status="partial",
+                stage="completed",
+                message="Needs review",
+                item_id=item_id,
+                outcomes=saved_entry_outcomes(db_path, item_id),
+            )
+
+            with self.assertRaisesRegex(ValueError, "available location candidates"):
+                confirm_activity_location(
+                    db_path,
+                    run_id,
+                    entry_id,
+                    "places/not-offered",
+                )
+
     def test_delete_entry_preserves_its_source(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             db_path = Path(temp_dir) / "places.db"
@@ -612,6 +736,46 @@ class StoreTests(unittest.TestCase):
             self.assertEqual(list_entries(db_path), [])
             self.assertEqual(len(list_sources(db_path)), 1)
             self.assertTrue(list_sources(db_path)[0]["needs_review"])
+
+    def test_deleting_last_activity_recommendation_completes_review(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            db_path = Path(temp_dir) / "places.db"
+            init_db(db_path)
+            source_url = "https://www.instagram.com/reel/delete-review/"
+            run_id = start_ingest_run(db_path, source_url, None, "instagram")
+            item_id = save_ingest(
+                db_path,
+                {
+                    "source_url": source_url,
+                    "metadata": {"source_platform": "instagram"},
+                    "resolved_entries": [
+                        {
+                            "status": "unresolved",
+                            "extracted": {
+                                "extracted_name": "Unknown Restaurant",
+                                "type_name": "Restaurant",
+                            },
+                        }
+                    ],
+                },
+            )
+            outcomes = saved_entry_outcomes(db_path, item_id)
+            finish_ingest_run(
+                db_path,
+                run_id,
+                status="partial",
+                stage="completed",
+                message="Needs review",
+                item_id=item_id,
+                outcomes=outcomes,
+            )
+
+            delete_entry(db_path, outcomes[0]["entry_id"])
+
+            activity = list_ingest_runs(db_path)[0]
+            self.assertEqual(activity["status"], "completed")
+            self.assertEqual(activity["results"], [])
+            self.assertEqual(len(list_sources(db_path)), 1)
 
     def test_delete_entries_removes_exact_card_rows_and_preserves_sources(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
