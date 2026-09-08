@@ -479,39 +479,80 @@ private struct ActivityList: View {
     } else {
       List(activity) { run in
         NavigationLink(value: PlacesNavigation.activity(run.id)) {
-          VStack(alignment: .leading, spacing: 6) {
-            HStack(spacing: 8) {
-              Image(systemName: run.statusSystemImage)
-                .foregroundStyle(run.statusColor)
+          HStack(alignment: .center, spacing: 12) {
+            ActivitySourceIcon(activity: run)
+
+            VStack(alignment: .leading, spacing: 4) {
               Text(run.title)
                 .font(.headline)
-              Spacer()
-              Text(run.statusText)
-                .font(.caption.weight(.semibold))
-                .foregroundStyle(run.statusColor)
-            }
+                .lineLimit(1)
 
-            if !run.results.isEmpty {
-              Text(run.results.prefix(3).map { "\($0.type) · \($0.name)" }.joined(separator: ", "))
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
-                .lineLimit(2)
-            } else if let message = run.errorMessage ?? run.events.last?.message {
-              Text(message)
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
-                .lineLimit(2)
-            }
+              HStack(spacing: 8) {
+                Text(run.recommendationCountText)
+                  .font(.subheadline)
+                  .foregroundStyle(.secondary)
+                  .lineLimit(1)
 
-            Text(run.startedAt)
-              .font(.caption)
-              .foregroundStyle(.tertiary)
+                Spacer(minLength: 8)
+
+                if run.needsReview {
+                  HStack(spacing: 4) {
+                    Image(systemName: "exclamationmark.circle.fill")
+                    Text("Needs review")
+                  }
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.yellow)
+                    .lineLimit(1)
+                }
+              }
+            }
           }
-          .padding(.vertical, 5)
+          .padding(.vertical, 7)
         }
       }
       .listStyle(.plain)
     }
+  }
+}
+
+private struct ActivitySourceIcon: View {
+  let activity: IngestActivity
+
+  private var brandAssetName: String? {
+    let platform = activity.sourcePlatform.lowercased()
+    let host = activity.sourceURL.host?.lowercased() ?? ""
+    if platform.contains("instagram") || host.contains("instagram") {
+      return "InstagramBrandIcon"
+    }
+    if platform.contains("youtube") || host.contains("youtube.com") || host.contains("youtu.be") {
+      return "YouTubeBrandIcon"
+    }
+    return nil
+  }
+
+  private var fallbackSystemImage: String {
+    let platform = activity.sourcePlatform.lowercased()
+    let host = activity.sourceURL.host?.lowercased() ?? ""
+    if platform.contains("tiktok") || host.contains("tiktok") { return "music.note" }
+    return "link"
+  }
+
+  var body: some View {
+    Group {
+      if let brandAssetName {
+        Image(brandAssetName)
+          .resizable()
+          .scaledToFit()
+      } else {
+        Image(systemName: fallbackSystemImage)
+          .font(.subheadline.weight(.semibold))
+          .foregroundStyle(.white)
+          .frame(width: 32, height: 32)
+          .background(.blue, in: RoundedRectangle(cornerRadius: 8))
+      }
+    }
+    .frame(width: 32, height: 32)
+    .accessibilityHidden(true)
   }
 }
 
@@ -547,69 +588,81 @@ private struct ActivityDetail: View {
   var body: some View {
     ZStack(alignment: .topLeading) {
       GeometryReader { geometry in
-        ScrollView {
-          LazyVStack(alignment: .leading, spacing: 0) {
-            if hasMappedLocations {
-              ActivityLocationsMap(results: activity.results)
-                .frame(height: max(230, geometry.size.height * 0.29))
-            }
-
-            LazyVStack(alignment: .leading, spacing: 16) {
-              SourceMetadataCard(
-                sourceURL: activity.sourceURL,
-                sourcePlatform: activity.sourcePlatform,
-                creator: activity.creator,
-                primaryText: sourceTitle,
-                detailText: sourceDescription,
-                mediaReferenceText: nil
-              )
-
-              if activity.status == "processing" {
-                ActivityStatePanel(
-                  title: activity.statusText,
-                  message: activity.events.last?.message,
-                  systemImage: "arrow.triangle.2.circlepath",
-                  color: .blue,
-                  showsProgress: true
-                )
-              } else if activity.status == "failed" {
-                ActivityStatePanel(
-                  title: "Processing failed",
-                  message: activity.errorMessage ?? activity.events.last?.message,
-                  systemImage: "xmark.circle.fill",
-                  color: .red,
-                  showsProgress: false
-                )
+        ScrollViewReader { scrollProxy in
+          ScrollView {
+            LazyVStack(alignment: .leading, spacing: 0) {
+              if hasMappedLocations {
+                ActivityLocationsMap(results: activity.results)
+                  .frame(height: max(230, geometry.size.height * 0.29))
               }
 
-              if !activity.results.isEmpty {
-                Text("Recommendations")
-                  .font(.title2.bold())
-                  .padding(.top, 4)
+              LazyVStack(alignment: .leading, spacing: 16) {
+                SourceMetadataCard(
+                  sourceURL: activity.sourceURL,
+                  sourcePlatform: activity.sourcePlatform,
+                  creator: activity.creator,
+                  primaryText: sourceTitle,
+                  detailText: sourceDescription,
+                  mediaReferenceText: nil
+                )
 
-                ForEach(activity.results.sorted { $0.ordinal < $1.ordinal }) { result in
-                  ActivityRecommendationCard(
-                    result: result,
-                    isDeleting: deletingEntryID == result.entryID,
-                    requestDeletion: { pendingDeletion = result },
-                    confirmLocation: { candidateID in
-                      try await confirmLocation(result.entryID, candidateID)
-                    }
+                if activity.status == "processing" {
+                  ActivityStatePanel(
+                    title: activity.statusText,
+                    message: activity.events.last?.message,
+                    systemImage: "arrow.triangle.2.circlepath",
+                    color: .blue,
+                    showsProgress: true
+                  )
+                } else if activity.status == "failed" {
+                  ActivityStatePanel(
+                    title: "Processing failed",
+                    message: activity.errorMessage ?? activity.events.last?.message,
+                    systemImage: "xmark.circle.fill",
+                    color: .red,
+                    showsProgress: false
                   )
                 }
-              } else if activity.status != "processing" && activity.status != "failed" {
-                ContentUnavailableView(
-                  "No Recommendations Kept",
-                  systemImage: "tray",
-                  description: Text("The original source post is still saved in Activity.")
-                )
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 32)
+
+                if !activity.results.isEmpty {
+                  Text("Recommendations")
+                    .font(.title2.bold())
+                    .padding(.top, 4)
+
+                  ForEach(activity.results.sorted { $0.ordinal < $1.ordinal }) { result in
+                    ActivityRecommendationCard(
+                      result: result,
+                      isDeleting: deletingEntryID == result.entryID,
+                      requestDeletion: { pendingDeletion = result },
+                      scrollToExpandedReview: {
+                        withAnimation(.easeInOut(duration: 0.25)) {
+                          scrollProxy.scrollTo(result.reviewPanelAnchorID, anchor: .center)
+                        }
+                      },
+                      scrollToConfirmation: {
+                        withAnimation(.easeInOut(duration: 0.25)) {
+                          scrollProxy.scrollTo(result.confirmationAnchorID, anchor: .bottom)
+                        }
+                      },
+                      confirmLocation: { candidateID in
+                        try await confirmLocation(result.entryID, candidateID)
+                      }
+                    )
+                  }
+                } else if activity.status != "processing" && activity.status != "failed" {
+                  ContentUnavailableView(
+                    "No Recommendations Kept",
+                    systemImage: "tray",
+                    description: Text("The original source post is still saved in Activity.")
+                  )
+                  .frame(maxWidth: .infinity)
+                  .padding(.vertical, 32)
+                }
               }
+              .padding(.horizontal)
+              .padding(.top, 16)
+              .padding(.bottom, 30)
             }
-            .padding(.horizontal)
-            .padding(.top, 16)
-            .padding(.bottom, 30)
           }
         }
       }
@@ -775,6 +828,8 @@ private struct ActivityRecommendationCard: View {
   let result: SavedEntryOutcome
   let isDeleting: Bool
   let requestDeletion: () -> Void
+  let scrollToExpandedReview: () -> Void
+  let scrollToConfirmation: () -> Void
   let confirmLocation: (String) async throws -> Void
   @State private var isExpanded = false
   @State private var selectedCandidateID: String?
@@ -809,7 +864,7 @@ private struct ActivityRecommendationCard: View {
             .font(.headline)
 
           if let address = result.formattedAddress, !address.isEmpty {
-            Text(address)
+            Text(compactActivityLocation(address))
               .font(.subheadline)
               .foregroundStyle(.secondary)
           } else if showsMissingLocation {
@@ -825,19 +880,14 @@ private struct ActivityRecommendationCard: View {
           ProgressView()
             .controlSize(.small)
             .frame(width: 34, height: 34)
-        } else if canReviewCandidates && !isExpanded {
-          Button {
-            withAnimation(.snappy) { isExpanded = true }
-          } label: {
-            HStack(spacing: 4) {
-              Text("Needs review")
-              Image(systemName: "chevron.right")
-                .font(.caption2.weight(.bold))
-            }
+        } else if canReviewCandidates {
+          HStack(spacing: 5) {
+            Text("Needs review")
+            Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
+              .font(.caption2.weight(.bold))
+          }
             .font(.caption.weight(.semibold))
             .foregroundStyle(.yellow)
-          }
-          .buttonStyle(.plain)
         } else {
           Button("Delete Recommendation", systemImage: "trash", role: .destructive) {
             requestDeletion()
@@ -848,12 +898,30 @@ private struct ActivityRecommendationCard: View {
         }
       }
       .padding(14)
+      .contentShape(Rectangle())
+      .onTapGesture {
+        toggleReview()
+      }
+      .accessibilityAction(named: isExpanded ? "Collapse locations" : "Review locations") {
+        toggleReview()
+      }
 
       if canReviewCandidates && isExpanded {
         Divider()
         VStack(alignment: .leading, spacing: 12) {
-          Text("Select the location")
-            .font(.headline)
+          HStack {
+            Text("Select the location")
+              .font(.headline)
+
+            Spacer()
+
+            Button("Delete Recommendation", systemImage: "trash", role: .destructive) {
+              requestDeletion()
+            }
+            .labelStyle(.iconOnly)
+            .buttonStyle(.plain)
+            .frame(width: 34, height: 34)
+          }
 
           VStack(spacing: 0) {
             ForEach(Array(result.reviewCandidates.enumerated()), id: \.element.id) { index, candidate in
@@ -874,7 +942,7 @@ private struct ActivityRecommendationCard: View {
                       .font(.subheadline.weight(.semibold))
                       .foregroundStyle(.primary)
                     if let address = candidate.formattedAddress, !address.isEmpty {
-                      Text(address)
+                      Text(compactActivityLocation(address))
                         .font(.caption)
                         .foregroundStyle(.secondary)
                     }
@@ -900,13 +968,16 @@ private struct ActivityRecommendationCard: View {
             }
             .buttonStyle(.borderedProminent)
             .frame(maxWidth: .infinity)
+            .id(result.confirmationAnchorID)
           }
         }
         .padding(14)
-        .transition(.opacity.combined(with: .move(edge: .top)))
+        .id(result.reviewPanelAnchorID)
+        .transition(.opacity)
       }
     }
     .background(.secondary.opacity(0.08), in: RoundedRectangle(cornerRadius: 16))
+    .clipShape(RoundedRectangle(cornerRadius: 16))
     .alert(
       "Couldn’t Confirm Location",
       isPresented: Binding(
@@ -917,6 +988,19 @@ private struct ActivityRecommendationCard: View {
       Button("OK", role: .cancel) { confirmationError = nil }
     } message: {
       Text(confirmationError ?? "Please try again.")
+    }
+    .onChange(of: selectedCandidateID) { _, candidateID in
+      guard candidateID != nil else { return }
+      DispatchQueue.main.async { scrollToConfirmation() }
+    }
+  }
+
+  private func toggleReview() {
+    guard canReviewCandidates, !isDeleting, !isConfirming else { return }
+    let willExpand = !isExpanded
+    withAnimation(.easeInOut(duration: 0.2)) { isExpanded = willExpand }
+    if willExpand {
+      DispatchQueue.main.async { scrollToExpandedReview() }
     }
   }
 
@@ -939,23 +1023,46 @@ private func activityDeleteMessage(_ result: SavedEntryOutcome) -> String {
   return "This removes \(result.name) and \(references). Original source posts stay saved."
 }
 
-private extension IngestActivity {
-  var statusSystemImage: String {
-    switch status {
-    case "processing": return "arrow.triangle.2.circlepath"
-    case "partial": return "exclamationmark.circle.fill"
-    case "failed": return "xmark.circle.fill"
-    default: return "checkmark.circle.fill"
-    }
+private func compactActivityLocation(_ formattedAddress: String) -> String {
+  let components = formattedAddress
+    .split(separator: ",")
+    .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+    .filter { !$0.isEmpty }
+
+  guard components.count > 2 else { return formattedAddress }
+
+  let componentCount = components.count >= 4 ? 3 : 2
+  let compactComponents = components.suffix(componentCount).map { component in
+    let words = component.split(separator: " ")
+    guard let postalCodeStart = words.firstIndex(where: { word in
+      word.contains(where: \Character.isNumber)
+    }) else { return component }
+    return words[..<postalCodeStart].joined(separator: " ")
+  }
+  .filter { !$0.isEmpty }
+
+  return compactComponents.isEmpty
+    ? formattedAddress
+    : compactComponents.joined(separator: ", ")
+}
+
+private extension SavedEntryOutcome {
+  var reviewPanelAnchorID: String {
+    "activity-review-panel-\(entryID)"
   }
 
-  var statusColor: Color {
-    switch status {
-    case "processing": return .blue
-    case "partial": return .orange
-    case "failed": return .red
-    default: return .green
-    }
+  var confirmationAnchorID: String {
+    "activity-confirmation-\(entryID)"
+  }
+}
+
+private extension IngestActivity {
+  var recommendationCountText: String {
+    "\(results.count) rec\(results.count == 1 ? "" : "s")"
+  }
+
+  var needsReview: Bool {
+    status == "partial"
   }
 }
 
