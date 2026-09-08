@@ -518,6 +518,7 @@ private struct ActivityList: View {
 }
 
 private struct ActivityDetail: View {
+  @Environment(\.dismiss) private var dismiss
   let activity: IngestActivity
   let deleteEntry: (Int) async throws -> Void
   let confirmLocation: (Int, String) async throws -> Void
@@ -541,78 +542,100 @@ private struct ActivityDetail: View {
     return "\(creator) on \(platform)"
   }
 
+  private var hasMappedLocations: Bool {
+    activity.results.contains(where: \.hasLocation)
+  }
+
   var body: some View {
-    ScrollView {
-      LazyVStack(alignment: .leading, spacing: 16) {
-        if activity.results.contains(where: \.hasLocation) {
-          ActivityLocationsMap(results: activity.results)
-        }
+    ZStack(alignment: .topLeading) {
+      GeometryReader { geometry in
+        ScrollView {
+          LazyVStack(alignment: .leading, spacing: 0) {
+            if hasMappedLocations {
+              ActivityLocationsMap(results: activity.results)
+                .frame(height: max(230, geometry.size.height * 0.29))
+            }
 
-        SourceMetadataCard(
-          sourceURL: activity.sourceURL,
-          sourcePlatform: activity.sourcePlatform,
-          creator: activity.creator,
-          primaryText: sourceTitle,
-          secondaryText: "Saved \(activity.startedAt)",
-          detailText: sourceDescription,
-          mediaReferenceText: nil
-        )
+            LazyVStack(alignment: .leading, spacing: 16) {
+              SourceMetadataCard(
+                sourceURL: activity.sourceURL,
+                sourcePlatform: activity.sourcePlatform,
+                creator: activity.creator,
+                primaryText: sourceTitle,
+                secondaryText: nil,
+                detailText: sourceDescription,
+                mediaReferenceText: nil
+              )
 
-        if activity.status == "processing" {
-          ActivityStatePanel(
-            title: activity.statusText,
-            message: activity.events.last?.message,
-            systemImage: "arrow.triangle.2.circlepath",
-            color: .blue,
-            showsProgress: true
-          )
-        } else if activity.status == "failed" {
-          ActivityStatePanel(
-            title: "Processing failed",
-            message: activity.errorMessage ?? activity.events.last?.message,
-            systemImage: "xmark.circle.fill",
-            color: .red,
-            showsProgress: false
-          )
-        }
-
-        if !activity.results.isEmpty {
-          HStack(alignment: .firstTextBaseline) {
-            Text("Recommendations")
-              .font(.title2.bold())
-            Spacer()
-            Text("\(activity.results.count) extracted")
-              .font(.caption)
-              .foregroundStyle(.secondary)
-          }
-          .padding(.top, 4)
-
-          ForEach(activity.results.sorted { $0.ordinal < $1.ordinal }) { result in
-            ActivityRecommendationCard(
-              result: result,
-              isDeleting: deletingEntryID == result.entryID,
-              requestDeletion: { pendingDeletion = result },
-              confirmLocation: { candidateID in
-                try await confirmLocation(result.entryID, candidateID)
+              if activity.status == "processing" {
+                ActivityStatePanel(
+                  title: activity.statusText,
+                  message: activity.events.last?.message,
+                  systemImage: "arrow.triangle.2.circlepath",
+                  color: .blue,
+                  showsProgress: true
+                )
+              } else if activity.status == "failed" {
+                ActivityStatePanel(
+                  title: "Processing failed",
+                  message: activity.errorMessage ?? activity.events.last?.message,
+                  systemImage: "xmark.circle.fill",
+                  color: .red,
+                  showsProgress: false
+                )
               }
-            )
+
+              if !activity.results.isEmpty {
+                Text("Recommendations")
+                  .font(.title2.bold())
+                  .padding(.top, 4)
+
+                ForEach(activity.results.sorted { $0.ordinal < $1.ordinal }) { result in
+                  ActivityRecommendationCard(
+                    result: result,
+                    isDeleting: deletingEntryID == result.entryID,
+                    requestDeletion: { pendingDeletion = result },
+                    confirmLocation: { candidateID in
+                      try await confirmLocation(result.entryID, candidateID)
+                    }
+                  )
+                }
+              } else if activity.status != "processing" && activity.status != "failed" {
+                ContentUnavailableView(
+                  "No Recommendations Kept",
+                  systemImage: "tray",
+                  description: Text("The original source post is still saved in Activity.")
+                )
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 32)
+              }
+            }
+            .padding(.horizontal)
+            .padding(.top, 16)
+            .padding(.bottom, 30)
           }
-        } else if activity.status != "processing" && activity.status != "failed" {
-          ContentUnavailableView(
-            "No Recommendations Kept",
-            systemImage: "tray",
-            description: Text("The original source post is still saved in Activity.")
-          )
-          .frame(maxWidth: .infinity)
-          .padding(.vertical, 32)
         }
       }
-      .padding(.horizontal)
-      .padding(.top, 12)
-      .padding(.bottom, 30)
+      .ignoresSafeArea(edges: hasMappedLocations ? .top : [])
+
+      if hasMappedLocations {
+        Button {
+          dismiss()
+        } label: {
+          Image(systemName: "chevron.left")
+            .font(.headline.weight(.semibold))
+            .frame(width: 42, height: 42)
+            .background(.regularMaterial, in: Circle())
+        }
+        .buttonStyle(.plain)
+        .padding(.top, 8)
+        .padding(.leading, 12)
+        .accessibilityLabel("Back")
+      }
     }
-    .navigationTitle("Post details")
+    .navigationTitle("")
     .navigationBarTitleDisplayMode(.inline)
+    .toolbar(hasMappedLocations ? .hidden : .visible, for: .navigationBar)
     .confirmationDialog(
       pendingDeletion.map { "Delete \($0.name)?" } ?? "Delete Recommendation?",
       isPresented: Binding(
@@ -667,20 +690,10 @@ private struct ActivityLocationsMap: View {
 
   var body: some View {
     ActivityResultsMap(results: locatedResults, allowsInteraction: false)
-      .frame(height: 230)
-      .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
-      .overlay(alignment: .topTrailing) {
+      .overlay(alignment: .bottomTrailing) {
         Image(systemName: "arrow.up.left.and.arrow.down.right")
           .font(.subheadline.weight(.semibold))
           .padding(10)
-          .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 11))
-          .padding(10)
-      }
-      .overlay(alignment: .bottomLeading) {
-        Text("\(locatedResults.count) matched \(locatedResults.count == 1 ? "location" : "locations")")
-          .font(.caption.weight(.semibold))
-          .padding(.horizontal, 10)
-          .padding(.vertical, 8)
           .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 11))
           .padding(10)
       }
@@ -1593,6 +1606,7 @@ private struct SourceMetadataCard: View {
   let secondaryText: String?
   let detailText: String?
   let mediaReferenceText: String?
+  @State private var isDetailExpanded = false
 
   private var platformName: String {
     let platform = sourcePlatform.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -1629,9 +1643,14 @@ private struct SourceMetadataCard: View {
     return "link"
   }
 
+  private var canExpandDetail: Bool {
+    guard let detailText else { return false }
+    return detailText.count > 120 || detailText.filter { $0 == "\n" }.count >= 3
+  }
+
   var body: some View {
-    Link(destination: sourceURL) {
-      VStack(alignment: .leading, spacing: 10) {
+    VStack(alignment: .leading, spacing: 10) {
+      Link(destination: sourceURL) {
         HStack(spacing: 10) {
           if let brandAssetName {
             Image(brandAssetName)
@@ -1650,10 +1669,12 @@ private struct SourceMetadataCard: View {
 
           VStack(alignment: .leading, spacing: 2) {
             Text(displayTitle)
-              .font(.subheadline.weight(.semibold))
-            Text(secondaryText ?? platformName)
-              .font(.caption)
-              .foregroundStyle(.secondary)
+              .font(.headline)
+            if let secondaryText, !secondaryText.isEmpty {
+              Text(secondaryText)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            }
           }
 
           Spacer(minLength: 8)
@@ -1662,24 +1683,41 @@ private struct SourceMetadataCard: View {
             .font(.caption.weight(.bold))
             .foregroundStyle(.blue)
         }
+        .contentShape(Rectangle())
+      }
+      .buttonStyle(.plain)
 
-        if let detailText, !detailText.isEmpty {
+      if let detailText, !detailText.isEmpty {
+        VStack(alignment: .leading, spacing: 6) {
           Text(detailText)
             .font(.subheadline)
-            .lineLimit(3)
-        }
+            .lineLimit(isDetailExpanded ? nil : 3)
+            .animation(.easeInOut(duration: 0.2), value: isDetailExpanded)
 
-        if let mediaReferenceText {
+          if canExpandDetail {
+            Button(isDetailExpanded ? "Less" : "More") {
+              withAnimation(.easeInOut(duration: 0.2)) {
+                isDetailExpanded.toggle()
+              }
+            }
+            .font(.caption.weight(.semibold))
+            .buttonStyle(.plain)
+            .foregroundStyle(.blue)
+          }
+        }
+      }
+
+      if let mediaReferenceText {
+        Link(destination: sourceURL) {
           Label(mediaReferenceText, systemImage: "play.rectangle")
             .font(.caption)
             .foregroundStyle(.secondary)
         }
+        .buttonStyle(.plain)
       }
-      .padding(14)
-      .frame(maxWidth: .infinity, alignment: .leading)
-      .contentShape(Rectangle())
     }
-    .buttonStyle(.plain)
+    .padding(14)
+    .frame(maxWidth: .infinity, alignment: .leading)
     .background(.secondary.opacity(0.08), in: RoundedRectangle(cornerRadius: 14))
     .clipShape(RoundedRectangle(cornerRadius: 14))
     .accessibilityHint("Opens the original post")
