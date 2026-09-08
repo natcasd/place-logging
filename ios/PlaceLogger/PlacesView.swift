@@ -1501,7 +1501,7 @@ private struct AppleMapsButton: View {
           HStack(spacing: 5) {
             Image(systemName: "map")
             Image(systemName: "arrow.up.right")
-              .font(.caption2.weight(.bold))
+              .font(.caption.weight(.bold))
           }
           .opacity(isOpening ? 0 : 1)
 
@@ -1511,11 +1511,11 @@ private struct AppleMapsButton: View {
               .tint(.secondary)
           }
         }
-        .font(.caption.weight(.semibold))
+        .font(.subheadline.weight(.semibold))
         .foregroundStyle(.secondary)
-        .padding(.horizontal, 10)
-        .frame(height: 32)
-        .background(.secondary.opacity(0.1), in: RoundedRectangle(cornerRadius: 10))
+        .padding(.horizontal, 12)
+        .frame(height: 36)
+        .background(.secondary.opacity(0.1), in: RoundedRectangle(cornerRadius: 11))
       }
       .buttonStyle(.plain)
       .disabled(isOpening)
