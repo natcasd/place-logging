@@ -588,70 +588,77 @@ private struct ActivityDetail: View {
   var body: some View {
     ZStack(alignment: .topLeading) {
       GeometryReader { geometry in
-        ScrollView {
-          LazyVStack(alignment: .leading, spacing: 0) {
-            if hasMappedLocations {
-              ActivityLocationsMap(results: activity.results)
-                .frame(height: max(230, geometry.size.height * 0.29))
-            }
-
-            LazyVStack(alignment: .leading, spacing: 16) {
-              SourceMetadataCard(
-                sourceURL: activity.sourceURL,
-                sourcePlatform: activity.sourcePlatform,
-                creator: activity.creator,
-                primaryText: sourceTitle,
-                secondaryText: nil,
-                detailText: sourceDescription,
-                mediaReferenceText: nil
-              )
-
-              if activity.status == "processing" {
-                ActivityStatePanel(
-                  title: activity.statusText,
-                  message: activity.events.last?.message,
-                  systemImage: "arrow.triangle.2.circlepath",
-                  color: .blue,
-                  showsProgress: true
-                )
-              } else if activity.status == "failed" {
-                ActivityStatePanel(
-                  title: "Processing failed",
-                  message: activity.errorMessage ?? activity.events.last?.message,
-                  systemImage: "xmark.circle.fill",
-                  color: .red,
-                  showsProgress: false
-                )
+        ScrollViewReader { scrollProxy in
+          ScrollView {
+            LazyVStack(alignment: .leading, spacing: 0) {
+              if hasMappedLocations {
+                ActivityLocationsMap(results: activity.results)
+                  .frame(height: max(230, geometry.size.height * 0.29))
               }
 
-              if !activity.results.isEmpty {
-                Text("Recommendations")
-                  .font(.title2.bold())
-                  .padding(.top, 4)
+              LazyVStack(alignment: .leading, spacing: 16) {
+                SourceMetadataCard(
+                  sourceURL: activity.sourceURL,
+                  sourcePlatform: activity.sourcePlatform,
+                  creator: activity.creator,
+                  primaryText: sourceTitle,
+                  secondaryText: nil,
+                  detailText: sourceDescription,
+                  mediaReferenceText: nil
+                )
 
-                ForEach(activity.results.sorted { $0.ordinal < $1.ordinal }) { result in
-                  ActivityRecommendationCard(
-                    result: result,
-                    isDeleting: deletingEntryID == result.entryID,
-                    requestDeletion: { pendingDeletion = result },
-                    confirmLocation: { candidateID in
-                      try await confirmLocation(result.entryID, candidateID)
-                    }
+                if activity.status == "processing" {
+                  ActivityStatePanel(
+                    title: activity.statusText,
+                    message: activity.events.last?.message,
+                    systemImage: "arrow.triangle.2.circlepath",
+                    color: .blue,
+                    showsProgress: true
+                  )
+                } else if activity.status == "failed" {
+                  ActivityStatePanel(
+                    title: "Processing failed",
+                    message: activity.errorMessage ?? activity.events.last?.message,
+                    systemImage: "xmark.circle.fill",
+                    color: .red,
+                    showsProgress: false
                   )
                 }
-              } else if activity.status != "processing" && activity.status != "failed" {
-                ContentUnavailableView(
-                  "No Recommendations Kept",
-                  systemImage: "tray",
-                  description: Text("The original source post is still saved in Activity.")
-                )
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 32)
+
+                if !activity.results.isEmpty {
+                  Text("Recommendations")
+                    .font(.title2.bold())
+                    .padding(.top, 4)
+
+                  ForEach(activity.results.sorted { $0.ordinal < $1.ordinal }) { result in
+                    ActivityRecommendationCard(
+                      result: result,
+                      isDeleting: deletingEntryID == result.entryID,
+                      requestDeletion: { pendingDeletion = result },
+                      scrollToConfirmation: {
+                        withAnimation(.snappy) {
+                          scrollProxy.scrollTo(result.confirmationAnchorID, anchor: .bottom)
+                        }
+                      },
+                      confirmLocation: { candidateID in
+                        try await confirmLocation(result.entryID, candidateID)
+                      }
+                    )
+                  }
+                } else if activity.status != "processing" && activity.status != "failed" {
+                  ContentUnavailableView(
+                    "No Recommendations Kept",
+                    systemImage: "tray",
+                    description: Text("The original source post is still saved in Activity.")
+                  )
+                  .frame(maxWidth: .infinity)
+                  .padding(.vertical, 32)
+                }
               }
+              .padding(.horizontal)
+              .padding(.top, 16)
+              .padding(.bottom, 30)
             }
-            .padding(.horizontal)
-            .padding(.top, 16)
-            .padding(.bottom, 30)
           }
         }
       }
@@ -817,6 +824,7 @@ private struct ActivityRecommendationCard: View {
   let result: SavedEntryOutcome
   let isDeleting: Bool
   let requestDeletion: () -> Void
+  let scrollToConfirmation: () -> Void
   let confirmLocation: (String) async throws -> Void
   @State private var isExpanded = false
   @State private var selectedCandidateID: String?
@@ -851,7 +859,7 @@ private struct ActivityRecommendationCard: View {
             .font(.headline)
 
           if let address = result.formattedAddress, !address.isEmpty {
-            Text(address)
+            Text(compactActivityLocation(address))
               .font(.subheadline)
               .foregroundStyle(.secondary)
           } else if showsMissingLocation {
@@ -867,19 +875,14 @@ private struct ActivityRecommendationCard: View {
           ProgressView()
             .controlSize(.small)
             .frame(width: 34, height: 34)
-        } else if canReviewCandidates && !isExpanded {
-          Button {
-            withAnimation(.snappy) { isExpanded = true }
-          } label: {
-            HStack(spacing: 4) {
-              Text("Needs review")
-              Image(systemName: "chevron.right")
-                .font(.caption2.weight(.bold))
-            }
+        } else if canReviewCandidates {
+          HStack(spacing: 5) {
+            Text("Needs review")
+            Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
+              .font(.caption2.weight(.bold))
+          }
             .font(.caption.weight(.semibold))
             .foregroundStyle(.yellow)
-          }
-          .buttonStyle(.plain)
         } else {
           Button("Delete Recommendation", systemImage: "trash", role: .destructive) {
             requestDeletion()
@@ -890,12 +893,32 @@ private struct ActivityRecommendationCard: View {
         }
       }
       .padding(14)
+      .contentShape(Rectangle())
+      .onTapGesture {
+        guard canReviewCandidates, !isDeleting, !isConfirming else { return }
+        withAnimation(.snappy) { isExpanded.toggle() }
+      }
+      .accessibilityAction(named: isExpanded ? "Collapse locations" : "Review locations") {
+        guard canReviewCandidates, !isDeleting, !isConfirming else { return }
+        withAnimation(.snappy) { isExpanded.toggle() }
+      }
 
       if canReviewCandidates && isExpanded {
         Divider()
         VStack(alignment: .leading, spacing: 12) {
-          Text("Select the location")
-            .font(.headline)
+          HStack {
+            Text("Select the location")
+              .font(.headline)
+
+            Spacer()
+
+            Button("Delete Recommendation", systemImage: "trash", role: .destructive) {
+              requestDeletion()
+            }
+            .labelStyle(.iconOnly)
+            .buttonStyle(.plain)
+            .frame(width: 34, height: 34)
+          }
 
           VStack(spacing: 0) {
             ForEach(Array(result.reviewCandidates.enumerated()), id: \.element.id) { index, candidate in
@@ -916,7 +939,7 @@ private struct ActivityRecommendationCard: View {
                       .font(.subheadline.weight(.semibold))
                       .foregroundStyle(.primary)
                     if let address = candidate.formattedAddress, !address.isEmpty {
-                      Text(address)
+                      Text(compactActivityLocation(address))
                         .font(.caption)
                         .foregroundStyle(.secondary)
                     }
@@ -942,6 +965,7 @@ private struct ActivityRecommendationCard: View {
             }
             .buttonStyle(.borderedProminent)
             .frame(maxWidth: .infinity)
+            .id(result.confirmationAnchorID)
           }
         }
         .padding(14)
@@ -959,6 +983,10 @@ private struct ActivityRecommendationCard: View {
       Button("OK", role: .cancel) { confirmationError = nil }
     } message: {
       Text(confirmationError ?? "Please try again.")
+    }
+    .onChange(of: selectedCandidateID) { _, candidateID in
+      guard candidateID != nil else { return }
+      DispatchQueue.main.async { scrollToConfirmation() }
     }
   }
 
@@ -979,6 +1007,35 @@ private func activityDeleteMessage(_ result: SavedEntryOutcome) -> String {
     ? "its saved reference"
     : "its \(result.sourceCount) saved references"
   return "This removes \(result.name) and \(references). Original source posts stay saved."
+}
+
+private func compactActivityLocation(_ formattedAddress: String) -> String {
+  let components = formattedAddress
+    .split(separator: ",")
+    .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+    .filter { !$0.isEmpty }
+
+  guard components.count > 2 else { return formattedAddress }
+
+  let componentCount = components.count >= 4 ? 3 : 2
+  let compactComponents = components.suffix(componentCount).map { component in
+    let words = component.split(separator: " ")
+    guard let postalCodeStart = words.firstIndex(where: { word in
+      word.contains(where: \Character.isNumber)
+    }) else { return component }
+    return words[..<postalCodeStart].joined(separator: " ")
+  }
+  .filter { !$0.isEmpty }
+
+  return compactComponents.isEmpty
+    ? formattedAddress
+    : compactComponents.joined(separator: ", ")
+}
+
+private extension SavedEntryOutcome {
+  var confirmationAnchorID: String {
+    "activity-confirmation-\(entryID)"
+  }
 }
 
 private extension IngestActivity {
