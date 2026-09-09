@@ -425,6 +425,7 @@ struct SavedEntryOutcome: Decodable, Identifiable, Sendable, Hashable {
   let ordinal: Int
   let name: String
   let type: String
+  let description: String
   let locationID: Int?
   let locationName: String?
   let latitude: Double?
@@ -456,7 +457,7 @@ struct SavedEntryOutcome: Decodable, Identifiable, Sendable, Hashable {
   }
 
   enum CodingKeys: String, CodingKey {
-    case name, type, ordinal, latitude, longitude
+    case name, type, description, ordinal, latitude, longitude
     case entryID = "entry_id"
     case sourceConnectionID = "source_connection_id"
     case locationID = "location_id"
@@ -478,6 +479,7 @@ struct SavedEntryOutcome: Decodable, Identifiable, Sendable, Hashable {
     ordinal = try values.decodeIfPresent(Int.self, forKey: .ordinal) ?? 0
     name = try values.decode(String.self, forKey: .name)
     type = try values.decode(String.self, forKey: .type)
+    description = try values.decodeIfPresent(String.self, forKey: .description) ?? ""
     locationID = try values.decodeIfPresent(Int.self, forKey: .locationID)
     locationName = try values.decodeIfPresent(String.self, forKey: .locationName)
     latitude = try values.decodeIfPresent(Double.self, forKey: .latitude)

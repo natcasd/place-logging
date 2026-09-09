@@ -78,6 +78,7 @@ class SavedEntryOutcome(BaseModel):
     ordinal: int = 0
     name: str
     type: str
+    description: str = ""
     location_id: int | None = None
     location_name: str | None = None
     latitude: float | None = None

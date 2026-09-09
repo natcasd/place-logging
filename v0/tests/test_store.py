@@ -540,15 +540,17 @@ class StoreTests(unittest.TestCase):
             init_db(db_path)
             item_ids = []
             for suffix in ("one", "two"):
+                resolved = self.resolved_place("S&P Lunch", "places/shared")
+                resolved["extracted"]["description"] = (
+                    f"Description from source {suffix}."
+                )
                 item_ids.append(
                     save_ingest(
                         db_path,
                         {
                             "source_url": f"https://www.instagram.com/reel/{suffix}/",
                             "metadata": {"source_platform": "instagram"},
-                            "resolved_entries": [
-                                self.resolved_place("S&P Lunch", "places/shared")
-                            ],
+                            "resolved_entries": [resolved],
                         },
                     )
                 )
@@ -557,8 +559,10 @@ class StoreTests(unittest.TestCase):
             second = saved_entry_outcomes(db_path, item_ids[1])[0]
             self.assertTrue(first["is_new"])
             self.assertEqual(first["source_count"], 1)
+            self.assertEqual(first["description"], "Description from source one.")
             self.assertFalse(second["is_new"])
             self.assertEqual(second["source_count"], 2)
+            self.assertEqual(second["description"], "Description from source two.")
 
     def test_failed_run_preserves_stage_and_readable_error(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

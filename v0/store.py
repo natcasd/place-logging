@@ -911,7 +911,7 @@ def _saved_entry_outcomes(
     con.row_factory = sqlite3.Row
     rows = con.execute(
         """SELECT t.id AS entry_id, ts.source_name AS name,
-                  ts.source_type AS entry_type, t.location_id,
+                  ts.source_type AS entry_type, ts.description, t.location_id,
                   l.display_name AS location_name, l.lat, l.lng,
                   l.formatted_address, l.google_maps_url,
                   ts.ordinal, ts.timestamp_seconds, ts.slide_index,
@@ -936,6 +936,7 @@ def _saved_entry_outcomes(
             "entry_id": row["entry_id"],
             "name": row["name"],
             "type": row["entry_type"],
+            "description": row["description"] or "",
             "location_id": (
                 row["location_id"]
                 if row["resolution_status"] not in {"needs_review", "unresolved"}

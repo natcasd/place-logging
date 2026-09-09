@@ -31,6 +31,7 @@ def canonical_result() -> dict:
                 "entry_id": 8,
                 "name": "Test Place",
                 "type": "Restaurant",
+                "description": "A cozy neighborhood spot known for handmade pasta.",
                 "location_id": None,
                 "location_name": None,
                 "latitude": None,
@@ -243,6 +244,10 @@ class ApiTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["activity"][0]["results"][0]["name"], "Test Place")
+        self.assertEqual(
+            response.json()["activity"][0]["results"][0]["description"],
+            "A cozy neighborhood spot known for handmade pasta.",
+        )
         self.service.activity.assert_called_once_with(25)
 
     def test_confirms_activity_location_candidate(self) -> None:
