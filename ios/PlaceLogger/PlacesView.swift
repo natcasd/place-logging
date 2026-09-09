@@ -256,6 +256,7 @@ private struct RootNavigationTab<Content: View, Destination: View>: View {
   var body: some View {
     NavigationStack(path: $path) {
       content()
+        .contentMargins(.top, 12, for: .scrollContent)
         .navigationTitle(title)
         .navigationBarTitleDisplayMode(.large)
         .toolbar {
@@ -309,7 +310,6 @@ private struct PlacesList: View {
             }
           }
           .padding(.horizontal)
-          .padding(.top, 12)
           .padding(.bottom, 24)
         }
         .refreshable { await refresh() }
@@ -517,38 +517,43 @@ private struct ActivityList: View {
         description: Text("Shared posts and their processing results will appear here.")
       )
     } else {
-      List(activity) { run in
-        NavigationLink(value: PlacesNavigation.activity(run.id)) {
-          HStack(alignment: .center, spacing: 12) {
-            ActivitySourceIcon(activity: run)
+      List {
+        Section {
+          ForEach(activity) { run in
+            NavigationLink(value: PlacesNavigation.activity(run.id)) {
+              HStack(alignment: .center, spacing: 12) {
+                ActivitySourceIcon(activity: run)
 
-            VStack(alignment: .leading, spacing: 4) {
-              Text(run.title)
-                .font(.headline)
-                .lineLimit(1)
-
-              HStack(spacing: 8) {
-                Text(run.recommendationCountText)
-                  .font(.subheadline)
-                  .foregroundStyle(.secondary)
-                  .lineLimit(1)
-
-                Spacer(minLength: 8)
-
-                if run.needsReview {
-                  HStack(spacing: 4) {
-                    Image(systemName: "exclamationmark.circle.fill")
-                    Text("Needs review")
-                  }
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(.yellow)
+                VStack(alignment: .leading, spacing: 4) {
+                  Text(run.title)
+                    .font(.headline)
                     .lineLimit(1)
+
+                  HStack(spacing: 8) {
+                    Text(run.recommendationCountText)
+                      .font(.subheadline)
+                      .foregroundStyle(.secondary)
+                      .lineLimit(1)
+
+                    Spacer(minLength: 8)
+
+                    if run.needsReview {
+                      HStack(spacing: 4) {
+                        Image(systemName: "exclamationmark.circle.fill")
+                        Text("Needs review")
+                      }
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.yellow)
+                        .lineLimit(1)
+                    }
+                  }
                 }
               }
+              .padding(.vertical, 7)
             }
           }
-          .padding(.vertical, 7)
         }
+        .listSectionSeparator(.hidden, edges: .top)
       }
       .listStyle(.plain)
     }
