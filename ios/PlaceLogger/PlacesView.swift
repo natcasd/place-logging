@@ -908,6 +908,14 @@ private struct ActivityRecommendationCard: View {
           Text(result.name)
             .font(.headline)
 
+          let description = result.description.trimmingCharacters(in: .whitespacesAndNewlines)
+          if !description.isEmpty {
+            Text(description)
+              .font(.subheadline)
+              .foregroundStyle(.secondary)
+              .fixedSize(horizontal: false, vertical: true)
+          }
+
           if let address = result.formattedAddress, !address.isEmpty {
             Text(compactActivityLocation(address))
               .font(.subheadline)
