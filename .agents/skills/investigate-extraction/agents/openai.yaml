@@ -1,0 +1,4 @@
+interface:
+  display_name: "Investigate Extraction"
+  short_description: "Diagnose and fix suspicious extractions"
+  default_prompt: "Use $investigate-extraction to investigate this saved entry and, if requested, iterate on a verified fix."
