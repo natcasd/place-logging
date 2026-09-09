@@ -49,6 +49,32 @@ class YouTubeExtractionTests(unittest.TestCase):
         self.assertIn("Never put business hours", prompt)
         self.assertNotIn("Existing specific type names", prompt)
 
+    def test_prompt_classifies_native_location_per_entry(self) -> None:
+        prompt = pipeline._extraction_prompt(
+            {
+                "source_platform": "instagram",
+                "creator_display_name": "Le Chêne",
+                "source_account_handle": "lechenenyc",
+                "native_location": {
+                    "name": "Le Chêne",
+                    "latitude": 40.72943,
+                    "longitude": -74.00466,
+                },
+            }
+        )
+
+        self.assertIn("native_location_relevance", prompt)
+        self.assertIn("Never guess a city from an ambiguous handle", prompt)
+        self.assertIn('"source_account_handle": "lechenenyc"', prompt)
+        self.assertIn('"creator_display_name": "Le Chêne"', prompt)
+        relevance_schema = pipeline.EXTRACTION_RESPONSE_SCHEMA["properties"][
+            "entries"
+        ]["items"]["properties"]["native_location_relevance"]
+        self.assertEqual(
+            relevance_schema["enum"],
+            ["exact", "area", "unrelated", "uncertain"],
+        )
+
     def test_schema_allows_only_controlled_types(self) -> None:
         type_schema = pipeline.EXTRACTION_RESPONSE_SCHEMA["properties"]["entries"]["items"]["properties"]["type_name"]
 
@@ -151,6 +177,78 @@ class GeminiRetryTests(unittest.TestCase):
 
 
 class InstagramFetcherTests(unittest.TestCase):
+    def test_maps_creator_and_native_location_metadata_without_account_id(self) -> None:
+        metadata = pipeline._instagram_metadata(
+            {
+                "description": "Dinner at Le Chêne #nyc @friend",
+                "uploader": "Le Chêne",
+                "channel": "lechenenyc",
+                "uploader_id": "123456789",
+                "instagram_location": {
+                    "name": "Le Chêne",
+                    "latitude": 40.72943,
+                    "longitude": -74.00466,
+                },
+            },
+            "https://www.instagram.com/reel/DbOB4sCyuY1/",
+            [{"formats": [{}]}],
+        )
+
+        self.assertEqual(metadata["creator_display_name"], "Le Chêne")
+        self.assertEqual(metadata["source_account_handle"], "lechenenyc")
+        self.assertEqual(metadata["uploader"], "Le Chêne")
+        self.assertEqual(metadata["native_location_tag"], "Le Chêne")
+        self.assertEqual(metadata["native_location"]["latitude"], 40.72943)
+        self.assertIn("#nyc @friend", metadata["caption_or_description"])
+        self.assertNotIn("uploader_id", metadata)
+
+    def test_yt_dlp_plugin_normalizes_instagram_location_without_ids(self) -> None:
+        from yt_dlp_plugins.extractor.instagram_location import (
+            _PlaceLoggerInstagramIE,
+            _instagram_location,
+        )
+        from yt_dlp.extractor.instagram import InstagramIE
+
+        location = _instagram_location(
+            [
+                {
+                    "location": {
+                        "pk": 677601368765742,
+                        "name": "Le Chêne",
+                        "address": "76 Carmine St",
+                        "city": "New York",
+                        "lat": "40.72943",
+                        "lng": "-74.00466",
+                    }
+                }
+            ]
+        )
+
+        self.assertEqual(
+            location,
+            {
+                "name": "Le Chêne",
+                "address": "76 Carmine St",
+                "city": "New York",
+                "latitude": 40.72943,
+                "longitude": -74.00466,
+            },
+        )
+        self.assertNotIn("pk", location)
+        self.assertEqual(InstagramIE.IE_NAME, "Instagram+place_logger_location")
+
+        with patch.object(
+            _PlaceLoggerInstagramIE.__wrapped__,
+            "_extract_product",
+            return_value={"id": "post"},
+        ):
+            extracted = _PlaceLoggerInstagramIE()._extract_product(
+                {"location": {"name": "Le Chêne", "lat": 40.7, "lng": -74.0}}
+            )
+
+        self.assertEqual(extracted["location"], "Le Chêne")
+        self.assertEqual(extracted["instagram_location"]["latitude"], 40.7)
+
     def test_prefers_full_720p_video_near_target_bitrate(self) -> None:
         info = {
             "formats": [
@@ -502,6 +600,129 @@ class InstagramExtractionTests(unittest.TestCase):
 
 class ProcessIngestTests(unittest.TestCase):
     @patch.dict("pipeline.os.environ", {"GOOGLE_PLACES_API_KEY": "test"})
+    def test_exact_native_location_bias_resolves_matching_nearby_place(self) -> None:
+        entry = {
+            "extracted_name": "Le Chêne",
+            "type_name": "Restaurant",
+            "location_query": "Le Chêne New York",
+            "native_location_relevance": "exact",
+        }
+        metadata = {
+            "source_platform": "instagram",
+            "native_location": {
+                "name": "Le Chêne",
+                "latitude": 40.72943,
+                "longitude": -74.00466,
+            },
+        }
+        candidate = {
+            "displayName": {"text": "Le Chêne"},
+            "location": {"latitude": 40.72950, "longitude": -74.00470},
+        }
+        response = MagicMock(ok=True)
+        response.json.return_value = {"places": [candidate]}
+
+        with patch("pipeline.requests.post", return_value=response) as mock_post:
+            result = pipeline.resolve(entry, metadata)
+
+        self.assertEqual(result, {"status": "auto", "place": candidate})
+        request_body = mock_post.call_args.kwargs["json"]
+        self.assertEqual(request_body["pageSize"], 5)
+        self.assertNotIn("maxResultCount", request_body)
+        self.assertEqual(
+            request_body["locationBias"],
+            {
+                "circle": {
+                    "center": {"latitude": 40.72943, "longitude": -74.00466},
+                    "radius": 500.0,
+                }
+            },
+        )
+
+    @patch.dict("pipeline.os.environ", {"GOOGLE_PLACES_API_KEY": "test"})
+    def test_exact_native_location_rejects_invalid_results(self) -> None:
+        entry = {
+            "extracted_name": "Le Chêne",
+            "type_name": "Restaurant",
+            "location_query": "Le Chêne New York",
+            "native_location_relevance": "exact",
+        }
+        metadata = {
+            "native_location": {
+                "latitude": 40.72943,
+                "longitude": -74.00466,
+            }
+        }
+        response = MagicMock(ok=True)
+        response.json.return_value = {
+            "places": [
+                {
+                    "displayName": {"text": "Le Chêne"},
+                    "location": {"latitude": 40.75, "longitude": -74.00466},
+                },
+                {
+                    "displayName": {"text": "Different Restaurant"},
+                    "location": {"latitude": 40.72950, "longitude": -74.00470},
+                },
+            ]
+        }
+
+        with patch("pipeline.requests.post", return_value=response), patch(
+            "pipeline._llm_tiebreaker"
+        ) as mock_tiebreaker:
+            result = pipeline.resolve(entry, metadata)
+
+        self.assertEqual(result["status"], "unresolved")
+        self.assertIn("exact native location", result["reason"])
+        mock_tiebreaker.assert_not_called()
+
+    @patch.dict("pipeline.os.environ", {"GOOGLE_PLACES_API_KEY": "test"})
+    def test_area_location_biases_broadly_without_exact_candidate_filter(self) -> None:
+        entry = {
+            "extracted_name": "Somewhere Upstate",
+            "type_name": "Restaurant",
+            "location_query": "Somewhere Upstate New York",
+            "native_location_relevance": "area",
+        }
+        metadata = {
+            "native_location": {"latitude": 42.65, "longitude": -73.75}
+        }
+        candidate = {"displayName": {"text": "Somewhere Upstate"}}
+        response = MagicMock(ok=True)
+        response.json.return_value = {"places": [candidate]}
+
+        with patch("pipeline.requests.post", return_value=response) as mock_post:
+            result = pipeline.resolve(entry, metadata)
+
+        self.assertEqual(result, {"status": "auto", "place": candidate})
+        circle = mock_post.call_args.kwargs["json"]["locationBias"]["circle"]
+        self.assertEqual(circle["radius"], 20_000.0)
+
+    @patch.dict("pipeline.os.environ", {"GOOGLE_PLACES_API_KEY": "test"})
+    def test_unrelated_native_location_does_not_bias_google(self) -> None:
+        entry = {
+            "extracted_name": "Le Chêne",
+            "type_name": "Restaurant",
+            "location_query": "Le Chêne New York",
+            "native_location_relevance": "unrelated",
+        }
+        metadata = {
+            "native_location": {"latitude": 40.72943, "longitude": -74.00466}
+        }
+        candidate = {"displayName": {"text": "Le Chêne"}}
+        response = MagicMock(ok=True)
+        response.json.return_value = {"places": [candidate]}
+
+        with patch("pipeline.requests.post", return_value=response) as mock_post:
+            result = pipeline.resolve(entry, metadata)
+
+        self.assertEqual(result["status"], "auto")
+        self.assertEqual(
+            mock_post.call_args.kwargs["json"],
+            {"textQuery": "Le Chêne New York", "pageSize": 5},
+        )
+
+    @patch.dict("pipeline.os.environ", {"GOOGLE_PLACES_API_KEY": "test"})
     def test_temporary_entry_rejects_unmatched_single_google_candidate(self) -> None:
         entry = {
             "extracted_name": "HiFi Pursuit Listening Room Dream No. 3",
@@ -682,6 +903,10 @@ class ProcessIngestTests(unittest.TestCase):
             self.assertEqual(
                 result["metadata"]["source_content"]["summary"],
                 "Preserved analysis",
+            )
+            mock_resolve.assert_called_once_with(
+                {"extracted_name": "Test Entry"},
+                result["metadata"],
             )
             self.assertFalse(cleanup_dir.exists())
 
