@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import mimetypes
 import os
 import re
@@ -227,13 +228,26 @@ def _instagram_metadata(
     entries: list[dict[str, Any]],
 ) -> dict[str, Any]:
     media_types = ["video" if entry.get("formats") else "image" for entry in entries]
+    creator_display_name = info.get("uploader")
+    source_account_handle = info.get("channel")
+    native_location = info.get("instagram_location")
+    if not isinstance(native_location, dict):
+        native_location = None
+    native_location_tag = (
+        (native_location or {}).get("name") or info.get("location")
+    )
     return {
         "source_platform": "instagram",
         "caption_or_description": info.get("description"),
-        "uploader": info.get("uploader") or info.get("channel"),
+        # Keep uploader for released clients while exposing the two meanings
+        # separately to Gemini and newer consumers.
+        "uploader": creator_display_name or source_account_handle,
+        "creator_display_name": creator_display_name,
+        "source_account_handle": source_account_handle,
         "upload_date": info.get("upload_date"),
         "duration_seconds": info.get("duration"),
-        "native_location_tag": info.get("location"),
+        "native_location": native_location,
+        "native_location_tag": native_location_tag,
         "hashtags": info.get("tags"),
         "webpage_url": info.get("webpage_url") or source_url,
         "media_count": len(entries),
@@ -391,8 +405,9 @@ For each entry, return an object with:
 - extracted_name: concise, distinct name of the entry as mentioned or shown. Never use a generic class as its name (for example, "Cafe", "Restaurant", "Store", or "Place"); if no distinct name is supported, do not return an entry.
 - type_name: """ + TYPE_NAME_GUIDANCE + """
 - description: a detailed, source-grounded explanation containing the useful information conveyed about this entry. Do not add facts that are not in the source.
-- location_query: only when the entry has a physical place, area, anchor, or venue that Google Places could resolve. Use the venue for an event or exhibit. Include the name plus directly evidenced neighborhood/city/region hints. Omit this field for non-location entries and when there is not enough location evidence.
-- location_hints: object with any of { neighborhood, city, region_or_country, on_screen_text, visual_landmarks } — ONLY include fields where you have direct evidence from the supplied media or caption. Omit a field rather than guess.
+- location_query: only when the entry has a physical place, area, anchor, or venue that Google Places could resolve. Use the venue for an event or exhibit. Include the name plus directly evidenced neighborhood/city/region hints from the media, caption, or unambiguous source metadata. A creator display name or account handle is supporting context, not proof by itself: use a location clue from it only when its meaning is clear and consistent with the rest of the post. Never guess a city from an ambiguous handle. Omit this field for non-location entries and when there is not enough location evidence.
+- location_hints: object with any of { neighborhood, city, region_or_country, on_screen_text, visual_landmarks } — ONLY include fields where you have direct evidence from the supplied media, caption, or unambiguous source metadata. Omit a field rather than guess.
+- native_location_relevance: ONLY when source metadata includes native_location. Classify how that post-level Instagram tag relates to this individual entry: "exact" when it identifies the entry or its physical host; "area" when it only identifies a relevant broader neighborhood, city, or region; "unrelated" when it describes somewhere else; or "uncertain" when the relationship is unclear. Do not assume a tag is exact merely because Instagram attached it to the post.
 - starts_at, ends_at, and recurrence_text: ONLY for a Concert, Pop-up, or Exhibit, and only when directly supported by the source. Use ISO 8601 for starts_at and ends_at; preserve a human-readable recurring schedule in recurrence_text. Never put business hours, opening days, release dates, publication dates, or other timing on stable types such as Restaurant, Café, Museum, Book, Movie, or Product. If a temporary event or limited-run offering at a stable venue is itself the main recommendation, extract that event as a Concert, Pop-up, or Exhibit and use the venue only as its location.
 - extraction_confidence: "high" | "medium" | "low"
 - timestamp_seconds: for a Reel, YouTube video, or video carousel slide, the
@@ -442,6 +457,10 @@ EXTRACTION_RESPONSE_SCHEMA = {
                             "on_screen_text": {"type": "string"},
                             "visual_landmarks": {"type": "string"},
                         },
+                    },
+                    "native_location_relevance": {
+                        "type": "string",
+                        "enum": ["exact", "area", "unrelated", "uncertain"],
                     },
                     "starts_at": {"type": "string"},
                     "ends_at": {"type": "string"},
@@ -743,6 +762,9 @@ _LOCATION_QUERY_STOP_WORDS = {
     "york",
 }
 
+_EXACT_LOCATION_BIAS_RADIUS_METERS = 500.0
+_AREA_LOCATION_BIAS_RADIUS_METERS = 20_000.0
+
 
 def _location_query_matches_candidate(query: str, candidate: dict[str, Any]) -> bool:
     """Require a venue-bearing word from the query to appear in Google's name."""
@@ -763,6 +785,74 @@ def _requires_venue_match(place: dict[str, Any]) -> bool:
         or place.get("starts_at")
         or place.get("ends_at")
         or place.get("recurrence_text")
+    )
+
+
+def _native_location_coordinates(
+    source_metadata: dict[str, Any] | None,
+) -> tuple[float, float] | None:
+    location = (source_metadata or {}).get("native_location")
+    if not isinstance(location, dict):
+        return None
+    latitude = location.get("latitude")
+    longitude = location.get("longitude")
+    if (
+        isinstance(latitude, bool)
+        or isinstance(longitude, bool)
+        or not isinstance(latitude, (int, float))
+        or not isinstance(longitude, (int, float))
+        or not -90 <= latitude <= 90
+        or not -180 <= longitude <= 180
+    ):
+        return None
+    return float(latitude), float(longitude)
+
+
+def _distance_meters(
+    first: tuple[float, float],
+    second: tuple[float, float],
+) -> float:
+    """Return great-circle distance between two latitude/longitude pairs."""
+    first_latitude, first_longitude = map(math.radians, first)
+    second_latitude, second_longitude = map(math.radians, second)
+    latitude_delta = second_latitude - first_latitude
+    longitude_delta = second_longitude - first_longitude
+    haversine = (
+        math.sin(latitude_delta / 2) ** 2
+        + math.cos(first_latitude)
+        * math.cos(second_latitude)
+        * math.sin(longitude_delta / 2) ** 2
+    )
+    return 2 * 6_371_000 * math.asin(min(1.0, math.sqrt(haversine)))
+
+
+def _candidate_coordinates(candidate: dict[str, Any]) -> tuple[float, float] | None:
+    location = candidate.get("location")
+    if not isinstance(location, dict):
+        return None
+    latitude = location.get("latitude")
+    longitude = location.get("longitude")
+    if (
+        isinstance(latitude, bool)
+        or isinstance(longitude, bool)
+        or not isinstance(latitude, (int, float))
+        or not isinstance(longitude, (int, float))
+    ):
+        return None
+    return float(latitude), float(longitude)
+
+
+def _matches_exact_native_location(
+    query: str,
+    candidate: dict[str, Any],
+    native_coordinates: tuple[float, float],
+) -> bool:
+    candidate_coordinates = _candidate_coordinates(candidate)
+    return bool(
+        candidate_coordinates
+        and _distance_meters(native_coordinates, candidate_coordinates)
+        <= _EXACT_LOCATION_BIAS_RADIUS_METERS
+        and _location_query_matches_candidate(query, candidate)
     )
 
 
@@ -829,7 +919,10 @@ Return JSON of this shape:
     return decision
 
 
-def resolve(place: dict[str, Any]) -> dict[str, Any]:
+def resolve(
+    place: dict[str, Any],
+    source_metadata: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     """Call Places Text Search. Returns one of three statuses.
 
     For multi-candidate results, runs an LLM tiebreaker to pick the best match.
@@ -852,6 +945,22 @@ def resolve(place: dict[str, Any]) -> dict[str, Any]:
     if not query:
         return {"status": "unresolved", "reason": "no query text"}
 
+    request_body: dict[str, Any] = {"textQuery": query, "pageSize": 5}
+    native_coordinates = _native_location_coordinates(source_metadata)
+    native_location_relevance = place.get("native_location_relevance")
+    bias_radius = {
+        "exact": _EXACT_LOCATION_BIAS_RADIUS_METERS,
+        "area": _AREA_LOCATION_BIAS_RADIUS_METERS,
+    }.get(native_location_relevance)
+    if native_coordinates and bias_radius:
+        latitude, longitude = native_coordinates
+        request_body["locationBias"] = {
+            "circle": {
+                "center": {"latitude": latitude, "longitude": longitude},
+                "radius": bias_radius,
+            }
+        }
+
     r = requests.post(
         _PLACES_API,
         headers={
@@ -859,7 +968,7 @@ def resolve(place: dict[str, Any]) -> dict[str, Any]:
             "X-Goog-Api-Key": os.environ["GOOGLE_PLACES_API_KEY"],
             "X-Goog-FieldMask": _FIELD_MASK,
         },
-        json={"textQuery": query, "maxResultCount": 5},
+        json=request_body,
         timeout=20,
     )
     if not r.ok:
@@ -876,6 +985,19 @@ def resolve(place: dict[str, Any]) -> dict[str, Any]:
 
     if not candidates:
         return {"status": "unresolved", "reason": "zero candidates"}
+
+    if native_coordinates and native_location_relevance == "exact":
+        candidates = [
+            candidate
+            for candidate in candidates
+            if _matches_exact_native_location(query, candidate, native_coordinates)
+        ]
+        if not candidates:
+            return {
+                "status": "unresolved",
+                "reason": "no nearby Google candidate matched the exact native location",
+            }
+
     if len(candidates) == 1:
         if _requires_venue_match(place) and not _location_query_matches_candidate(
             query, candidates[0]
@@ -1009,7 +1131,9 @@ def process_ingest(
 
     if progress:
         progress("resolving")
-    resolved = [{"extracted": entry, **resolve(entry)} for entry in entries]
+    resolved = [
+        {"extracted": entry, **resolve(entry, metadata)} for entry in entries
+    ]
 
     return {
         "source_url": source_url,
