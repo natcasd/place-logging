@@ -29,6 +29,10 @@ optionally resolves physical locations through Google Places.
   source-specific description remains stored. Deleting that card removes only its
   Entry and source connections; source posts and other entries at the same location
   remain saved.
+- Movie entries are conservatively matched against Wikidata using their title plus
+  an extracted release year or director when available. A confident match stores
+  its Wikidata ID and an IMDb-based Letterboxd redirect. Google search links are
+  generated locally for every Movie. Wikidata read access requires no API key.
 - Activity detail shows every recommendation extracted from one source. Resolved
   recommendations appear on its map, unresolved location-based recommendations can
   be deleted, and ambiguous recommendations expand so the user can confirm one of
@@ -51,6 +55,7 @@ optionally resolves physical locations through Google Places.
 - `bot.py` — Telegram transport adapter
 - `ingest_service.py` — shared process-and-persist application service
 - `pipeline.py` — platform-aware `ingest → extract → resolve` pipeline
+- `movie_enrichment.py` — credential-free Wikidata movie matching
 - `store.py` — SQLite schema + `save_ingest()`
 - `data/` — local SQLite database (gitignored); temporary Instagram media uses
   the machine's temp directory and is deleted after each attempt
@@ -217,6 +222,18 @@ python backfill_duplicate_sources.py \
   --db-path data/places.db \
   --plan data/duplicate-source-backfill-plan.json \
   --apply
+```
+
+## Movie-link backfill
+
+`backfill_movie_enrichments.py` matches existing Movie entries against Wikidata
+and persists exact IMDb-based Letterboxd links. No API credential is required.
+Matches are intentionally left unresolved when a title is ambiguous without a
+supporting year or director. Pass `--retry` to replace previously saved lookup
+results.
+
+```bash
+python backfill_movie_enrichments.py --db-path data/places.db
 ```
 
 ## Known gaps
