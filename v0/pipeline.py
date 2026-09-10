@@ -368,7 +368,7 @@ def fetch(source_url: str, workdir: Path) -> InstagramFetch:
 
 # ---------- Extractor ----------
 
-TYPE_NAME_GUIDANCE = """Choose exactly one primary type from this fixed list: Restaurant, Café, Bar, Bakery, Park, Hiking Trail, Bike Route, Museum, Art Gallery, Store, Spa, Fitness, Concert, Pop-up, Exhibit, Book, Movie, Article, Song, Product, or Unknown. Do not invent another type. Use Exhibit for a museum or gallery exhibition, installation, or curated show; use Pop-up for a temporary food, retail, or event offering. Use Unknown only when none of the listed types fit."""
+TYPE_NAME_GUIDANCE = """Choose exactly one primary type from this fixed list: Restaurant, Café, Bar, Bakery, Park, Hiking Trail, Bike Route, Museum, Art Gallery, Store, Spa, Fitness, Concert, Pop-up, Exhibit, Book, Movie, Article, Song, Product, or Unknown. Do not invent another type. Use Exhibit for a museum or gallery exhibition, installation, or curated show; use Pop-up for a temporary food, retail, or event offering. Use Unknown when the recommended subject is valid to save but none of the listed types fit, including a person or creator when no dedicated person type exists."""
 
 
 def specific_type_names(type_names: list[str] | None) -> list[str]:
@@ -389,6 +389,8 @@ Be selective about what becomes a saved entry:
 - A supplier, neighboring business, collaborator, or partner that only supports the main recommendation is context, not a separate entry.
 - A run, event, activity, or gathering that merely hosts or frames a product or place is context, not a separate entry.
 - A creator's closing call-to-action (for example, comment, DM, link-in-bio, or sign up for my program) is context unless the post is primarily promoting that offering.
+- A person or creator can be a principal saved entry. When no dedicated type exists for that person, use Unknown and preserve the source-grounded description. Never classify a person as the kind of work they create: a filmmaker or director is not a Movie, an author is not a Book or Article, and a musician is not a Song.
+- For a creator profile, retrospective, or body-of-work montage, save the creator as Unknown when they are a principal subject. Extract an individual work as a separate entry only when its title is directly evidenced in speech, visible text, or the caption and the post independently recommends that work. Do not infer work titles from unlabeled clips or images.
 - Likewise, a movie poster visible in the background is not a movie recommendation, and a city shown as a story's setting is not a travel recommendation.
 - When the evidence is ambiguous, prefer preserving the information in source_content or a recommendation's description instead of creating an extra entry.
 
