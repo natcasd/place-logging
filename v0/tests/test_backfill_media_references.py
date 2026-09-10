@@ -12,6 +12,14 @@ from store import init_db
 
 
 class BackfillMediaReferencesTests(unittest.TestCase):
+    def test_tiktok_video_is_supported_for_timestamp_backfill(self) -> None:
+        self.assertTrue(
+            backfill._is_supported_multi_place_media(
+                "https://www.tiktok.com/@creator/video/123",
+                {"source_platform": "tiktok", "media_types": ["video"]},
+            )
+        )
+
     def _database(self, root: Path) -> Path:
         db_path = root / "places.db"
         init_db(db_path)

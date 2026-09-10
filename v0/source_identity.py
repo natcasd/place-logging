@@ -11,6 +11,26 @@ YOUTUBE_HOSTS = {
     "m.youtube.com",
     "music.youtube.com",
 }
+TIKTOK_WEB_HOSTS = {"tiktok.com", "www.tiktok.com", "m.tiktok.com"}
+TIKTOK_SHORT_HOSTS = {"vm.tiktok.com", "vt.tiktok.com"}
+TIKTOK_SHARE_HOSTS = {"tiktokv.com", "www.tiktokv.com"}
+TIKTOK_HOSTS = TIKTOK_WEB_HOSTS | TIKTOK_SHORT_HOSTS | TIKTOK_SHARE_HOSTS
+
+
+def _tiktok_video_id(host: str, parts: list[str]) -> str | None:
+    if host in TIKTOK_WEB_HOSTS:
+        for index, part in enumerate(parts[:-1]):
+            if part.lower() == "video" and parts[index + 1].isdigit():
+                return parts[index + 1]
+    if (
+        host in TIKTOK_SHARE_HOSTS
+        and len(parts) >= 3
+        and parts[0].lower() == "share"
+        and parts[1].lower() == "video"
+        and parts[2].isdigit()
+    ):
+        return parts[2]
+    return None
 
 
 def canonical_source_url(source_url: str) -> str:
@@ -36,6 +56,13 @@ def canonical_source_url(source_url: str) -> str:
             video_id = parts[1]
         if video_id:
             return f"https://www.youtube.com/watch?v={video_id}"
+
+    if host in TIKTOK_HOSTS:
+        if video_id := _tiktok_video_id(host, parts):
+            # TikTok's numeric video ID is stable even when the creator changes
+            # their handle or the same video arrives through a share URL.
+            return f"https://www.tiktok.com/@_/video/{video_id}"
+        return urlunsplit(("https", host, parsed.path.rstrip("/") + "/", "", ""))
 
     # Unsupported URLs are not rewritten beyond a harmless fragment removal.
     return urlunsplit((parsed.scheme, parsed.netloc, parsed.path, parsed.query, ""))

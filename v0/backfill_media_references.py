@@ -42,7 +42,7 @@ def _json_object(value: str | None) -> dict[str, Any]:
 
 def _is_supported_multi_place_media(source_url: str, metadata: dict[str, Any]) -> bool:
     platform = source_platform(source_url)
-    if platform == "youtube":
+    if platform in {"youtube", "tiktok"}:
         return True
     if platform != "instagram":
         return False

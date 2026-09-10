@@ -24,6 +24,8 @@ class SourcePlatformTests(unittest.TestCase):
             "https://www.youtube.com/watch?v=abc": "youtube",
             "https://www.instagram.com/reel/abc/": "instagram",
             "https://vm.tiktok.com/abc/": "tiktok",
+            "https://vt.tiktok.com/abc/": "tiktok",
+            "https://m.tiktok.com/@user/video/123": "tiktok",
             "https://example.com/video": "other",
         }
         for url, expected in cases.items():
@@ -513,6 +515,163 @@ class InstagramFetcherTests(unittest.TestCase):
                 pipeline.shutil.rmtree(fetched.cleanup_dir)
 
 
+class TikTokFetcherTests(unittest.TestCase):
+    def test_prefers_h264_progressive_format_within_size_target(self) -> None:
+        info = {
+            "formats": [
+                {
+                    "format_id": "h265-720",
+                    "vcodec": "h265",
+                    "acodec": "aac",
+                    "width": 720,
+                    "height": 1280,
+                    "tbr": 700,
+                },
+                {
+                    "format_id": "h264-540",
+                    "vcodec": "h264",
+                    "acodec": "aac",
+                    "width": 576,
+                    "height": 1024,
+                    "tbr": 900,
+                },
+                {
+                    "format_id": "h264-1080",
+                    "vcodec": "h264",
+                    "acodec": "aac",
+                    "width": 1080,
+                    "height": 1920,
+                    "tbr": 2000,
+                },
+            ]
+        }
+
+        self.assertEqual(pipeline._preferred_tiktok_format(info), "h264-540")
+
+    def test_maps_tiktok_metadata(self) -> None:
+        metadata = pipeline._tiktok_metadata(
+            {
+                "description": "Three places to visit #nyc",
+                "uploader": "Example Creator",
+                "uploader_id": "examplecreator",
+                "upload_date": "20260901",
+                "duration": 42,
+                "tags": ["nyc"],
+                "webpage_url": "https://www.tiktok.com/@examplecreator/video/123",
+            },
+            "https://vt.tiktok.com/example/",
+        )
+
+        self.assertEqual(metadata["source_platform"], "tiktok")
+        self.assertEqual(metadata["creator_display_name"], "Example Creator")
+        self.assertEqual(metadata["source_account_handle"], "examplecreator")
+        self.assertEqual(metadata["media_types"], ["video"])
+        self.assertEqual(metadata["duration_seconds"], 42)
+
+    @patch("pipeline.time.sleep")
+    @patch("pipeline.subprocess.run")
+    def test_retries_transient_tiktok_failure(
+        self,
+        mock_run: MagicMock,
+        mock_sleep: MagicMock,
+    ) -> None:
+        mock_run.side_effect = [
+            SimpleNamespace(
+                returncode=1,
+                stderr="Unexpected response from webpage request",
+                stdout="",
+            ),
+            SimpleNamespace(returncode=0, stderr="", stdout="{}"),
+        ]
+
+        result = pipeline._run_tiktok_yt_dlp(["yt-dlp"], "metadata probe")
+
+        self.assertEqual(result.returncode, 0)
+        self.assertEqual(mock_run.call_count, 2)
+        mock_sleep.assert_called_once_with(pipeline.TIKTOK_FETCH_RETRY_SECONDS)
+
+    @patch("pipeline.time.sleep")
+    @patch("pipeline.subprocess.run")
+    def test_does_not_retry_private_tiktok(
+        self,
+        mock_run: MagicMock,
+        mock_sleep: MagicMock,
+    ) -> None:
+        mock_run.return_value = SimpleNamespace(
+            returncode=1,
+            stderr="This is a private post; login required",
+            stdout="",
+        )
+
+        result = pipeline._run_tiktok_yt_dlp(["yt-dlp"], "metadata probe")
+
+        self.assertEqual(result.returncode, 1)
+        mock_run.assert_called_once()
+        mock_sleep.assert_not_called()
+
+    def test_translates_private_tiktok_error_for_user(self) -> None:
+        error = pipeline._tiktok_fetch_error(
+            "metadata fetch",
+            "ERROR: This is a private post; login required",
+        )
+
+        self.assertEqual(str(error), "This TikTok is private or requires a login")
+
+    @patch("pipeline.subprocess.run")
+    def test_fetches_one_tiktok_video_and_cleans_with_caller(
+        self,
+        mock_run: MagicMock,
+    ) -> None:
+        probe_info = {
+            "id": "123",
+            "description": "A cafe recommendation",
+            "uploader": "Creator",
+            "uploader_id": "creator",
+            "duration": 12,
+            "formats": [
+                {
+                    "format_id": "h264-540",
+                    "vcodec": "h264",
+                    "acodec": "aac",
+                    "width": 576,
+                    "height": 1024,
+                    "tbr": 800,
+                }
+            ],
+        }
+
+        def run_command(command: list[str], **_: object) -> SimpleNamespace:
+            if "--skip-download" in command:
+                return SimpleNamespace(
+                    returncode=0,
+                    stderr="",
+                    stdout=json.dumps(probe_info),
+                )
+            template = command[command.index("-o") + 1]
+            video = Path(
+                template.replace("%(id)s", "123").replace("%(ext)s", "mp4")
+            )
+            video.write_bytes(b"video")
+            return SimpleNamespace(returncode=0, stderr="", stdout=str(video))
+
+        mock_run.side_effect = run_command
+        with tempfile.TemporaryDirectory() as temp_dir:
+            fetched = pipeline.fetch(
+                "https://www.tiktok.com/@creator/video/123",
+                Path(temp_dir),
+            )
+            try:
+                self.assertEqual(fetched.media_paths[0].read_bytes(), b"video")
+                self.assertEqual(fetched.metadata["source_platform"], "tiktok")
+                download_command = mock_run.call_args_list[1].args[0]
+                self.assertEqual(
+                    download_command[download_command.index("-f") + 1],
+                    "h264-540",
+                )
+            finally:
+                pipeline.shutil.rmtree(fetched.cleanup_dir)
+
+
 class InstagramExtractionTests(unittest.TestCase):
     def test_normalizes_media_references_against_carousel_shape(self) -> None:
         places = [
@@ -817,13 +976,43 @@ class ProcessIngestTests(unittest.TestCase):
         )
         self.assertEqual(stages, ["extracting", "resolving"])
 
-    def test_tiktok_fails_with_clear_temporary_message(self) -> None:
-        with self.assertRaisesRegex(NotImplementedError, "temporarily unavailable"):
-            pipeline.process_ingest(
+    @patch("pipeline.resolve")
+    @patch("pipeline.extract_bundle")
+    @patch("pipeline.fetch")
+    def test_tiktok_uses_downloaded_media_extraction(
+        self,
+        mock_fetch: MagicMock,
+        mock_extract: MagicMock,
+        mock_resolve: MagicMock,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            cleanup_dir = Path(temp_dir) / "tiktok-ingest"
+            cleanup_dir.mkdir()
+            video = cleanup_dir / "123.mp4"
+            video.write_bytes(b"video")
+            mock_fetch.return_value = pipeline.MediaFetch(
+                [video],
+                {"source_platform": "tiktok", "webpage_url": "https://tiktok.test"},
+                cleanup_dir,
+            )
+            mock_extract.return_value = {
+                "source_content": {"summary": "A TikTok recommendation."},
+                "entries": [{"extracted_name": "Test Cafe"}],
+            }
+            mock_resolve.return_value = {"status": "unresolved", "reason": "test"}
+            stages = []
+
+            result = pipeline.process_ingest(
                 "https://www.tiktok.com/@user/video/123",
                 None,
-                Path("/unused"),
+                Path(temp_dir),
+                progress=stages.append,
             )
+
+            self.assertEqual(result["metadata"]["source_platform"], "tiktok")
+            self.assertEqual(result["entries_extracted"][0]["extracted_name"], "Test Cafe")
+            self.assertEqual(stages, ["fetching", "extracting", "resolving"])
+            self.assertFalse(cleanup_dir.exists())
 
     def test_non_location_entry_skips_google_places(self) -> None:
         entry = {
@@ -868,7 +1057,7 @@ class ProcessIngestTests(unittest.TestCase):
             info = video.with_suffix(".info.json")
             video.touch()
             info.touch()
-            mock_fetch.return_value = pipeline.InstagramFetch(
+            mock_fetch.return_value = pipeline.MediaFetch(
                 [video],
                 {"webpage_url": "instagram"},
                 cleanup_dir,
@@ -910,7 +1099,7 @@ class ProcessIngestTests(unittest.TestCase):
             cleanup_dir.mkdir()
             video = cleanup_dir / "post.mp4"
             video.touch()
-            mock_fetch.return_value = pipeline.InstagramFetch(
+            mock_fetch.return_value = pipeline.MediaFetch(
                 [video],
                 {"source_platform": "instagram"},
                 cleanup_dir,
@@ -950,7 +1139,7 @@ class ProcessIngestTests(unittest.TestCase):
             cleanup_dir.mkdir()
             video = cleanup_dir / "post.mp4"
             video.touch()
-            mock_fetch.return_value = pipeline.InstagramFetch(
+            mock_fetch.return_value = pipeline.MediaFetch(
                 [video],
                 {
                     "source_platform": "instagram",

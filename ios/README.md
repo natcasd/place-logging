@@ -4,10 +4,10 @@ The native MVP contains two targets:
 
 - `PlaceLogger`: a SwiftUI list and MapKit map of saved Entries.
 - `PlaceLoggerShare`: a native share extension that accepts links and media
-  shared by Instagram or YouTube and sends the extracted URL to the existing
-  ingest API. The extension can close while the synchronous request continues;
-  on completion, it schedules a local notification summarizing the logged
-  Entries.
+  shared by Instagram, TikTok, or YouTube and sends the extracted URL to the
+  existing ingest API. The extension can close while the synchronous request
+  continues; on completion, it schedules a local notification summarizing the
+  logged Entries.
 
 The current free, locally provisioned build cannot use APNs. Because completion
 notifications are scheduled by the share extension, tapping them does not open
@@ -22,9 +22,9 @@ parks). Repeated saves with the same Google Place ID share one pin while
 retaining every recommendation and original source post in the detail sheet.
 Places without resolved coordinates remain available in the list.
 
-New saves retain where each place appears in its source. Reel and YouTube
-results show the start of the place's main section as a timestamp. Instagram
-carousels show a 1-based slide number and open the original post with
+New saves retain where each place appears in its source. Reel, TikTok, and
+YouTube results show the start of the place's main section as a timestamp.
+Instagram carousels show a 1-based slide number and open the original post with
 Instagram's `img_index` parameter. Caption-only matches leave the media
 reference empty rather than guessing.
 

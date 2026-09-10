@@ -97,21 +97,35 @@ YOUTUBE_HOSTS = {
     "m.youtube.com",
     "youtu.be",
 }
-INSTAGRAM_HOSTS = {"instagram.com", "www.instagram.com"}
+INSTAGRAM_HOSTS = {"instagram.com", "www.instagram.com", "m.instagram.com"}
 TIKTOK_HOSTS = {
     "tiktok.com",
     "www.tiktok.com",
+    "m.tiktok.com",
     "vm.tiktok.com",
+    "vt.tiktok.com",
     "tiktokv.com",
     "www.tiktokv.com",
 }
 
 INSTAGRAM_MAX_VIDEO_HEIGHT = 720
 INSTAGRAM_TARGET_VIDEO_KBPS = 2500
+TIKTOK_MAX_VIDEO_HEIGHT = 720
+TIKTOK_FETCH_ATTEMPTS = 2
+TIKTOK_FETCH_RETRY_SECONDS = 2.0
+TRANSIENT_TIKTOK_ERRORS = (
+    "http error 403",
+    "http error 429",
+    "unexpected response from webpage request",
+    "unable to extract universal data",
+    "unable to download video data",
+    "remote end closed connection",
+    "timed out",
+)
 
 
 @dataclass(frozen=True)
-class InstagramFetch:
+class MediaFetch:
     media_paths: list[Path]
     metadata: dict[str, Any]
     cleanup_dir: Path
@@ -289,11 +303,8 @@ def _download_instagram_image(
     destination.write_bytes(response.content)
 
 
-def fetch(source_url: str, workdir: Path) -> InstagramFetch:
+def _fetch_instagram(source_url: str, workdir: Path) -> MediaFetch:
     """Download all media from an Instagram image, carousel, or Reel."""
-    if source_platform(source_url) != "instagram":
-        raise ValueError("fetch() only supports Instagram URLs")
-
     workdir.mkdir(parents=True, exist_ok=True)
     cleanup_dir = Path(tempfile.mkdtemp(prefix="instagram-", dir=workdir))
     try:
@@ -360,10 +371,198 @@ def fetch(source_url: str, workdir: Path) -> InstagramFetch:
             len(media_paths),
             metadata["media_types"],
         )
-        return InstagramFetch(media_paths, metadata, cleanup_dir)
+        return MediaFetch(media_paths, metadata, cleanup_dir)
     except Exception:
         shutil.rmtree(cleanup_dir, ignore_errors=True)
         raise
+
+
+def _preferred_tiktok_format(info: dict[str, Any]) -> str | None:
+    """Prefer a compact, broadly decodable progressive TikTok rendition."""
+    candidates = []
+    duration = info.get("duration")
+    for item in info.get("formats") or []:
+        if not isinstance(item, dict):
+            continue
+        vcodec = str(item.get("vcodec") or "none").lower()
+        acodec = str(item.get("acodec") or "none").lower()
+        if vcodec == "none" or acodec == "none" or not item.get("format_id"):
+            continue
+        width = item.get("width")
+        height = item.get("height")
+        numeric_edges = [
+            value for value in (width, height) if isinstance(value, (int, float))
+        ]
+        short_edge = min(numeric_edges) if numeric_edges else 0
+        estimated_bytes = item.get("filesize") or item.get("filesize_approx")
+        bitrate = item.get("tbr")
+        if (
+            not isinstance(estimated_bytes, (int, float))
+            and isinstance(duration, (int, float))
+            and isinstance(bitrate, (int, float))
+        ):
+            estimated_bytes = duration * bitrate * 1000 / 8
+        candidates.append(
+            (
+                item,
+                short_edge,
+                vcodec.startswith(("h264", "avc")),
+                estimated_bytes,
+            )
+        )
+
+    if not candidates:
+        return None
+    under_limit = [
+        candidate for candidate in candidates
+        if candidate[1] and candidate[1] <= TIKTOK_MAX_VIDEO_HEIGHT
+    ]
+    pool = under_limit or candidates
+    inline_safe = [
+        candidate
+        for candidate in pool
+        if not isinstance(candidate[3], (int, float))
+        or candidate[3] <= MAX_INLINE_VIDEO_BYTES
+    ]
+    pool = inline_safe or pool
+    h264_pool = [candidate for candidate in pool if candidate[2]]
+    pool = h264_pool or pool
+    selected = max(
+        pool,
+        key=lambda candidate: (
+            candidate[1],
+            candidate[0].get("tbr") or 0,
+        ),
+    )[0]
+    return str(selected["format_id"])
+
+
+def _tiktok_metadata(info: dict[str, Any], source_url: str) -> dict[str, Any]:
+    creator_display_name = info.get("uploader") or info.get("channel")
+    source_account_handle = info.get("uploader_id") or info.get("channel_id")
+    return {
+        "source_platform": "tiktok",
+        "caption_or_description": info.get("description") or info.get("title"),
+        "uploader": creator_display_name or source_account_handle,
+        "creator_display_name": creator_display_name,
+        "source_account_handle": source_account_handle,
+        "upload_date": info.get("upload_date"),
+        "duration_seconds": info.get("duration"),
+        "hashtags": info.get("tags"),
+        "webpage_url": info.get("webpage_url") or source_url,
+        "media_count": 1,
+        "media_types": ["video"],
+    }
+
+
+def _run_tiktok_yt_dlp(command: list[str], operation: str) -> subprocess.CompletedProcess[str]:
+    """Retry the small set of TikTok failures known to be transient."""
+    for attempt in range(1, TIKTOK_FETCH_ATTEMPTS + 1):
+        result = subprocess.run(command, capture_output=True, text=True, check=False)
+        if result.returncode == 0:
+            return result
+        message = (result.stderr or "").lower()
+        is_transient = any(fragment in message for fragment in TRANSIENT_TIKTOK_ERRORS)
+        if not is_transient or attempt == TIKTOK_FETCH_ATTEMPTS:
+            return result
+        log.warning(
+            "TikTok %s failed transiently attempt=%d/%d; retrying in %.1fs",
+            operation,
+            attempt,
+            TIKTOK_FETCH_ATTEMPTS,
+            TIKTOK_FETCH_RETRY_SECONDS,
+        )
+        time.sleep(TIKTOK_FETCH_RETRY_SECONDS)
+    raise AssertionError("unreachable")
+
+
+def _tiktok_fetch_error(operation: str, stderr: str) -> RuntimeError:
+    detail = stderr.strip()[-1000:]
+    log.error("TikTok %s failed: %s", operation, detail)
+    normalized = detail.lower()
+    if any(
+        fragment in normalized
+        for fragment in ("private post", "private account", "login required")
+    ):
+        return RuntimeError("This TikTok is private or requires a login")
+    if any(
+        fragment in normalized
+        for fragment in ("video unavailable", "video not available", "has been removed")
+    ):
+        return RuntimeError("This TikTok is unavailable or has been removed")
+    return RuntimeError("TikTok could not be downloaded right now; please try again")
+
+
+def _fetch_tiktok(source_url: str, workdir: Path) -> MediaFetch:
+    """Download one public TikTok video and its extraction metadata."""
+    workdir.mkdir(parents=True, exist_ok=True)
+    cleanup_dir = Path(tempfile.mkdtemp(prefix="tiktok-", dir=workdir))
+    try:
+        probe_command = [
+            sys.executable,
+            "-m",
+            "yt_dlp",
+            "--no-playlist",
+            "--skip-download",
+            "--dump-single-json",
+            source_url,
+        ]
+        probe = _run_tiktok_yt_dlp(probe_command, "metadata probe")
+        if probe.returncode != 0:
+            raise _tiktok_fetch_error("metadata fetch", probe.stderr)
+        try:
+            info = json.loads(probe.stdout)
+        except (json.JSONDecodeError, TypeError, ValueError):
+            raise RuntimeError("TikTok metadata fetch returned invalid JSON")
+        if not isinstance(info, dict) or info.get("_type") == "playlist":
+            raise RuntimeError("TikTok URL did not resolve to one public video")
+
+        output_template = f"{cleanup_dir}/%(id)s.%(ext)s"
+        download_command = [
+            sys.executable,
+            "-m",
+            "yt_dlp",
+            "--no-playlist",
+            "--write-info-json",
+            "-o",
+            output_template,
+            "--print",
+            "after_move:filepath",
+        ]
+        if preferred_format := _preferred_tiktok_format(info):
+            download_command.extend(["-f", preferred_format])
+        download_command.append(source_url)
+        download = _run_tiktok_yt_dlp(download_command, "media download")
+        downloaded_paths = [
+            path
+            for line in download.stdout.splitlines()
+            if (path := Path(line.strip())).is_file()
+        ]
+        if download.returncode != 0 and not downloaded_paths:
+            raise _tiktok_fetch_error("media download", download.stderr)
+        if len(downloaded_paths) != 1:
+            raise RuntimeError("TikTok did not produce exactly one video file")
+
+        metadata = _tiktok_metadata(info, source_url)
+        log.info(
+            "Downloaded TikTok video id=%s duration_seconds=%s",
+            info.get("id"),
+            info.get("duration"),
+        )
+        return MediaFetch(downloaded_paths, metadata, cleanup_dir)
+    except Exception:
+        shutil.rmtree(cleanup_dir, ignore_errors=True)
+        raise
+
+
+def fetch(source_url: str, workdir: Path) -> MediaFetch:
+    """Download supported source media for extraction."""
+    platform = source_platform(source_url)
+    if platform == "instagram":
+        return _fetch_instagram(source_url, workdir)
+    if platform == "tiktok":
+        return _fetch_tiktok(source_url, workdir)
+    raise ValueError("fetch() supports Instagram and TikTok URLs")
 
 
 # ---------- Extractor ----------
@@ -1078,12 +1277,10 @@ def process_ingest(
         raise NotImplementedError("v0 requires a source URL")
 
     platform = source_platform(source_url)
-    if platform == "tiktok":
-        raise NotImplementedError(
-            "TikTok ingestion is temporarily unavailable while its downloader support is unstable"
-        )
     if platform == "other":
-        raise ValueError("Supported URLs are public YouTube videos and Instagram posts")
+        raise ValueError(
+            "Supported URLs are public Instagram posts, TikTok videos, and YouTube videos"
+        )
 
     if platform == "youtube":
         if progress:
@@ -1118,7 +1315,10 @@ def process_ingest(
                     existing_types,
                 )
             except Exception as exc:
-                log.exception("Instagram extraction failed after retries; preserving source")
+                log.exception(
+                    "%s extraction failed after retries; preserving source",
+                    "TikTok" if platform == "tiktok" else platform.capitalize(),
+                )
                 _preserve_extraction_failure(metadata, exc)
                 entries = []
             else:

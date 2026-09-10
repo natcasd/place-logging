@@ -31,6 +31,21 @@ class SourceIdentityTests(unittest.TestCase):
         ]
         self.assertEqual({canonical_source_url(url) for url in variants}, {expected})
 
+    def test_normalizes_tiktok_video_variants_by_numeric_id(self) -> None:
+        expected = "https://www.tiktok.com/@_/video/7668090902816017671"
+        variants = [
+            "https://www.tiktok.com/@creator/video/7668090902816017671?_r=1",
+            "https://m.tiktok.com/@old_handle/video/7668090902816017671/",
+            "https://www.tiktokv.com/share/video/7668090902816017671/?tracking=1",
+        ]
+        self.assertEqual({canonical_source_url(url) for url in variants}, {expected})
+
+    def test_normalizes_opaque_tiktok_share_link_tracking(self) -> None:
+        self.assertEqual(
+            canonical_source_url("https://vt.tiktok.com/ZSVv88Y6S/?share_app_id=123#x"),
+            "https://vt.tiktok.com/ZSVv88Y6S/",
+        )
+
     def test_only_removes_fragment_from_unsupported_urls(self) -> None:
         self.assertEqual(
             canonical_source_url("https://example.com/a?x=1#section"),

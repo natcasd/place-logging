@@ -1,15 +1,19 @@
 """Application service shared by every ingest transport."""
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass, field
 from pathlib import Path
 from threading import Lock
 from typing import Any
+from urllib.parse import urlsplit
+
+import requests
 
 from movie_enrichment import MovieProvider, enrich_movie_entries
 from pipeline import process_ingest
 from pipeline import source_platform as detect_source_platform
-from source_identity import canonical_source_url
+from source_identity import TIKTOK_HOSTS, TIKTOK_SHORT_HOSTS, canonical_source_url
 from store import (
     confirm_activity_location,
     delete_place,
@@ -37,6 +41,56 @@ STAGE_MESSAGES = {
     "resolving": "Resolving locations",
     "saving": "Saving results",
 }
+
+log = logging.getLogger(__name__)
+
+
+def _clean_tiktok_video_url(source_url: str) -> str:
+    parsed = urlsplit(source_url)
+    host = (parsed.hostname or "").lower().rstrip(".")
+    parts = [part for part in parsed.path.split("/") if part]
+    has_video_id = any(
+        part.lower() == "video" and parts[index + 1].isdigit()
+        for index, part in enumerate(parts[:-1])
+    )
+    if host in TIKTOK_HOSTS and has_video_id:
+        return f"https://{host}/{'/'.join(parts)}"
+    return source_url
+
+
+def _resolve_shared_source_url(source_url: str) -> str:
+    """Resolve opaque TikTok share links before deduplication and storage."""
+    value = source_url.strip()
+    parsed = urlsplit(value)
+    host = (parsed.hostname or "").lower().rstrip(".")
+    path_parts = [part for part in parsed.path.split("/") if part]
+    is_web_short_link = (
+        host in TIKTOK_HOSTS
+        and bool(path_parts)
+        and path_parts[0].lower() == "t"
+    )
+    if host not in TIKTOK_SHORT_HOSTS and not is_web_short_link:
+        return _clean_tiktok_video_url(value)
+    try:
+        with requests.get(
+            value,
+            allow_redirects=True,
+            headers={"User-Agent": "Mozilla/5.0 (compatible; Jot/1.0)"},
+            stream=True,
+            timeout=10,
+        ) as response:
+            response.raise_for_status()
+            resolved = response.url
+    except requests.RequestException as exc:
+        # yt-dlp has its own share-URL resolver, so a failed preflight should
+        # not prevent ingestion; it only weakens cross-form deduplication.
+        log.warning("Could not pre-resolve TikTok share URL: %s", exc)
+        return value
+    resolved_host = (urlsplit(resolved).hostname or "").lower().rstrip(".")
+    if resolved_host not in TIKTOK_HOSTS:
+        log.warning("Ignoring TikTok share redirect to unexpected host %s", resolved_host)
+        return value
+    return _clean_tiktok_video_url(resolved)
 
 
 @dataclass(frozen=True)
@@ -66,6 +120,7 @@ class IngestService:
         user_prompt: str | None = None,
     ) -> dict[str, Any]:
         """Process and persist one source, returning the canonical result."""
+        source_url = _resolve_shared_source_url(source_url)
         identity = canonical_source_url(source_url)
         with self._source_locks_guard:
             source_lock = self._source_locks.setdefault(identity, Lock())
