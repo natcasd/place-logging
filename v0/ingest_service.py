@@ -6,6 +6,7 @@ from pathlib import Path
 from threading import Lock
 from typing import Any
 
+from movie_enrichment import MovieProvider, enrich_movie_entries
 from pipeline import process_ingest
 from pipeline import source_platform as detect_source_platform
 from source_identity import canonical_source_url
@@ -42,6 +43,7 @@ STAGE_MESSAGES = {
 class IngestService:
     db_path: Path
     workdir: Path
+    movie_provider: MovieProvider | None = None
     _source_locks: dict[str, Lock] = field(
         default_factory=dict,
         init=False,
@@ -111,6 +113,12 @@ class IngestService:
             report("saving")
             item_id = save_ingest(self.db_path, result)
             outcomes = saved_entry_outcomes(self.db_path, item_id)
+            if self.movie_provider is not None:
+                enrich_movie_entries(
+                    self.db_path,
+                    self.movie_provider,
+                    [outcome["entry_id"] for outcome in outcomes],
+                )
             needs_review = (
                 not outcomes
                 or (result.get("metadata") or {}).get("extraction_status") == "failed"

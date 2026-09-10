@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import re
 import sqlite3
+import urllib.parse
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -78,6 +79,18 @@ CREATE TABLE IF NOT EXISTS entries (
   recurrence_text TEXT,
   created_at      TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at      TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS movie_enrichments (
+  entry_id          INTEGER PRIMARY KEY REFERENCES entries(id) ON DELETE CASCADE,
+  provider          TEXT NOT NULL,
+  provider_id       TEXT,
+  resolved_title    TEXT,
+  release_year      INTEGER,
+  letterboxd_url    TEXT,
+  match_status      TEXT NOT NULL,
+  match_confidence  REAL,
+  checked_at        TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
 CREATE TABLE IF NOT EXISTS entry_sources (
@@ -1149,6 +1162,13 @@ def list_entries(db_path: Path, limit: int = 200) -> list[dict[str, Any]]:
             f"""SELECT
                  t.id, t.name, t.entry_type, t.starts_at, t.ends_at,
                  t.recurrence_text, t.location_id,
+                 me.provider AS movie_provider,
+                 me.provider_id AS movie_provider_id,
+                 me.resolved_title AS movie_resolved_title,
+                 me.release_year AS movie_release_year,
+                 me.letterboxd_url AS movie_letterboxd_url,
+                 me.match_status AS movie_match_status,
+                 me.match_confidence AS movie_match_confidence,
                  l.google_place_id, l.display_name AS location_name,
                  l.lat, l.lng, l.formatted_address, l.google_maps_url,
                  ts.id AS source_connection_id, ts.item_id, ts.ordinal,
@@ -1159,6 +1179,7 @@ def list_entries(db_path: Path, limit: int = 200) -> list[dict[str, Any]]:
                  i.source_url, i.raw_payload_json, i.created_at
                FROM entries AS t
                LEFT JOIN locations AS l ON l.id = t.location_id
+               LEFT JOIN movie_enrichments AS me ON me.entry_id = t.id
                JOIN entry_sources AS ts ON ts.entry_id = t.id
                JOIN items AS i ON i.id = ts.item_id
                WHERE t.id IN ({placeholders})
@@ -1213,6 +1234,7 @@ def list_entries(db_path: Path, limit: int = 200) -> list[dict[str, Any]]:
                     "ends_at": row["ends_at"],
                     "recurrence_text": row["recurrence_text"],
                     "location_query": source["location_query"],
+                    "movie_enrichment": _movie_enrichment_payload(row),
                     "source_url": source["source_url"],
                     "saved_at": source["saved_at"],
                     "sources": [],
@@ -1221,6 +1243,106 @@ def list_entries(db_path: Path, limit: int = 200) -> list[dict[str, Any]]:
             entry["sources"].append(source)
 
         return [by_id[entry_id] for entry_id in entry_ids]
+    finally:
+        con.close()
+
+
+def _movie_enrichment_payload(row: sqlite3.Row) -> dict[str, Any] | None:
+    if canonical_entry_type(row["entry_type"]) != "Movie":
+        return None
+    resolved_title = row["movie_resolved_title"]
+    release_year = row["movie_release_year"]
+    query_parts = [resolved_title or row["name"]]
+    if release_year:
+        query_parts.append(str(release_year))
+    query_parts.append("movie")
+    web_search_url = "https://www.google.com/search?" + urllib.parse.urlencode(
+        {"q": " ".join(query_parts)}
+    )
+    return {
+        "provider": row["movie_provider"],
+        "provider_id": row["movie_provider_id"],
+        "resolved_title": resolved_title,
+        "release_year": release_year,
+        "letterboxd_url": row["movie_letterboxd_url"],
+        "web_search_url": web_search_url,
+        "match_status": row["movie_match_status"] or "not_attempted",
+        "match_confidence": row["movie_match_confidence"],
+    }
+
+
+def movie_entries_for_enrichment(
+    db_path: Path,
+    entry_ids: list[int] | None = None,
+    *,
+    retry: bool = False,
+) -> list[dict[str, Any]]:
+    """Return movie entries that have not yet received a provider result."""
+    con = _connect(db_path)
+    con.row_factory = sqlite3.Row
+    try:
+        conditions = ["lower(trim(t.entry_type)) = 'movie'"]
+        parameters: list[Any] = []
+        if entry_ids is not None:
+            unique_ids = list(dict.fromkeys(entry_ids))
+            if not unique_ids:
+                return []
+            placeholders = ",".join("?" for _ in unique_ids)
+            conditions.append(f"t.id IN ({placeholders})")
+            parameters.extend(unique_ids)
+        if not retry:
+            conditions.append("me.entry_id IS NULL")
+        rows = con.execute(
+            f"""SELECT t.id, t.name,
+                       GROUP_CONCAT(ts.description, ' ') AS descriptions
+                  FROM entries AS t
+                  JOIN entry_sources AS ts ON ts.entry_id = t.id
+                  LEFT JOIN movie_enrichments AS me ON me.entry_id = t.id
+                 WHERE {' AND '.join(conditions)}
+                 GROUP BY t.id, t.name
+                 ORDER BY t.id""",
+            parameters,
+        ).fetchall()
+        return [dict(row) for row in rows]
+    finally:
+        con.close()
+
+
+def save_movie_enrichment(
+    db_path: Path,
+    entry_id: int,
+    enrichment: dict[str, Any],
+) -> None:
+    """Persist the latest provider lookup result for one canonical movie."""
+    con = _connect(db_path)
+    try:
+        con.execute(
+            """INSERT INTO movie_enrichments (
+                 entry_id, provider, provider_id, resolved_title, release_year,
+                 letterboxd_url, match_status, match_confidence,
+                 checked_at
+               ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+               ON CONFLICT(entry_id) DO UPDATE SET
+                 provider = excluded.provider,
+                 provider_id = excluded.provider_id,
+                 resolved_title = excluded.resolved_title,
+                 release_year = excluded.release_year,
+                 letterboxd_url = excluded.letterboxd_url,
+                 match_status = excluded.match_status,
+                 match_confidence = excluded.match_confidence,
+                 checked_at = CURRENT_TIMESTAMP""",
+            (
+                entry_id,
+                enrichment["provider"],
+                enrichment.get("provider_id"),
+                enrichment.get("resolved_title"),
+                enrichment.get("release_year"),
+                enrichment.get("letterboxd_url"),
+                enrichment["match_status"],
+                enrichment.get("match_confidence"),
+            ),
+        )
+        con.commit()
     finally:
         con.close()
 

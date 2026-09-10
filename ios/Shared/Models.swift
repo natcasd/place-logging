@@ -39,6 +39,7 @@ struct SavedEntry: Decodable, Identifiable, Sendable {
   let startsAt: String?
   let endsAt: String?
   let recurrenceText: String?
+  let movieEnrichment: MovieEnrichment?
   let sourceURL: URL
   let savedAt: String
   let sources: [SavedEntrySource]
@@ -60,6 +61,7 @@ struct SavedEntry: Decodable, Identifiable, Sendable {
     case startsAt = "starts_at"
     case endsAt = "ends_at"
     case recurrenceText = "recurrence_text"
+    case movieEnrichment = "movie_enrichment"
     case sourceURL = "source_url"
     case savedAt = "saved_at"
   }
@@ -191,6 +193,22 @@ struct SavedEntry: Decodable, Identifiable, Sendable {
     formatter.locale = Locale(identifier: "en_US_POSIX")
     formatter.dateFormat = "yyyy-MM-dd"
     return formatter.date(from: value)
+  }
+}
+
+struct MovieEnrichment: Decodable, Sendable {
+  let resolvedTitle: String?
+  let releaseYear: Int?
+  let letterboxdURL: URL?
+  let webSearchURL: URL
+  let matchStatus: String
+
+  enum CodingKeys: String, CodingKey {
+    case resolvedTitle = "resolved_title"
+    case releaseYear = "release_year"
+    case letterboxdURL = "letterboxd_url"
+    case webSearchURL = "web_search_url"
+    case matchStatus = "match_status"
   }
 }
 

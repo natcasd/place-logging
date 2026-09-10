@@ -30,6 +30,7 @@ load_dotenv(Path(__file__).parent / ".env")
 
 from bot import _format_result, build_application  # noqa: E402
 from ingest_service import IngestService  # noqa: E402
+from movie_enrichment import WikidataMovieProvider  # noqa: E402
 
 
 logging.basicConfig(
@@ -135,6 +136,17 @@ class SavedEntrySource(BaseModel):
     saved_at: str
 
 
+class MovieEnrichment(BaseModel):
+    provider: str | None = None
+    provider_id: str | None = None
+    resolved_title: str | None = None
+    release_year: int | None = None
+    letterboxd_url: str | None = None
+    web_search_url: str
+    match_status: str
+    match_confidence: float | None = None
+
+
 class SavedEntry(BaseModel):
     id: int
     location_id: int | None = None
@@ -159,6 +171,7 @@ class SavedEntry(BaseModel):
     ends_at: str | None = None
     recurrence_text: str | None = None
     location_query: str | None = None
+    movie_enrichment: MovieEnrichment | None = None
     source_url: str
     saved_at: str
     sources: list[SavedEntrySource] = Field(default_factory=list)
@@ -359,6 +372,7 @@ def build_runtime() -> Runtime:
     service = IngestService(
         db_path=Path(os.environ.get("DB_PATH", root / "data" / "places.db")),
         workdir=Path(os.environ.get("WORKDIR", default_workdir)),
+        movie_provider=WikidataMovieProvider(),
     )
     service.initialize()
     allowed_ids = _allowed_ids()

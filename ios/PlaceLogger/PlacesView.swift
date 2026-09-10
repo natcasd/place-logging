@@ -1772,10 +1772,64 @@ private struct EntryDetailContent: View {
         }
       }
 
+      if let movieEnrichment = entry.movieEnrichment {
+        MovieLinksCard(enrichment: movieEnrichment)
+      }
+
       ForEach(entry.sources) { source in
         EntrySourceCard(source: source)
       }
     }
+  }
+}
+
+private struct MovieLinksCard: View {
+  let enrichment: MovieEnrichment
+
+  var body: some View {
+    VStack(alignment: .leading, spacing: 10) {
+      Text("Explore this movie")
+        .font(.caption.weight(.semibold))
+        .foregroundStyle(.secondary)
+        .textCase(.uppercase)
+
+      HStack(spacing: 10) {
+        if let letterboxdURL = enrichment.letterboxdURL {
+          MovieLinkButton(
+            title: "Letterboxd",
+            systemImage: "film",
+            destination: letterboxdURL
+          )
+        }
+
+        MovieLinkButton(
+          title: "Google",
+          systemImage: "magnifyingglass",
+          destination: enrichment.webSearchURL
+        )
+      }
+    }
+    .padding(14)
+    .frame(maxWidth: .infinity, alignment: .leading)
+    .background(.secondary.opacity(0.08), in: RoundedRectangle(cornerRadius: 14))
+  }
+}
+
+private struct MovieLinkButton: View {
+  let title: String
+  let systemImage: String
+  let destination: URL
+
+  var body: some View {
+    Link(destination: destination) {
+      Label(title, systemImage: systemImage)
+        .font(.subheadline.weight(.semibold))
+        .frame(maxWidth: .infinity)
+        .frame(height: 40)
+        .background(.indigo.opacity(0.12), in: RoundedRectangle(cornerRadius: 11))
+    }
+    .buttonStyle(.plain)
+    .accessibilityLabel("Open \(title)")
   }
 }
 
@@ -2090,6 +2144,11 @@ private struct PlaceRow: View {
         Text(place.displayType)
           .font(.caption.weight(.semibold))
           .foregroundStyle(.secondary)
+        if let releaseYear = place.movieEnrichment?.releaseYear {
+          Text(String(releaseYear))
+            .font(.caption)
+            .foregroundStyle(.secondary)
+        }
         if let availability = place.availabilityText {
           Label(availability, systemImage: "calendar")
             .font(.caption)
