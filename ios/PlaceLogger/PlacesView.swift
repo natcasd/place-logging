@@ -290,7 +290,7 @@ private struct PlacesList: View {
         ContentUnavailableView(
           "No Saved Entries",
           systemImage: "tray",
-          description: Text("Share an Instagram Reel or YouTube video to get started.")
+          description: Text("Share an Instagram Reel, TikTok, or YouTube video to get started.")
         )
       } else {
         ScrollView {
@@ -582,6 +582,12 @@ private struct ActivitySourceIcon: View {
     return "link"
   }
 
+  private var fallbackColor: Color {
+    let platform = activity.sourcePlatform.lowercased()
+    let host = activity.sourceURL.host?.lowercased() ?? ""
+    return platform.contains("tiktok") || host.contains("tiktok") ? .black : .blue
+  }
+
   var body: some View {
     Group {
       if let brandAssetName {
@@ -593,7 +599,7 @@ private struct ActivitySourceIcon: View {
           .font(.subheadline.weight(.semibold))
           .foregroundStyle(.white)
           .frame(width: 32, height: 32)
-          .background(.blue, in: RoundedRectangle(cornerRadius: 8))
+          .background(fallbackColor, in: RoundedRectangle(cornerRadius: 8))
       }
     }
     .frame(width: 32, height: 32)
@@ -620,9 +626,11 @@ private struct ActivityDetail: View {
   private var sourceTitle: String? {
     guard let creator = activity.creator?.trimmingCharacters(in: .whitespacesAndNewlines),
           !creator.isEmpty else { return nil }
-    let platform = activity.sourcePlatform.lowercased() == "youtube"
-      ? "YouTube"
-      : activity.sourcePlatform.capitalized
+    let platform = switch activity.sourcePlatform.lowercased() {
+    case "youtube": "YouTube"
+    case "tiktok": "TikTok"
+    default: activity.sourcePlatform.capitalized
+    }
     return "\(creator) on \(platform)"
   }
 
@@ -1845,6 +1853,7 @@ private struct SourceMetadataCard: View {
     let platform = sourcePlatform.trimmingCharacters(in: .whitespacesAndNewlines)
     if platform.caseInsensitiveCompare("youtube") == .orderedSame { return "YouTube" }
     if platform.caseInsensitiveCompare("instagram") == .orderedSame { return "Instagram" }
+    if platform.caseInsensitiveCompare("tiktok") == .orderedSame { return "TikTok" }
     return platform.isEmpty ? "Original post" : platform.capitalized
   }
 
@@ -1876,6 +1885,12 @@ private struct SourceMetadataCard: View {
     return "link"
   }
 
+  private var fallbackColor: Color {
+    let platform = sourcePlatform.lowercased()
+    let host = sourceURL.host?.lowercased() ?? ""
+    return platform.contains("tiktok") || host.contains("tiktok") ? .black : .blue
+  }
+
   var body: some View {
     VStack(alignment: .leading, spacing: 10) {
       Link(destination: sourceURL) {
@@ -1891,7 +1906,7 @@ private struct SourceMetadataCard: View {
               .font(.subheadline.weight(.semibold))
               .foregroundStyle(.white)
               .frame(width: 30, height: 30)
-              .background(.blue, in: RoundedRectangle(cornerRadius: 8))
+              .background(fallbackColor, in: RoundedRectangle(cornerRadius: 8))
               .accessibilityHidden(true)
           }
 

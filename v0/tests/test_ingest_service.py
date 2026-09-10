@@ -3,13 +3,68 @@ from __future__ import annotations
 import unittest
 import tempfile
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
+import ingest_service
 from ingest_service import IngestService
 from store import list_ingest_runs
 
 
 class IngestServiceTests(unittest.TestCase):
+    @patch("ingest_service.requests.get")
+    def test_resolves_tiktok_short_link_before_ingest(self, mock_get: MagicMock) -> None:
+        response = mock_get.return_value.__enter__.return_value
+        response.url = "https://www.tiktok.com/@creator/video/7668090902816017671?_t=x"
+
+        resolved = ingest_service._resolve_shared_source_url(
+            "https://vt.tiktok.com/ZSVv88Y6S/"
+        )
+
+        self.assertEqual(
+            resolved,
+            "https://www.tiktok.com/@creator/video/7668090902816017671",
+        )
+        response.raise_for_status.assert_called_once_with()
+
+    @patch("ingest_service.requests.get")
+    def test_resolves_tiktok_web_share_link(self, mock_get: MagicMock) -> None:
+        response = mock_get.return_value.__enter__.return_value
+        response.url = "https://www.tiktok.com/@creator/video/123"
+
+        resolved = ingest_service._resolve_shared_source_url(
+            "https://www.tiktok.com/t/ZExample/"
+        )
+
+        self.assertEqual(resolved, "https://www.tiktok.com/@creator/video/123")
+
+    @patch("ingest_service.process_ingest")
+    @patch("ingest_service._resolve_shared_source_url")
+    def test_tiktok_short_and_canonical_urls_deduplicate(
+        self,
+        mock_resolve_url: MagicMock,
+        mock_process: MagicMock,
+    ) -> None:
+        canonical = "https://www.tiktok.com/@creator/video/7668090902816017671"
+        mock_resolve_url.side_effect = [canonical, canonical]
+        mock_process.return_value = {
+            "source_url": canonical,
+            "user_prompt": None,
+            "metadata": {"source_platform": "tiktok", "extraction_status": "complete"},
+            "places_extracted": [],
+            "resolved_places": [],
+        }
+        with tempfile.TemporaryDirectory() as temp_dir:
+            db_path = Path(temp_dir) / "test.db"
+            service = IngestService(db_path, Path(temp_dir) / "downloads")
+            service.initialize()
+
+            first = service.ingest("https://vt.tiktok.com/ZSVv88Y6S/")
+            second = service.ingest(canonical)
+
+        self.assertFalse(first["already_logged"])
+        self.assertTrue(second["already_logged"])
+        self.assertEqual(mock_process.call_count, 1)
+
     @patch("ingest_service.process_ingest")
     def test_processes_and_persists_canonical_result(
         self,

@@ -287,6 +287,7 @@ struct SavedEntrySource: Decodable, Identifiable, Sendable {
     let host = sourceURL.host?.lowercased() ?? ""
     if host.contains("instagram") { return "Instagram Post" }
     if isYouTubeSource { return "Watch on YouTube" }
+    if host.contains("tiktok") { return "Open in TikTok" }
     return "Open original post"
   }
 
@@ -294,6 +295,7 @@ struct SavedEntrySource: Decodable, Identifiable, Sendable {
     let host = sourceURL.host?.lowercased() ?? ""
     if host.contains("instagram") { return "camera" }
     if isYouTubeSource { return "play.rectangle.fill" }
+    if host.contains("tiktok") { return "music.note" }
     return "link"
   }
 
@@ -340,6 +342,8 @@ struct SavedSource: Decodable, Identifiable, Sendable {
 
   var title: String {
     if let creator, !creator.isEmpty { return creator }
+    if sourcePlatform.caseInsensitiveCompare("youtube") == .orderedSame { return "YouTube" }
+    if sourcePlatform.caseInsensitiveCompare("tiktok") == .orderedSame { return "TikTok" }
     return sourcePlatform.capitalized
   }
 }
@@ -547,6 +551,8 @@ struct IngestActivity: Decodable, Identifiable, Sendable {
 
   var title: String {
     if let creator, !creator.isEmpty { return creator }
+    if sourcePlatform.caseInsensitiveCompare("youtube") == .orderedSame { return "YouTube" }
+    if sourcePlatform.caseInsensitiveCompare("tiktok") == .orderedSame { return "TikTok" }
     return sourcePlatform.capitalized
   }
 
@@ -604,7 +610,7 @@ enum PlaceLoggerError: LocalizedError {
     case .server(let status, let detail):
       detail ?? "Jot returned HTTP \(status)."
     case .noSharedURL:
-      "Instagram did not include a usable link in this share."
+      "The shared item did not include a usable link."
     }
   }
 }

@@ -15,8 +15,9 @@ optionally resolves physical locations through Google Places.
   ID and compatible type; temporary entries additionally require the same title
   and dates; non-location entries require the same title and type. Uncertain
   recommendations remain separate.
-- Instagram media is downloaded into temporary machine storage for extraction,
-  then deleted. The source URL, caption, and extracted source text are retained.
+- Instagram and TikTok media is downloaded into temporary machine storage for
+  extraction, then deleted. The source URL, caption, and extracted source text
+  are retained.
 - Each extracted entry uses one stable browse type (`Restaurant`, `Café`, `Bar`,
   `Bakery`, `Park`, `Hiking Trail`, `Bike Route`, `Museum`, `Art Gallery`,
   `Store`, `Spa`, `Fitness`, `Concert`, `Pop-up`, `Exhibit`, `Book`, `Movie`, `Article`,
@@ -57,8 +58,8 @@ optionally resolves physical locations through Google Places.
 - `pipeline.py` — platform-aware `ingest → extract → resolve` pipeline
 - `movie_enrichment.py` — credential-free Wikidata movie matching
 - `store.py` — SQLite schema + `save_ingest()`
-- `data/` — local SQLite database (gitignored); temporary Instagram media uses
-  the machine's temp directory and is deleted after each attempt
+- `data/` — local SQLite database (gitignored); temporary Instagram and TikTok
+  media uses the machine's temp directory and is deleted after each attempt
 
 ## First-time setup
 
@@ -95,7 +96,13 @@ source .venv/bin/activate
 uvicorn app:app --host 0.0.0.0 --port 8000
 ```
 
-Then share a public Instagram image, carousel, Reel, or YouTube video to your bot via the iOS share sheet → Telegram → pick your bot. Or type a message containing a URL. YouTube URLs are sent directly to Gemini. Instagram videos are fetched with `yt-dlp`; image URLs exposed by the same metadata are downloaded directly. All carousel media and the available combined caption text are analyzed together.
+Then share a public Instagram image, carousel, Reel, TikTok, or YouTube video to
+your bot via the iOS share sheet → Telegram → pick your bot. Or type a message
+containing a URL. YouTube URLs are sent directly to Gemini. Instagram and
+TikTok videos are fetched with `yt-dlp`; image URLs exposed by Instagram
+metadata are downloaded directly. All supplied media and available caption text
+are analyzed together. TikTok support covers public, individual videos and does
+not use account cookies.
 
 The bot replies "🔎 Working on it…", then edits that message with the final result once the pipeline finishes (~10–30s).
 
@@ -238,9 +245,8 @@ python backfill_movie_enrichments.py --db-path data/places.db
 
 ## Known gaps
 
-- TikTok is temporarily unsupported while its upstream downloader support is unstable.
-- Instagram download/rate-limit failures that happen before media archival are
-  not yet recoverable automatically.
+- Instagram or TikTok download/rate-limit failures that remain after bounded
+  retries require the source to be shared again.
 - URL-only ingest (pure-text + article/tweet URLs are the v0.5 expansion in doc 09).
 - Routes use resolvable anchors such as a trailhead or venue; custom route
   geometry is intentionally not synthesized from a post.
