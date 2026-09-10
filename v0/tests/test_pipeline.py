@@ -42,12 +42,40 @@ class YouTubeExtractionTests(unittest.TestCase):
         self.assertIn("Do not also save the host venue as a separate entry", prompt)
         self.assertIn("supplier, neighboring business, collaborator, or partner", prompt)
         self.assertIn("closing call-to-action", prompt)
+        self.assertIn("A person or creator can be a principal saved entry", prompt)
+        self.assertIn("a filmmaker or director is not a Movie", prompt)
+        self.assertIn("save the creator as Unknown", prompt)
+        self.assertIn("directly evidenced in speech, visible text, or the caption", prompt)
+        self.assertIn("Do not infer work titles from unlabeled clips or images", prompt)
         self.assertIn("Never use a generic class as its name", prompt)
         self.assertIn("Restaurant, Café, Bar, Bakery", prompt)
+        self.assertIn(
+            "including a person or creator when no dedicated person type exists",
+            prompt,
+        )
         self.assertIn("Use Exhibit for a museum or gallery exhibition", prompt)
         self.assertIn("ONLY for a Concert, Pop-up, or Exhibit", prompt)
         self.assertIn("Never put business hours", prompt)
         self.assertNotIn("Existing specific type names", prompt)
+
+    def test_prompt_distinguishes_creator_profiles_from_named_works(self) -> None:
+        prompt = pipeline._extraction_prompt(
+            {
+                "caption_or_description": (
+                    "A profile of a filmmaker and their body of work; no film "
+                    "titles are named."
+                )
+            }
+        )
+
+        self.assertIn("person or creator can be a principal saved entry", prompt)
+        self.assertIn("filmmaker or director is not a Movie", prompt)
+        self.assertIn("creator as Unknown", prompt)
+        self.assertIn(
+            "Extract an individual work as a separate entry only when its title "
+            "is directly evidenced",
+            prompt,
+        )
 
     def test_prompt_classifies_native_location_per_entry(self) -> None:
         prompt = pipeline._extraction_prompt(
