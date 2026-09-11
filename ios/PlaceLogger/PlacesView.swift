@@ -825,21 +825,56 @@ private struct ActivityLocationsMap: View {
   }
 }
 
+private struct CategoryMapPinShape: Shape {
+  func path(in rect: CGRect) -> Path {
+    let width = rect.width
+    let height = rect.height
+    var path = Path()
+
+    path.move(to: CGPoint(x: width / 2, y: height))
+    path.addCurve(
+      to: CGPoint(x: width * 0.1, y: height * 0.42),
+      control1: CGPoint(x: width * 0.43, y: height * 0.88),
+      control2: CGPoint(x: width * 0.1, y: height * 0.65)
+    )
+    path.addCurve(
+      to: CGPoint(x: width / 2, y: 0),
+      control1: CGPoint(x: width * 0.1, y: height * 0.19),
+      control2: CGPoint(x: width * 0.28, y: 0)
+    )
+    path.addCurve(
+      to: CGPoint(x: width * 0.9, y: height * 0.42),
+      control1: CGPoint(x: width * 0.72, y: 0),
+      control2: CGPoint(x: width * 0.9, y: height * 0.19)
+    )
+    path.addCurve(
+      to: CGPoint(x: width / 2, y: height),
+      control1: CGPoint(x: width * 0.9, y: height * 0.65),
+      control2: CGPoint(x: width * 0.57, y: height * 0.88)
+    )
+    path.closeSubpath()
+    return path
+  }
+}
+
 private struct CategoryMapPin: View {
   let category: SavedCategory
 
+  private let pinColor = Color(red: 1, green: 0.55, blue: 0.24)
+
   var body: some View {
-    Circle()
-      .fill(.blue)
-      .frame(width: 38, height: 38)
+    CategoryMapPinShape()
+      .fill(pinColor)
+      .frame(width: 40, height: 48)
       .overlay {
         SavedCategoryIconView(icon: category.icon)
           .font(.system(size: 19, weight: .semibold))
           .foregroundStyle(.white)
           .frame(width: 21, height: 21)
+          .offset(y: -5)
       }
       .overlay {
-        Circle().stroke(.white.opacity(0.9), lineWidth: 1.5)
+        CategoryMapPinShape().stroke(.white.opacity(0.9), lineWidth: 1.5)
       }
       .shadow(color: .black.opacity(0.22), radius: 3, y: 2)
       .accessibilityLabel(category.title)
@@ -859,7 +894,8 @@ private struct ActivityResultsMap: View {
             coordinate: CLLocationCoordinate2D(
               latitude: latitude,
               longitude: longitude
-            )
+            ),
+            anchor: .bottom
           ) {
             CategoryMapPin(category: SavedCategory.category(for: result.type))
           }
@@ -1196,7 +1232,8 @@ private struct PlacesMap: View {
         ForEach(groups) { group in
           Annotation(
             group.name,
-            coordinate: group.coordinate
+            coordinate: group.coordinate,
+            anchor: .bottom
           ) {
             CategoryMapPin(category: group.category)
           }
