@@ -1191,44 +1191,49 @@ private struct PlacesMap: View {
         description: Text("Current entries appear here after their locations are resolved.")
       )
     } else {
-      Map(position: $cameraPosition, selection: $selectedGroupID) {
-        UserAnnotation()
+      MapReader { proxy in
+        Map(position: $cameraPosition, selection: $selectedGroupID) {
+          UserAnnotation()
 
-        ForEach(groups) { group in
-          CategoryMapMarker(
-            title: group.name,
-            category: group.category,
-            coordinate: group.coordinate
-          )
+          ForEach(groups) { group in
+            CategoryMapMarker(
+              title: group.name,
+              category: group.category,
+              coordinate: group.coordinate
+            )
             .tag(group.id)
-        }
+          }
 
-        if let searchResult {
-          Marker(
-            searchResult.name ?? "Search Result",
-            coordinate: searchResult.placemark.coordinate
-          )
-          .tint(.blue)
+          if let searchResult {
+            Marker(
+              searchResult.name ?? "Search Result",
+              coordinate: searchResult.placemark.coordinate
+            )
+            .tint(.blue)
+          }
         }
-      }
-      .mapControls {
-        MapCompass()
-      }
+        .mapControls {
+          MapCompass()
+        }
+        .simultaneousGesture(
+          SpatialTapGesture()
+            .onEnded { value in
+              guard let group = tappedGroup(at: value.location, using: proxy) else { return }
+              showPlaceDetail(group)
+            }
+        )
+        .onChange(of: selectedGroupID) { _, groupID in
+          guard let groupID,
+                detailGroup?.id != groupID,
+                let group = groups.first(where: { $0.id == groupID })
+          else { return }
+          showPlaceDetail(group)
+        }
       .onMapCameraChange(frequency: .onEnd) { context in
         visibleRegion = context.region
         if cameraPosition.positionedByUser {
           hasChosenInitialCamera = true
         }
-      }
-      .onChange(of: selectedGroupID) { _, groupID in
-        traceMapDetailTiming("map selection -> \(groupID ?? "nil")")
-        guard let groupID else {
-          dismissSelectedPlace()
-          return
-        }
-        guard let group = groups.first(where: { $0.id == groupID }) else { return }
-        preferredDetailEntryID = nil
-        detailGroup = group
       }
       .onChange(of: searchText) { _, query in
         searchModel.updateQuery(query, region: visibleRegion)
@@ -1388,7 +1393,6 @@ private struct PlacesMap: View {
         .padding(.bottom, 6)
       }
       .sheet(item: detailSheetBinding, onDismiss: {
-        traceMapDetailTiming("sheet onDismiss")
         clearSelectedPlace()
       }) { group in
         PlaceDetailSheet(
@@ -1401,12 +1405,7 @@ private struct PlacesMap: View {
         .presentationDetents([.fraction(0.58), .large])
         .presentationDragIndicator(.visible)
         .presentationContentInteraction(.scrolls)
-        .onAppear {
-          traceMapDetailTiming("sheet content onAppear")
-        }
-        .onDisappear {
-          traceMapDetailTiming("sheet content onDisappear")
-        }
+      }
       }
     }
   }
@@ -1452,11 +1451,34 @@ private struct PlacesMap: View {
     cameraPosition = .item(item, allowsAutomaticPitch: false)
   }
 
+  private func showPlaceDetail(_ group: MappedPlaceGroup) {
+    selectedGroupID = group.id
+    preferredDetailEntryID = nil
+    detailGroup = group
+  }
+
+  private func tappedGroup(at location: CGPoint, using proxy: MapProxy) -> MappedPlaceGroup? {
+    groups.compactMap { group -> (group: MappedPlaceGroup, distance: CGFloat)? in
+      guard let markerTip = proxy.convert(group.coordinate, to: .local) else { return nil }
+      let horizontalDistance = abs(location.x - markerTip.x)
+      let distanceAboveTip = markerTip.y - location.y
+      guard horizontalDistance <= 30,
+            distanceAboveTip >= -36,
+            distanceAboveTip <= 56
+      else { return nil }
+      return (
+        group,
+        hypot(horizontalDistance, distanceAboveTip)
+      )
+    }
+    .min { $0.distance < $1.distance }?
+    .group
+  }
+
   private var detailSheetBinding: Binding<MappedPlaceGroup?> {
     Binding(
       get: { detailGroup },
       set: { group in
-        traceMapDetailTiming("sheet binding -> \(group?.id ?? "nil")")
         detailGroup = group
         if group == nil {
           clearSelectedPlace()
@@ -1466,36 +1488,13 @@ private struct PlacesMap: View {
   }
 
   private func clearSelectedPlace() {
-    traceMapDetailTiming("clearSelectedPlace")
     selectedGroupID = nil
     dismissSelectedPlace()
   }
 
   private func dismissSelectedPlace() {
-    traceMapDetailTiming("dismissSelectedPlace")
     detailGroup = nil
     preferredDetailEntryID = nil
-  }
-
-  private func traceMapDetailTiming(_ event: String) {
-    let line = "[MapDetailTiming] \(ProcessInfo.processInfo.systemUptime) \(event)\n"
-    print(line, terminator: "")
-
-    guard let data = line.data(using: .utf8),
-          let documentsURL = FileManager.default.urls(
-            for: .documentDirectory,
-            in: .userDomainMask
-          ).first
-    else { return }
-
-    let logURL = documentsURL.appendingPathComponent("map-detail-timing.log")
-    if let handle = try? FileHandle(forWritingTo: logURL) {
-      defer { try? handle.close() }
-      try? handle.seekToEnd()
-      try? handle.write(contentsOf: data)
-    } else {
-      try? data.write(to: logURL, options: .atomic)
-    }
   }
 
   private func collapseSearch() {
