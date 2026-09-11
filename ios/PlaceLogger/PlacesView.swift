@@ -1463,7 +1463,7 @@ private struct PlacesMap: View {
       let horizontalDistance = abs(location.x - markerTip.x)
       let distanceAboveTip = markerTip.y - location.y
       guard horizontalDistance <= 30,
-            distanceAboveTip >= -24,
+            distanceAboveTip >= -36,
             distanceAboveTip <= 56
       else { return nil }
       return (
