@@ -128,7 +128,7 @@
   {
     "name": "Exhibit",
     "description": "A specific exhibition, installation, or curated show. Use Museum or Art Gallery for the standing institution or venue itself.",
-    "icon": { "asset": "pin-artist-palette" },
+    "icon": { "asset": "pin-cubes" },
     "art": { "asset": "category-exhibit", "tint": "indigo" }
   },
   {

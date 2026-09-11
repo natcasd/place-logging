@@ -825,24 +825,26 @@ private struct ActivityLocationsMap: View {
   }
 }
 
-private struct CategoryMapPin: View {
+private struct CategoryMapMarker: MapContent {
+  let title: String
   let category: SavedCategory
+  let coordinate: CLLocationCoordinate2D
 
-  var body: some View {
-    Circle()
-      .fill(.blue)
-      .frame(width: 38, height: 38)
-      .overlay {
-        SavedCategoryIconView(icon: category.icon)
-          .font(.system(size: 19, weight: .semibold))
-          .foregroundStyle(.white)
-          .frame(width: 21, height: 21)
-      }
-      .overlay {
-        Circle().stroke(.white.opacity(0.9), lineWidth: 1.5)
-      }
-      .shadow(color: .black.opacity(0.22), radius: 3, y: 2)
-      .accessibilityLabel(category.title)
+  private static let logoOrange = Color(
+    red: 254.0 / 255.0,
+    green: 101.0 / 255.0,
+    blue: 4.0 / 255.0
+  )
+
+  @MapContentBuilder var body: some MapContent {
+    switch category.icon {
+    case .system(let name):
+      Marker(title, systemImage: name, coordinate: coordinate)
+        .tint(Self.logoOrange)
+    case .asset(let name):
+      Marker(title, image: name, coordinate: coordinate)
+        .tint(Self.logoOrange)
+    }
   }
 }
 
@@ -854,15 +856,14 @@ private struct ActivityResultsMap: View {
     Map(initialPosition: .automatic, interactionModes: allowsInteraction ? .all : []) {
       ForEach(results) { result in
         if let latitude = result.latitude, let longitude = result.longitude {
-          Annotation(
-            result.locationName ?? result.name,
+          CategoryMapMarker(
+            title: result.locationName ?? result.name,
+            category: SavedCategory.category(for: result.type),
             coordinate: CLLocationCoordinate2D(
               latitude: latitude,
               longitude: longitude
             )
-          ) {
-            CategoryMapPin(category: SavedCategory.category(for: result.type))
-          }
+          )
         }
       }
     }
@@ -1194,12 +1195,11 @@ private struct PlacesMap: View {
         UserAnnotation()
 
         ForEach(groups) { group in
-          Annotation(
-            group.name,
+          CategoryMapMarker(
+            title: group.name,
+            category: group.category,
             coordinate: group.coordinate
-          ) {
-            CategoryMapPin(category: group.category)
-          }
+          )
             .tag(group.id)
         }
 
