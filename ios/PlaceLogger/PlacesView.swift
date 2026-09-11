@@ -1195,6 +1195,22 @@ private struct PlacesMap: View {
             coordinate: group.coordinate
           )
             .tag(group.id)
+
+          Annotation(
+            "",
+            coordinate: group.coordinate,
+            anchor: .bottom
+          ) {
+            Button {
+              showPlaceDetail(group)
+            } label: {
+              Color.clear
+                .frame(width: 48, height: 52)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Show details for \(group.name)")
+          }
         }
 
         if let searchResult {
@@ -1444,6 +1460,11 @@ private struct PlacesMap: View {
     clearSelectedPlace()
     searchResult = item
     cameraPosition = .item(item, allowsAutomaticPitch: false)
+  }
+
+  private func showPlaceDetail(_ group: MappedPlaceGroup) {
+    preferredDetailEntryID = nil
+    detailGroup = group
   }
 
   private var detailSheetBinding: Binding<MappedPlaceGroup?> {
