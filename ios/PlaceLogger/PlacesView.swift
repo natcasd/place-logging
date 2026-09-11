@@ -1,7 +1,6 @@
 import Combine
 import MapKit
 import SwiftUI
-import UIKit
 
 @MainActor
 final class PlacesModel: ObservableObject {
@@ -849,61 +848,6 @@ private struct CategoryMapMarker: MapContent {
   }
 }
 
-private struct InteractiveCategoryMapMarker: UIViewRepresentable {
-  let icon: SavedCategoryIcon
-  let isSelected: Bool
-
-  private static let logoOrange = UIColor(
-    red: 254.0 / 255.0,
-    green: 101.0 / 255.0,
-    blue: 4.0 / 255.0,
-    alpha: 1
-  )
-
-  func makeUIView(context: Context) -> MKMarkerAnnotationView {
-    let view = MKMarkerAnnotationView(
-      annotation: MKPointAnnotation(),
-      reuseIdentifier: nil
-    )
-    view.isUserInteractionEnabled = false
-    view.isAccessibilityElement = false
-    view.animatesWhenAdded = false
-    view.canShowCallout = false
-    view.titleVisibility = .hidden
-    view.subtitleVisibility = .hidden
-    configure(view)
-    view.setSelected(isSelected, animated: false)
-    view.prepareForDisplay()
-    return view
-  }
-
-  func updateUIView(_ view: MKMarkerAnnotationView, context: Context) {
-    configure(view)
-    guard view.isSelected != isSelected else { return }
-    view.setSelected(isSelected, animated: true)
-    view.invalidateIntrinsicContentSize()
-  }
-
-  func sizeThatFits(
-    _ proposal: ProposedViewSize,
-    uiView: MKMarkerAnnotationView,
-    context: Context
-  ) -> CGSize? {
-    uiView.intrinsicContentSize
-  }
-
-  private func configure(_ view: MKMarkerAnnotationView) {
-    view.markerTintColor = Self.logoOrange
-    view.glyphTintColor = .white
-    switch icon {
-    case .system(let name):
-      view.glyphImage = UIImage(systemName: name)
-    case .asset(let name):
-      view.glyphImage = UIImage(named: name)?.withRenderingMode(.alwaysTemplate)
-    }
-  }
-}
-
 private struct ActivityResultsMap: View {
   let results: [SavedEntryOutcome]
   let allowsInteraction: Bool
@@ -1247,47 +1191,44 @@ private struct PlacesMap: View {
         description: Text("Current entries appear here after their locations are resolved.")
       )
     } else {
-      Map(position: $cameraPosition) {
-        UserAnnotation()
+      MapReader { proxy in
+        Map(position: $cameraPosition, selection: $selectedGroupID) {
+          UserAnnotation()
 
-        ForEach(groups) { group in
-          Annotation(
-            group.name,
-            coordinate: group.coordinate,
-            anchor: .bottom
-          ) {
-            Button {
-              showPlaceDetail(group)
-            } label: {
-              ZStack(alignment: .bottom) {
-                Color.clear
-                  .frame(width: 44, height: 52)
+          ForEach(groups) { group in
+            CategoryMapMarker(
+              title: group.name,
+              category: group.category,
+              coordinate: group.coordinate
+            )
+            .tag(group.id)
+          }
 
-                InteractiveCategoryMapMarker(
-                  icon: group.category.icon,
-                  isSelected: selectedGroupID == group.id
-                )
-                .accessibilityHidden(true)
-              }
-              .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel(group.name)
-            .accessibilityIdentifier("map-marker-\(group.id)")
+          if let searchResult {
+            Marker(
+              searchResult.name ?? "Search Result",
+              coordinate: searchResult.placemark.coordinate
+            )
+            .tint(.blue)
           }
         }
-
-        if let searchResult {
-          Marker(
-            searchResult.name ?? "Search Result",
-            coordinate: searchResult.placemark.coordinate
-          )
-          .tint(.blue)
+        .mapControls {
+          MapCompass()
         }
-      }
-      .mapControls {
-        MapCompass()
-      }
+        .simultaneousGesture(
+          SpatialTapGesture()
+            .onEnded { value in
+              guard let group = tappedGroup(at: value.location, using: proxy) else { return }
+              showPlaceDetail(group)
+            }
+        )
+        .onChange(of: selectedGroupID) { _, groupID in
+          guard let groupID,
+                detailGroup?.id != groupID,
+                let group = groups.first(where: { $0.id == groupID })
+          else { return }
+          showPlaceDetail(group)
+        }
       .onMapCameraChange(frequency: .onEnd) { context in
         visibleRegion = context.region
         if cameraPosition.positionedByUser {
@@ -1465,6 +1406,7 @@ private struct PlacesMap: View {
         .presentationDragIndicator(.visible)
         .presentationContentInteraction(.scrolls)
       }
+      }
     }
   }
 
@@ -1513,6 +1455,24 @@ private struct PlacesMap: View {
     selectedGroupID = group.id
     preferredDetailEntryID = nil
     detailGroup = group
+  }
+
+  private func tappedGroup(at location: CGPoint, using proxy: MapProxy) -> MappedPlaceGroup? {
+    groups.compactMap { group -> (group: MappedPlaceGroup, distance: CGFloat)? in
+      guard let markerTip = proxy.convert(group.coordinate, to: .local) else { return nil }
+      let horizontalDistance = abs(location.x - markerTip.x)
+      let distanceAboveTip = markerTip.y - location.y
+      guard horizontalDistance <= 30,
+            distanceAboveTip >= -24,
+            distanceAboveTip <= 56
+      else { return nil }
+      return (
+        group,
+        hypot(horizontalDistance, distanceAboveTip)
+      )
+    }
+    .min { $0.distance < $1.distance }?
+    .group
   }
 
   private var detailSheetBinding: Binding<MappedPlaceGroup?> {
