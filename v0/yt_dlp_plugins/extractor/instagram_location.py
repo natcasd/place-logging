@@ -1,4 +1,4 @@
-"""Expose Instagram's native location through yt-dlp's plugin interface.
+"""Expose Instagram's native location and user tags through yt-dlp.
 
 The built-in extractor already receives this data in the post payload but does
 not currently include it in the returned info dict. Subclassing it as a plugin
@@ -50,6 +50,46 @@ def _instagram_location(product_info: Any) -> dict[str, Any] | None:
     return location or None
 
 
+def _instagram_tagged_accounts(product_media: Any) -> list[dict[str, str]]:
+    """Return the useful identity fields from Instagram's media user tags."""
+    if not isinstance(product_media, dict):
+        return []
+
+    raw_tags = product_media.get("usertags")
+    if not isinstance(raw_tags, dict):
+        return []
+
+    accounts: list[dict[str, str]] = []
+    seen: set[tuple[str, str]] = set()
+    for raw_tag in raw_tags.get("in") or []:
+        if not isinstance(raw_tag, dict):
+            continue
+        raw_user = raw_tag.get("user")
+        if not isinstance(raw_user, dict):
+            continue
+
+        username = raw_user.get("username")
+        full_name = raw_user.get("full_name")
+        account = {
+            key: value.strip()
+            for key, value in (("username", username), ("full_name", full_name))
+            if isinstance(value, str) and value.strip()
+        }
+        if not account:
+            continue
+
+        identity = (
+            account.get("username", "").casefold(),
+            account.get("full_name", "").casefold(),
+        )
+        if identity in seen:
+            continue
+        seen.add(identity)
+        accounts.append(account)
+
+    return accounts
+
+
 class _PlaceLoggerInstagramIE(
     InstagramIE,
     plugin_name="place_logger_location",
@@ -65,4 +105,21 @@ class _PlaceLoggerInstagramIE(
             # standard string-valued location field.
             if location.get("name"):
                 result.setdefault("location", location["name"])
+
+        normalized_product = product_info
+        if isinstance(normalized_product, list):
+            normalized_product = normalized_product[0] if normalized_product else None
+        if not isinstance(normalized_product, dict):
+            return result
+
+        carousel_media = normalized_product.get("carousel_media")
+        if isinstance(carousel_media, list) and result.get("_type") == "playlist":
+            for raw_media, entry in zip(carousel_media, result.get("entries") or []):
+                accounts = _instagram_tagged_accounts(raw_media)
+                if accounts and isinstance(entry, dict):
+                    entry["instagram_tagged_accounts"] = accounts
+        else:
+            accounts = _instagram_tagged_accounts(normalized_product)
+            if accounts:
+                result["instagram_tagged_accounts"] = accounts
         return result

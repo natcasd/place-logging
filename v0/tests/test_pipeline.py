@@ -100,6 +100,11 @@ class YouTubeExtractionTests(unittest.TestCase):
 
         self.assertIn("native_location_relevance", prompt)
         self.assertIn("Never guess a city from an ambiguous handle", prompt)
+        self.assertIn(
+            'city- or region-level native_location used to locate a more specific '
+            'venue is always "area"',
+            prompt,
+        )
         self.assertIn('"source_account_handle": "lechenenyc"', prompt)
         self.assertIn('"creator_display_name": "Le Chêne"', prompt)
         relevance_schema = pipeline.EXTRACTION_RESPONSE_SCHEMA["properties"][
@@ -236,11 +241,13 @@ class InstagramFetcherTests(unittest.TestCase):
         self.assertEqual(metadata["native_location"]["latitude"], 40.72943)
         self.assertIn("#nyc @friend", metadata["caption_or_description"])
         self.assertNotIn("uploader_id", metadata)
+        self.assertEqual(metadata["tagged_accounts_by_media"], [])
 
     def test_yt_dlp_plugin_normalizes_instagram_location_without_ids(self) -> None:
         from yt_dlp_plugins.extractor.instagram_location import (
             _PlaceLoggerInstagramIE,
             _instagram_location,
+            _instagram_tagged_accounts,
         )
         from yt_dlp.extractor.instagram import InstagramIE
 
@@ -283,6 +290,139 @@ class InstagramFetcherTests(unittest.TestCase):
 
         self.assertEqual(extracted["location"], "Le Chêne")
         self.assertEqual(extracted["instagram_location"]["latitude"], 40.7)
+
+        self.assertEqual(
+            _instagram_tagged_accounts(
+                {
+                    "usertags": {
+                        "in": [
+                            {
+                                "position": [0.2, 0.6],
+                                "user": {
+                                    "id": "80257203106",
+                                    "username": " lingnanhouseguangzhou ",
+                                    "full_name": " Lingnan House 廣御轩 ",
+                                    "profile_pic_url": "https://cdn.example/profile.jpg",
+                                },
+                            },
+                            {"user": {"id": "missing-useful-fields"}},
+                        ]
+                    }
+                }
+            ),
+            [
+                {
+                    "username": "lingnanhouseguangzhou",
+                    "full_name": "Lingnan House 廣御轩",
+                }
+            ],
+        )
+
+    def test_yt_dlp_plugin_and_metadata_preserve_tagged_accounts_by_slide(self) -> None:
+        from yt_dlp_plugins.extractor.instagram_location import (
+            _PlaceLoggerInstagramIE,
+        )
+
+        product_info = {
+            "carousel_media": [
+                {
+                    "usertags": {
+                        "in": [
+                            {
+                                "user": {
+                                    "id": "1",
+                                    "username": "lingnanhouseguangzhou",
+                                    "full_name": "Lingnan House 廣御轩",
+                                }
+                            }
+                        ]
+                    }
+                },
+                {"usertags": {"in": []}},
+                {
+                    "usertags": {
+                        "in": [
+                            {
+                                "user": {
+                                    "id": "2",
+                                    "username": "hopeandsesame",
+                                    "full_name": "Hope & Sesame Guangzhou",
+                                }
+                            }
+                        ]
+                    }
+                },
+            ]
+        }
+        upstream = {
+            "_type": "playlist",
+            "id": "post",
+            "entries": [
+                {"formats": []},
+                {"formats": [{}]},
+                {"formats": []},
+            ],
+        }
+        with patch.object(
+            _PlaceLoggerInstagramIE.__wrapped__,
+            "_extract_product",
+            return_value=upstream,
+        ):
+            extracted = _PlaceLoggerInstagramIE()._extract_product(product_info)
+
+        metadata = pipeline._instagram_metadata(
+            extracted,
+            "https://www.instagram.com/p/carousel/",
+            extracted["entries"],
+        )
+
+        self.assertEqual(
+            metadata["tagged_accounts_by_media"],
+            [
+                {
+                    "media_index": 1,
+                    "accounts": [
+                        {
+                            "username": "lingnanhouseguangzhou",
+                            "full_name": "Lingnan House 廣御轩",
+                        }
+                    ],
+                },
+                {
+                    "media_index": 3,
+                    "accounts": [
+                        {
+                            "username": "hopeandsesame",
+                            "full_name": "Hope & Sesame Guangzhou",
+                        }
+                    ],
+                },
+            ],
+        )
+        serialized_metadata = json.dumps(metadata)
+        self.assertNotIn("profile_pic_url", serialized_metadata)
+        self.assertNotIn("80257203106", serialized_metadata)
+
+    def test_prompt_explains_how_to_use_tagged_accounts(self) -> None:
+        prompt = pipeline._extraction_prompt(
+            {
+                "tagged_accounts_by_media": [
+                    {
+                        "media_index": 2,
+                        "accounts": [
+                            {
+                                "username": "hopeandsesame",
+                                "full_name": "Hope & Sesame Guangzhou",
+                            }
+                        ],
+                    }
+                ]
+            }
+        )
+
+        self.assertIn("media_index is 1-based", prompt)
+        self.assertIn("supporting identity evidence", prompt)
+        self.assertIn("do not automatically extract every tagged account", prompt)
 
     def test_prefers_full_720p_video_near_target_bitrate(self) -> None:
         info = {
