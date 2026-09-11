@@ -1171,6 +1171,7 @@ private struct PlacesMap: View {
   @State private var shouldCenterOnNextLocation = false
   @State private var isSearchExpanded = false
   @FocusState private var searchIsFocused: Bool
+  @Environment(\.accessibilityReduceMotion) private var accessibilityReduceMotion
 
   private var groups: [MappedPlaceGroup] {
     let activeType = selectedType
@@ -1221,7 +1222,6 @@ private struct PlacesMap: View {
         }
       }
       .onChange(of: selectedGroupID) { _, groupID in
-        traceMapDetailTiming("map selection -> \(groupID ?? "nil")")
         guard let groupID else {
           dismissSelectedPlace()
           return
@@ -1387,26 +1387,39 @@ private struct PlacesMap: View {
         .padding(.top, 8)
         .padding(.bottom, 6)
       }
-      .sheet(item: detailSheetBinding, onDismiss: {
-        traceMapDetailTiming("sheet onDismiss")
-        clearSelectedPlace()
-      }) { group in
-        PlaceDetailSheet(
-          group: group,
-          initialEntryID: preferredDetailEntryID,
-          appleMapsDestinations: appleMapsDestinations
-        ) { entry in
-          try await deleteEntryCard(entry)
+      .overlay {
+        GeometryReader { geometry in
+          if let group = displayedDetailGroup {
+            ZStack(alignment: .bottom) {
+              Color.black.opacity(0.12)
+                .contentShape(Rectangle())
+                .onTapGesture(perform: clearSelectedPlace)
+                .accessibilityHidden(true)
+                .transition(.opacity)
+
+              MapDetailPanel(
+                availableHeight: geometry.size.height,
+                dismiss: clearSelectedPlace
+              ) {
+                PlaceDetailSheet(
+                  group: group,
+                  initialEntryID: preferredDetailEntryID,
+                  appleMapsDestinations: appleMapsDestinations,
+                  dismissAction: clearSelectedPlace
+                ) { entry in
+                  try await deleteEntryCard(entry)
+                }
+              }
+              .transition(.move(edge: .bottom))
+            }
+          }
         }
-        .presentationDetents([.fraction(0.58), .large])
-        .presentationDragIndicator(.visible)
-        .presentationContentInteraction(.scrolls)
-        .onAppear {
-          traceMapDetailTiming("sheet content onAppear")
-        }
-        .onDisappear {
-          traceMapDetailTiming("sheet content onDisappear")
-        }
+        .animation(
+          accessibilityReduceMotion
+            ? .easeOut(duration: 0.1)
+            : .easeOut(duration: 0.16),
+          value: displayedDetailGroup?.id
+        )
       }
     }
   }
@@ -1452,50 +1465,20 @@ private struct PlacesMap: View {
     cameraPosition = .item(item, allowsAutomaticPitch: false)
   }
 
-  private var detailSheetBinding: Binding<MappedPlaceGroup?> {
-    Binding(
-      get: { detailGroup },
-      set: { group in
-        traceMapDetailTiming("sheet binding -> \(group?.id ?? "nil")")
-        detailGroup = group
-        if group == nil {
-          clearSelectedPlace()
-        }
-      }
-    )
+  private var displayedDetailGroup: MappedPlaceGroup? {
+    if let detailGroup { return detailGroup }
+    guard let selectedGroupID else { return nil }
+    return groups.first { $0.id == selectedGroupID }
   }
 
   private func clearSelectedPlace() {
-    traceMapDetailTiming("clearSelectedPlace")
     selectedGroupID = nil
     dismissSelectedPlace()
   }
 
   private func dismissSelectedPlace() {
-    traceMapDetailTiming("dismissSelectedPlace")
     detailGroup = nil
     preferredDetailEntryID = nil
-  }
-
-  private func traceMapDetailTiming(_ event: String) {
-    let line = "[MapDetailTiming] \(ProcessInfo.processInfo.systemUptime) \(event)\n"
-    print(line, terminator: "")
-
-    guard let data = line.data(using: .utf8),
-          let documentsURL = FileManager.default.urls(
-            for: .documentDirectory,
-            in: .userDomainMask
-          ).first
-    else { return }
-
-    let logURL = documentsURL.appendingPathComponent("map-detail-timing.log")
-    if let handle = try? FileHandle(forWritingTo: logURL) {
-      defer { try? handle.close() }
-      try? handle.seekToEnd()
-      try? handle.write(contentsOf: data)
-    } else {
-      try? data.write(to: logURL, options: .atomic)
-    }
   }
 
   private func collapseSearch() {
@@ -1508,11 +1491,105 @@ private struct PlacesMap: View {
   }
 }
 
+private struct MapDetailPanel<Content: View>: View {
+  let availableHeight: CGFloat
+  let dismiss: () -> Void
+  @ViewBuilder let content: () -> Content
+  @State private var isExpanded = false
+  @GestureState private var dragTranslation: CGFloat = 0
+  @Environment(\.accessibilityReduceMotion) private var accessibilityReduceMotion
+
+  private var collapsedHeight: CGFloat {
+    let maximumHeight = max(0, availableHeight - 8)
+    return min(maximumHeight, max(280, availableHeight * 0.58))
+  }
+
+  private var expandedHeight: CGFloat {
+    max(collapsedHeight, availableHeight - 8)
+  }
+
+  private var panelHeight: CGFloat {
+    let baseHeight = isExpanded ? expandedHeight : collapsedHeight
+    guard dragTranslation < 0 else { return baseHeight }
+    return min(expandedHeight, baseHeight - dragTranslation)
+  }
+
+  private var downwardOffset: CGFloat {
+    max(0, dragTranslation)
+  }
+
+  var body: some View {
+    VStack(spacing: 0) {
+      Button {
+        withAnimation(panelAnimation) {
+          isExpanded.toggle()
+        }
+      } label: {
+        Capsule()
+          .fill(.secondary.opacity(0.45))
+          .frame(width: 36, height: 5)
+          .frame(maxWidth: .infinity)
+          .frame(height: 28)
+          .contentShape(Rectangle())
+      }
+      .buttonStyle(.plain)
+      .accessibilityLabel(isExpanded ? "Collapse details" : "Expand details")
+      .highPriorityGesture(panelDragGesture)
+
+      content()
+        .frame(maxHeight: .infinity)
+    }
+    .frame(maxWidth: .infinity)
+    .frame(height: panelHeight)
+    .background(.regularMaterial)
+    .clipShape(
+      UnevenRoundedRectangle(
+        topLeadingRadius: 22,
+        topTrailingRadius: 22
+      )
+    )
+    .shadow(color: .black.opacity(0.18), radius: 16, y: -2)
+    .offset(y: downwardOffset)
+    .accessibilityIdentifier("Map Detail Panel")
+    .accessibilityAction(.escape, dismiss)
+    .animation(panelAnimation, value: isExpanded)
+  }
+
+  private var panelAnimation: Animation {
+    accessibilityReduceMotion
+      ? .easeOut(duration: 0.1)
+      : .snappy(duration: 0.2, extraBounce: 0)
+  }
+
+  private var panelDragGesture: some Gesture {
+    DragGesture(minimumDistance: 4)
+      .updating($dragTranslation) { value, state, _ in
+        state = value.translation.height
+      }
+      .onEnded { value in
+        let projectedTranslation = value.predictedEndTranslation.height
+        if projectedTranslation > 120 {
+          if isExpanded {
+            withAnimation(panelAnimation) {
+              isExpanded = false
+            }
+          } else {
+            dismiss()
+          }
+        } else if projectedTranslation < -70 {
+          withAnimation(panelAnimation) {
+            isExpanded = true
+          }
+        }
+      }
+  }
+}
+
 private struct PlaceDetailSheet: View {
   let group: MappedPlaceGroup
   let deleteEntry: (SavedEntry) async throws -> Void
   @ObservedObject var appleMapsDestinations: AppleMapsDestinationCache
-  @Environment(\.dismiss) private var dismiss
+  let dismissAction: () -> Void
   @State private var entries: [SavedEntry]
   @State private var selectedEntryID: Int?
   @State private var pendingDeletion: SavedEntry?
@@ -1523,11 +1600,13 @@ private struct PlaceDetailSheet: View {
     group: MappedPlaceGroup,
     initialEntryID: Int?,
     appleMapsDestinations: AppleMapsDestinationCache,
+    dismissAction: @escaping () -> Void,
     deleteEntry: @escaping (SavedEntry) async throws -> Void
   ) {
     self.group = group
     self.deleteEntry = deleteEntry
     self.appleMapsDestinations = appleMapsDestinations
+    self.dismissAction = dismissAction
     _entries = State(initialValue: group.places)
     let requestedEntryExists = initialEntryID.map { requestedID in
       group.places.contains { $0.id == requestedID }
@@ -1605,7 +1684,7 @@ private struct PlaceDetailSheet: View {
       try await deleteEntry(entry)
       entries.removeAll { $0.id == entry.id }
       if entries.isEmpty {
-        dismiss()
+        dismissAction()
       } else if entries.count == 1 {
         selectedEntryID = entries[0].id
       } else {
