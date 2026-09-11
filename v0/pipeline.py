@@ -930,6 +930,30 @@ _FIELD_MASK = ",".join([
 ])
 
 _VENUE_BOUND_TYPE_NAMES = {"pop-up", "concert", "exhibit"}
+_ADMINISTRATIVE_AREA_PLACE_TYPES = {
+    "administrative_area_level_1",
+    "administrative_area_level_2",
+    "administrative_area_level_3",
+    "administrative_area_level_4",
+    "administrative_area_level_5",
+    "administrative_area_level_6",
+    "administrative_area_level_7",
+    "colloquial_area",
+    "continent",
+    "country",
+    "geocode",
+    "locality",
+    "neighborhood",
+    "political",
+    "postal_code",
+    "postal_town",
+    "sublocality",
+    "sublocality_level_1",
+    "sublocality_level_2",
+    "sublocality_level_3",
+    "sublocality_level_4",
+    "sublocality_level_5",
+}
 _LOCATION_QUERY_STOP_WORDS = {
     "at",
     "center",
@@ -980,6 +1004,19 @@ def _requires_venue_match(place: dict[str, Any]) -> bool:
         or place.get("ends_at")
         or place.get("recurrence_text")
     )
+
+
+def _is_administrative_area_candidate(candidate: dict[str, Any]) -> bool:
+    """Reject broad geography returned for a more specific location query."""
+    candidate_types = {
+        str(place_type).strip().casefold()
+        for place_type in candidate.get("types") or []
+        if str(place_type).strip()
+    }
+    primary_type = str(candidate.get("primaryType") or "").strip().casefold()
+    if primary_type:
+        candidate_types.add(primary_type)
+    return bool(candidate_types) and candidate_types <= _ADMINISTRATIVE_AREA_PLACE_TYPES
 
 
 def _native_location_coordinates(
@@ -1179,6 +1216,17 @@ def resolve(
 
     if not candidates:
         return {"status": "unresolved", "reason": "zero candidates"}
+
+    candidates = [
+        candidate
+        for candidate in candidates
+        if not _is_administrative_area_candidate(candidate)
+    ]
+    if not candidates:
+        return {
+            "status": "unresolved",
+            "reason": "no specific place candidates",
+        }
 
     if native_coordinates and native_location_relevance == "exact":
         candidates = [

@@ -38,7 +38,7 @@
   {
     "name": "Bakery",
     "description": "A bakery, pastry shop, bread shop, or dessert shop whose baked goods are the main draw. Use Café when coffee or café service is the clearer focus.",
-    "icon": { "asset": "pin-bread-slice" },
+    "icon": { "asset": "pin-baguette" },
     "art": { "asset": "category-bakery", "tint": "orange" }
   },
   {
@@ -92,7 +92,7 @@
   {
     "name": "Movie Theater",
     "description": "A physical cinema, repertory theater, drive-in, or movie theater as a place. Use Movie for a film as a creative work.",
-    "icon": { "system": "popcorn.fill" },
+    "icon": { "system": "movieclapper.fill" },
     "art": { "asset": "category-movie", "tint": "red" }
   },
   {
@@ -128,7 +128,7 @@
   {
     "name": "Exhibit",
     "description": "A specific exhibition, installation, or curated show. Use Museum or Art Gallery for the standing institution or venue itself.",
-    "icon": { "asset": "pin-cubes" },
+    "icon": { "asset": "pin-panorama" },
     "art": { "asset": "category-exhibit", "tint": "indigo" }
   },
   {
