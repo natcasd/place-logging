@@ -25,7 +25,7 @@ extension SavedCategory {
     .init(type: "Fitness", icon: .system("dumbbell.fill"), artAssetName: "category-fitness", artTint: .blue),
     .init(type: "Concert", icon: .asset("pin-guitar"), artAssetName: "category-concert", artTint: .purple),
     .init(type: "Pop-up", icon: .asset("pin-storefront"), artAssetName: "category-popup", artTint: .pink),
-    .init(type: "Exhibit", icon: .asset("pin-cubes"), artAssetName: "category-exhibit", artTint: .indigo),
+    .init(type: "Exhibit", icon: .asset("pin-panorama"), artAssetName: "category-exhibit", artTint: .indigo),
     .init(type: "Book", icon: .system("book.fill"), artAssetName: "category-book", artTint: .red),
     .init(type: "Movie", icon: .system("film.fill"), artAssetName: "category-movie", artTint: .red),
     .init(type: "Article", icon: .system("newspaper.fill"), artAssetName: "category-article", artTint: .red),
