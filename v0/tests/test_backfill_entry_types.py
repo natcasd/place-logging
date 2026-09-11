@@ -74,7 +74,7 @@ class BackfillEntryTypesTests(unittest.TestCase):
                     "classifications": [
                         {
                             "entry_id": 10,
-                            "type_name": "restaurant",
+                            "type_name": "Restaurant",
                             "reason": "It serves dinner.",
                         }
                     ]
@@ -89,13 +89,16 @@ class BackfillEntryTypesTests(unittest.TestCase):
             }
         ]
 
-        updates = backfill._classify_batch(groups, ["Place", "Restaurant"])
+        updates = backfill._classify_batch(groups)
 
         self.assertEqual(updates[0]["type_name"], "Restaurant")
-        prompt = mock_client.return_value.models.generate_content.call_args.kwargs[
-            "contents"
-        ][0]
-        self.assertIn('Existing specific categories:\n["Restaurant"]', prompt)
+        schema = mock_client.return_value.models.generate_content.call_args.kwargs[
+            "config"
+        ].response_schema
+        self.assertEqual(
+            schema["properties"]["classifications"]["items"]["properties"]["type_name"]["enum"],
+            list(backfill.ENTRY_TYPES),
+        )
 
     def test_apply_plan_backs_up_and_removes_generic_place(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

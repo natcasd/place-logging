@@ -26,7 +26,7 @@ import requests
 from google import genai
 from google.genai import types
 
-from entry_types import ENTRY_TYPES, normalized_type_label, supports_timing
+from entry_types import ENTRY_TYPES, normalized_type_label, type_name_guidance
 
 log = logging.getLogger(__name__)
 
@@ -567,16 +567,7 @@ def fetch(source_url: str, workdir: Path) -> MediaFetch:
 
 # ---------- Extractor ----------
 
-TYPE_NAME_GUIDANCE = """Choose exactly one primary type from this fixed list: Restaurant, Café, Bar, Bakery, Park, Hiking Trail, Bike Route, Museum, Art Gallery, Store, Spa, Fitness, Concert, Pop-up, Exhibit, Book, Movie, Article, Song, Product, or Unknown. Do not invent another type. Use Exhibit for a museum or gallery exhibition, installation, or curated show; use Pop-up for a temporary food, retail, or event offering. Use Unknown when the recommended subject is valid to save but none of the listed types fit, including a person or creator when no dedicated person type exists."""
-
-
-def specific_type_names(type_names: list[str] | None) -> list[str]:
-    """Return stable, reusable categories without generic fallback values."""
-    return [
-        type_name
-        for type_name in dict.fromkeys(type_names or [])
-        if type_name.strip().casefold() not in {"place", "unknown"}
-    ]
+TYPE_NAME_GUIDANCE = type_name_guidance()
 
 
 EXTRACTOR_PROMPT = """Analyze this social post and extract the distinct recommendations that are part of the post's main intent and that someone may want to save for later. Recommendations can include physical places, temporary events, books, movies, articles, songs, products, routes, and other useful entries.
@@ -609,7 +600,7 @@ For each entry, return an object with:
 - location_query: only when the entry has a physical place, area, anchor, or venue that Google Places could resolve. Use the venue for an event or exhibit. Include the name plus directly evidenced neighborhood/city/region hints from the media, caption, or unambiguous source metadata. A creator display name or account handle is supporting context, not proof by itself: use a location clue from it only when its meaning is clear and consistent with the rest of the post. Never guess a city from an ambiguous handle. Omit this field for non-location entries and when there is not enough location evidence.
 - location_hints: object with any of { neighborhood, city, region_or_country, on_screen_text, visual_landmarks } — ONLY include fields where you have direct evidence from the supplied media, caption, or unambiguous source metadata. Omit a field rather than guess.
 - native_location_relevance: ONLY when source metadata includes native_location. Classify how that post-level Instagram tag relates to this individual entry: "exact" when it identifies the entry or its physical host; "area" when it only identifies a relevant broader neighborhood, city, or region; "unrelated" when it describes somewhere else; or "uncertain" when the relationship is unclear. Do not assume a tag is exact merely because Instagram attached it to the post.
-- starts_at, ends_at, and recurrence_text: ONLY for a Concert, Pop-up, or Exhibit, and only when directly supported by the source. Use ISO 8601 for starts_at and ends_at; preserve a human-readable recurring schedule in recurrence_text. Never put business hours, opening days, release dates, publication dates, or other timing on stable types such as Restaurant, Café, Museum, Book, Movie, or Product. If a temporary event or limited-run offering at a stable venue is itself the main recommendation, extract that event as a Concert, Pop-up, or Exhibit and use the venue only as its location.
+- starts_at, ends_at, and recurrence_text: only when the recommended entry itself occurs or exists during a bounded or recurring time and that timing is directly supported by the source. Use ISO 8601 for starts_at and ends_at and preserve a human-readable recurring schedule in recurrence_text. NEVER use these fields for ordinary business hours, service windows, days open, release or publication metadata, or incidental dates; keep that information in the description. A temporary event or limited-run offering at a stable venue can be its own entry, with the venue used as its location.
 - extraction_confidence: "high" | "medium" | "low"
 - timestamp_seconds: for a Reel, YouTube video, or video carousel slide, the
   non-negative number of seconds from the start of that video to the beginning
@@ -746,23 +737,13 @@ def _remove_generic_entry_names(entries: list[dict[str, Any]]) -> list[dict[str,
 def _remove_invalid_timing_fields(
     entries: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
-    """Do not let stable Entries acquire post-specific schedules or dates."""
+    """Remove empty timing values without coupling timing to a type allowlist."""
     sanitized = []
     for original in entries:
         entry = dict(original)
-        if not supports_timing(entry.get("type_name")):
-            removed = [
-                field
-                for field in ("starts_at", "ends_at", "recurrence_text")
-                if entry.pop(field, None) not in (None, "")
-            ]
-            if removed:
-                log.info(
-                    "Discarding timing fields %s from stable %s Entry %r",
-                    removed,
-                    entry.get("type_name"),
-                    entry.get("extracted_name"),
-                )
+        for field in ("starts_at", "ends_at", "recurrence_text"):
+            if entry.get(field) in (None, ""):
+                entry.pop(field, None)
         sanitized.append(entry)
     return sanitized
 

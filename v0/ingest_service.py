@@ -10,6 +10,7 @@ from urllib.parse import urlsplit
 
 import requests
 
+from entry_types import entry_type_enricher
 from movie_enrichment import MovieProvider, enrich_movie_entries
 from pipeline import process_ingest
 from pipeline import source_platform as detect_source_platform
@@ -25,7 +26,6 @@ from store import (
     list_ingest_runs,
     list_places,
     list_sources,
-    list_entry_types,
     list_entries,
     save_ingest,
     saved_entry_outcomes,
@@ -157,22 +157,25 @@ class IngestService:
             )
 
         try:
-            existing_types = list_entry_types(self.db_path)
             result = process_ingest(
                 source_url,
                 user_prompt,
                 self.workdir,
-                existing_types,
                 progress=report,
             )
             report("saving")
             item_id = save_ingest(self.db_path, result)
             outcomes = saved_entry_outcomes(self.db_path, item_id)
             if self.movie_provider is not None:
+                movie_entry_ids = [
+                    outcome["entry_id"]
+                    for outcome in outcomes
+                    if entry_type_enricher(outcome.get("type")) == "movie"
+                ]
                 enrich_movie_entries(
                     self.db_path,
                     self.movie_provider,
-                    [outcome["entry_id"] for outcome in outcomes],
+                    movie_entry_ids,
                 )
             needs_review = (
                 not outcomes

@@ -50,14 +50,19 @@ class YouTubeExtractionTests(unittest.TestCase):
         self.assertIn("directly evidenced in speech, visible text, or the caption", prompt)
         self.assertIn("Do not infer work titles from unlabeled clips or images", prompt)
         self.assertIn("Never use a generic class as its name", prompt)
-        self.assertIn("Restaurant, Café, Bar, Bakery", prompt)
+        self.assertIn("- Restaurant:", prompt)
+        self.assertIn("- Cocktail Bar:", prompt)
+        self.assertIn("- Movie Theater:", prompt)
+        self.assertIn("- Health and Beauty Store:", prompt)
+        self.assertNotIn("- Bar:", prompt)
+        self.assertNotIn("- Store:", prompt)
         self.assertIn(
             "including a person or creator when no dedicated person type exists",
             prompt,
         )
-        self.assertIn("Use Exhibit for a museum or gallery exhibition", prompt)
-        self.assertIn("ONLY for a Concert, Pop-up, or Exhibit", prompt)
-        self.assertIn("Never put business hours", prompt)
+        self.assertIn("Use Exhibit for a specific exhibition", prompt)
+        self.assertIn("entry itself occurs or exists during a bounded", prompt)
+        self.assertIn("NEVER use these fields for ordinary business hours", prompt)
         self.assertNotIn("Existing specific type names", prompt)
 
     def test_prompt_distinguishes_creator_profiles_from_named_works(self) -> None:
@@ -121,7 +126,7 @@ class YouTubeExtractionTests(unittest.TestCase):
 
         self.assertEqual(entries, [{"extracted_name": "Theodora", "type_name": "Restaurant"}])
 
-    def test_removes_timing_from_stable_entries_only(self) -> None:
+    def test_preserves_supported_timing_independently_of_type(self) -> None:
         entries = pipeline._remove_invalid_timing_fields(
             [
                 {
@@ -139,7 +144,7 @@ class YouTubeExtractionTests(unittest.TestCase):
             ]
         )
 
-        self.assertNotIn("recurrence_text", entries[0])
+        self.assertEqual(entries[0]["recurrence_text"], "Thursday - Sunday")
         self.assertEqual(entries[1]["starts_at"], "2026-09-01")
         self.assertEqual(entries[1]["ends_at"], "2026-10-01")
         self.assertEqual(entries[1]["recurrence_text"], "Sundays through October")

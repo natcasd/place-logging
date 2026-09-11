@@ -11,17 +11,17 @@ import json
 import os
 import sqlite3
 from collections import Counter
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 from google.genai import types
 
+from entry_types import ENTRY_TYPES, canonical_entry_type
 from pipeline import (
     TYPE_NAME_GUIDANCE,
     _call_gemini_with_retry,
     _client,
-    specific_type_names,
 )
 
 
@@ -35,7 +35,7 @@ CLASSIFICATION_SCHEMA = {
                 "type": "object",
                 "properties": {
                     "entry_id": {"type": "integer"},
-                    "type_name": {"type": "string"},
+                    "type_name": {"type": "string", "enum": list(ENTRY_TYPES)},
                     "reason": {"type": "string"},
                 },
                 "required": ["entry_id", "type_name", "reason"],
@@ -123,10 +123,7 @@ def _batches(
     return batches
 
 
-def _classify_batch(
-    groups: list[dict[str, Any]],
-    existing_types: list[str],
-) -> list[dict[str, Any]]:
+def _classify_batch(groups: list[dict[str, Any]]) -> list[dict[str, Any]]:
     prompt = f"""Reclassify existing saved recommendations whose old generic type is Place.
 
 This is a type-only migration. Return exactly one classification for every
@@ -135,9 +132,6 @@ source context, name, description, address, and location query as evidence.
 
 Category rule:
 {TYPE_NAME_GUIDANCE}
-
-Existing specific categories:
-{json.dumps(specific_type_names(existing_types), ensure_ascii=False)}
 
 Saved source groups and records:
 {json.dumps(groups, ensure_ascii=False)}
@@ -161,14 +155,17 @@ Saved source groups and records:
     by_id: dict[int, dict[str, Any]] = {}
     for classification in classifications:
         entry_id = classification.get("entry_id")
-        type_name = " ".join(str(classification.get("type_name") or "").split()).strip()
+        raw_type_name = " ".join(
+            str(classification.get("type_name") or "").split()
+        ).strip()
         if entry_id not in expected_ids or entry_id in by_id:
             raise ValueError("Gemini returned an unexpected or duplicate entry_id")
-        if not type_name or type_name.casefold() == "place":
+        if not raw_type_name or raw_type_name not in ENTRY_TYPES:
             raise ValueError(f"Gemini returned an invalid type for entry {entry_id}")
+        type_name = canonical_entry_type(raw_type_name)
         by_id[entry_id] = {
             "entry_id": entry_id,
-            "type_name": type_name[:80].title(),
+            "type_name": type_name,
             "reason": _trimmed(classification.get("reason"), 500) or "",
         }
     if set(by_id) != expected_ids:
@@ -194,14 +191,6 @@ def create_plan(
     try:
         groups = find_candidates(con)
         candidate_rows = [entry for group in groups for entry in group["entries"]]
-        existing_types = [
-            row[0]
-            for row in con.execute(
-                """SELECT DISTINCT entry_type FROM places
-                    WHERE entry_type IS NOT NULL AND trim(entry_type) != ''
-                    ORDER BY entry_type COLLATE NOCASE"""
-            ).fetchall()
-        ]
         if plan_path.exists():
             if not resume:
                 raise FileExistsError(f"Refusing to overwrite existing plan: {plan_path}")
@@ -212,7 +201,7 @@ def create_plan(
         else:
             plan = {
                 "version": PLAN_VERSION,
-                "created_at": datetime.now(UTC).isoformat(),
+                "created_at": datetime.now(timezone.utc).isoformat(),
                 "database": str(db_path),
                 "candidate_count": len(candidate_rows),
                 "complete": False,
@@ -244,7 +233,7 @@ def create_plan(
             ids = [entry["entry_id"] for group in batch for entry in group["entries"]]
             print(f"[{index}/{len(batches)}] classifying {len(ids)} entries", flush=True)
             try:
-                updates = _classify_batch(batch, existing_types)
+                updates = _classify_batch(batch)
                 result = {"method": "gemini_classification", "updates": updates}
             except Exception as exc:
                 result = {
@@ -258,7 +247,7 @@ def create_plan(
 
         errors = [result for result in plan["results"] if result.get("method") == "error"]
         plan["complete"] = not errors
-        plan["completed_at"] = datetime.now(UTC).isoformat()
+        plan["completed_at"] = datetime.now(timezone.utc).isoformat()
         _write_plan(plan_path, plan)
         return plan
     finally:
@@ -280,7 +269,7 @@ def apply_plan(db_path: Path, plan_path: Path, backup_dir: Path) -> tuple[int, P
         or len(set(update_ids)) != len(update_ids)
     ):
         raise ValueError("Type-backfill plan does not cover each candidate exactly once")
-    timestamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
+    timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     backup_dir.mkdir(parents=True, exist_ok=True)
     backup_path = backup_dir / f"places-before-type-backfill-{timestamp}.db"
 
