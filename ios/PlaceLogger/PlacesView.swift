@@ -1,6 +1,7 @@
 import Combine
 import MapKit
 import SwiftUI
+import UIKit
 
 @MainActor
 final class PlacesModel: ObservableObject {
@@ -848,6 +849,61 @@ private struct CategoryMapMarker: MapContent {
   }
 }
 
+private struct InteractiveCategoryMapMarker: UIViewRepresentable {
+  let icon: SavedCategoryIcon
+  let isSelected: Bool
+
+  private static let logoOrange = UIColor(
+    red: 254.0 / 255.0,
+    green: 101.0 / 255.0,
+    blue: 4.0 / 255.0,
+    alpha: 1
+  )
+
+  func makeUIView(context: Context) -> MKMarkerAnnotationView {
+    let view = MKMarkerAnnotationView(
+      annotation: MKPointAnnotation(),
+      reuseIdentifier: nil
+    )
+    view.isUserInteractionEnabled = false
+    view.isAccessibilityElement = false
+    view.animatesWhenAdded = false
+    view.canShowCallout = false
+    view.titleVisibility = .hidden
+    view.subtitleVisibility = .hidden
+    configure(view)
+    view.setSelected(isSelected, animated: false)
+    view.prepareForDisplay()
+    return view
+  }
+
+  func updateUIView(_ view: MKMarkerAnnotationView, context: Context) {
+    configure(view)
+    guard view.isSelected != isSelected else { return }
+    view.setSelected(isSelected, animated: true)
+    view.invalidateIntrinsicContentSize()
+  }
+
+  func sizeThatFits(
+    _ proposal: ProposedViewSize,
+    uiView: MKMarkerAnnotationView,
+    context: Context
+  ) -> CGSize? {
+    uiView.intrinsicContentSize
+  }
+
+  private func configure(_ view: MKMarkerAnnotationView) {
+    view.markerTintColor = Self.logoOrange
+    view.glyphTintColor = .white
+    switch icon {
+    case .system(let name):
+      view.glyphImage = UIImage(systemName: name)
+    case .asset(let name):
+      view.glyphImage = UIImage(named: name)?.withRenderingMode(.alwaysTemplate)
+    }
+  }
+}
+
 private struct ActivityResultsMap: View {
   let results: [SavedEntryOutcome]
   let allowsInteraction: Bool
@@ -1191,16 +1247,34 @@ private struct PlacesMap: View {
         description: Text("Current entries appear here after their locations are resolved.")
       )
     } else {
-      Map(position: $cameraPosition, selection: $selectedGroupID) {
+      Map(position: $cameraPosition) {
         UserAnnotation()
 
         ForEach(groups) { group in
-          CategoryMapMarker(
-            title: group.name,
-            category: group.category,
-            coordinate: group.coordinate
-          )
-            .tag(group.id)
+          Annotation(
+            group.name,
+            coordinate: group.coordinate,
+            anchor: .bottom
+          ) {
+            Button {
+              showPlaceDetail(group)
+            } label: {
+              ZStack(alignment: .bottom) {
+                Color.clear
+                  .frame(width: 44, height: 52)
+
+                InteractiveCategoryMapMarker(
+                  icon: group.category.icon,
+                  isSelected: selectedGroupID == group.id
+                )
+                .accessibilityHidden(true)
+              }
+              .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel(group.name)
+            .accessibilityIdentifier("map-marker-\(group.id)")
+          }
         }
 
         if let searchResult {
@@ -1219,16 +1293,6 @@ private struct PlacesMap: View {
         if cameraPosition.positionedByUser {
           hasChosenInitialCamera = true
         }
-      }
-      .onChange(of: selectedGroupID) { _, groupID in
-        traceMapDetailTiming("map selection -> \(groupID ?? "nil")")
-        guard let groupID else {
-          dismissSelectedPlace()
-          return
-        }
-        guard let group = groups.first(where: { $0.id == groupID }) else { return }
-        preferredDetailEntryID = nil
-        detailGroup = group
       }
       .onChange(of: searchText) { _, query in
         searchModel.updateQuery(query, region: visibleRegion)
@@ -1388,7 +1452,6 @@ private struct PlacesMap: View {
         .padding(.bottom, 6)
       }
       .sheet(item: detailSheetBinding, onDismiss: {
-        traceMapDetailTiming("sheet onDismiss")
         clearSelectedPlace()
       }) { group in
         PlaceDetailSheet(
@@ -1401,12 +1464,6 @@ private struct PlacesMap: View {
         .presentationDetents([.fraction(0.58), .large])
         .presentationDragIndicator(.visible)
         .presentationContentInteraction(.scrolls)
-        .onAppear {
-          traceMapDetailTiming("sheet content onAppear")
-        }
-        .onDisappear {
-          traceMapDetailTiming("sheet content onDisappear")
-        }
       }
     }
   }
@@ -1452,11 +1509,16 @@ private struct PlacesMap: View {
     cameraPosition = .item(item, allowsAutomaticPitch: false)
   }
 
+  private func showPlaceDetail(_ group: MappedPlaceGroup) {
+    selectedGroupID = group.id
+    preferredDetailEntryID = nil
+    detailGroup = group
+  }
+
   private var detailSheetBinding: Binding<MappedPlaceGroup?> {
     Binding(
       get: { detailGroup },
       set: { group in
-        traceMapDetailTiming("sheet binding -> \(group?.id ?? "nil")")
         detailGroup = group
         if group == nil {
           clearSelectedPlace()
@@ -1466,36 +1528,13 @@ private struct PlacesMap: View {
   }
 
   private func clearSelectedPlace() {
-    traceMapDetailTiming("clearSelectedPlace")
     selectedGroupID = nil
     dismissSelectedPlace()
   }
 
   private func dismissSelectedPlace() {
-    traceMapDetailTiming("dismissSelectedPlace")
     detailGroup = nil
     preferredDetailEntryID = nil
-  }
-
-  private func traceMapDetailTiming(_ event: String) {
-    let line = "[MapDetailTiming] \(ProcessInfo.processInfo.systemUptime) \(event)\n"
-    print(line, terminator: "")
-
-    guard let data = line.data(using: .utf8),
-          let documentsURL = FileManager.default.urls(
-            for: .documentDirectory,
-            in: .userDomainMask
-          ).first
-    else { return }
-
-    let logURL = documentsURL.appendingPathComponent("map-detail-timing.log")
-    if let handle = try? FileHandle(forWritingTo: logURL) {
-      defer { try? handle.close() }
-      try? handle.seekToEnd()
-      try? handle.write(contentsOf: data)
-    } else {
-      try? data.write(to: logURL, options: .atomic)
-    }
   }
 
   private func collapseSearch() {
