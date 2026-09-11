@@ -242,6 +242,15 @@ def _instagram_metadata(
     entries: list[dict[str, Any]],
 ) -> dict[str, Any]:
     media_types = ["video" if entry.get("formats") else "image" for entry in entries]
+    tagged_accounts_by_media = [
+        {
+            "media_index": index,
+            "accounts": entry["instagram_tagged_accounts"],
+        }
+        for index, entry in enumerate(entries, start=1)
+        if isinstance(entry.get("instagram_tagged_accounts"), list)
+        and entry["instagram_tagged_accounts"]
+    ]
     creator_display_name = info.get("uploader")
     source_account_handle = info.get("channel")
     native_location = info.get("instagram_location")
@@ -266,6 +275,7 @@ def _instagram_metadata(
         "webpage_url": info.get("webpage_url") or source_url,
         "media_count": len(entries),
         "media_types": media_types,
+        "tagged_accounts_by_media": tagged_accounts_by_media,
     }
 
 
@@ -586,6 +596,8 @@ Be selective about what becomes a saved entry:
 
 When multiple media items are supplied, they are the slides of one carousel in display order. Analyze all of them together. The source metadata's caption_or_description may contain the post caption or Instagram's combined carousel captions; treat that text as evidence even when an exact caption-to-slide mapping is unavailable.
 
+Source metadata may include tagged_accounts_by_media from Instagram. media_index is 1-based and matches the supplied media order, so it is also the slide_index for a carousel. A tagged account's full_name and username are supporting identity evidence for that media item. Use a tag to identify a principal recommendation when it is consistent with the media and post context, but do not automatically extract every tagged account or assume every account is a physical place.
+
 Also preserve a source_content object with:
 - summary: a compact but complete summary of the post
 - transcript: all meaningful intelligible speech, in order; use an empty string when there is none
@@ -599,7 +611,7 @@ For each entry, return an object with:
 - description: a detailed, source-grounded explanation containing the useful information conveyed about this entry. Do not add facts that are not in the source.
 - location_query: only when the entry has a physical place, area, anchor, or venue that Google Places could resolve. Use the venue for an event or exhibit. Include the name plus directly evidenced neighborhood/city/region hints from the media, caption, or unambiguous source metadata. A creator display name or account handle is supporting context, not proof by itself: use a location clue from it only when its meaning is clear and consistent with the rest of the post. Never guess a city from an ambiguous handle. Omit this field for non-location entries and when there is not enough location evidence.
 - location_hints: object with any of { neighborhood, city, region_or_country, on_screen_text, visual_landmarks } — ONLY include fields where you have direct evidence from the supplied media, caption, or unambiguous source metadata. Omit a field rather than guess.
-- native_location_relevance: ONLY when source metadata includes native_location. Classify how that post-level Instagram tag relates to this individual entry: "exact" when it identifies the entry or its physical host; "area" when it only identifies a relevant broader neighborhood, city, or region; "unrelated" when it describes somewhere else; or "uncertain" when the relationship is unclear. Do not assume a tag is exact merely because Instagram attached it to the post.
+- native_location_relevance: ONLY when source metadata includes native_location. Classify how that post-level Instagram tag relates to this individual entry: "exact" when it identifies the entry or its physical host; "area" when it only identifies a relevant broader neighborhood, city, or region; "unrelated" when it describes somewhere else; or "uncertain" when the relationship is unclear. Do not assume a tag is exact merely because Instagram attached it to the post. A city- or region-level native_location used to locate a more specific venue is always "area", never "exact".
 - starts_at, ends_at, and recurrence_text: only when the recommended entry itself occurs or exists during a bounded or recurring time and that timing is directly supported by the source. Use ISO 8601 for starts_at and ends_at and preserve a human-readable recurring schedule in recurrence_text. NEVER use these fields for ordinary business hours, service windows, days open, release or publication metadata, or incidental dates; keep that information in the description. A temporary event or limited-run offering at a stable venue can be its own entry, with the venue used as its location.
 - extraction_confidence: "high" | "medium" | "low"
 - timestamp_seconds: for a Reel, YouTube video, or video carousel slide, the
