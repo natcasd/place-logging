@@ -92,13 +92,13 @@ class StoreTests(unittest.TestCase):
                 places[0]["description"],
                 "A bakery with great bread and sandwiches.",
             )
-            self.assertIsNone(places[0]["starts_at"])
-            self.assertIsNone(places[0]["ends_at"])
-            self.assertIsNone(places[0]["recurrence_text"])
+            self.assertEqual(places[0]["starts_at"], "2026-09-01")
+            self.assertEqual(places[0]["ends_at"], "2026-09-30")
+            self.assertEqual(places[0]["recurrence_text"], "Thursday - Sunday")
             canonical = list_entries(db_path)[0]
-            self.assertIsNone(canonical["starts_at"])
-            self.assertIsNone(canonical["ends_at"])
-            self.assertIsNone(canonical["recurrence_text"])
+            self.assertEqual(canonical["starts_at"], "2026-09-01")
+            self.assertEqual(canonical["ends_at"], "2026-09-30")
+            self.assertEqual(canonical["recurrence_text"], "Thursday - Sunday")
             self.assertEqual(len(canonical["sources"]), 1)
             self.assertEqual(
                 canonical["sources"][0]["description"],
@@ -287,7 +287,7 @@ class StoreTests(unittest.TestCase):
             init_db(db_path)
             examples = (
                 ("one", "S&P Lunch", "Restaurant", None, "First description"),
-                ("two", "S & P Lunch", "Deli", None, "Most recent description"),
+                ("two", "S & P Lunch", "Restaurant", None, "Most recent description"),
                 (
                     "three",
                     "Giacometti in the Temple of Dendur",
@@ -412,12 +412,12 @@ class StoreTests(unittest.TestCase):
 
             self.assertEqual(list_entry_types(db_path), ["Unknown"])
 
-    def test_normalizes_legacy_type_aliases_to_controlled_types(self) -> None:
+    def test_normalizes_case_and_accents_to_catalog_types(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             db_path = Path(temp_dir) / "places.db"
             init_db(db_path)
             for ordinal, entry_type in enumerate(
-                ("Deli", "Coffee Shop", "Exhibit", "Fitness Exercise", "Food Pop-Up"),
+                ("restaurant", "Cafe", "EXHIBIT", "fitness", "POP-UP"),
                 start=1,
             ):
                 save_ingest(

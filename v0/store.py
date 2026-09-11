@@ -10,7 +10,11 @@ from pathlib import Path
 from typing import Any
 
 from source_identity import canonical_source_url
-from entry_types import canonical_entry_type, supports_timing
+from entry_types import (
+    canonical_entry_type,
+    entry_type_enricher,
+    entry_types_for_enricher,
+)
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS items (
@@ -603,12 +607,9 @@ def _normalize_type_name(value: Any) -> str:
 
 
 def _normalize_extracted_for_storage(extracted: dict[str, Any]) -> dict[str, Any]:
-    """Canonicalize the type and enforce which Entries may own timing metadata."""
+    """Canonicalize the type without coupling optional fields to categories."""
     normalized = dict(extracted)
     normalized["type_name"] = _normalize_type_name(normalized.get("type_name"))
-    if not supports_timing(normalized["type_name"]):
-        for field in ("starts_at", "ends_at", "recurrence_text"):
-            normalized.pop(field, None)
     return normalized
 
 
@@ -1248,7 +1249,7 @@ def list_entries(db_path: Path, limit: int = 200) -> list[dict[str, Any]]:
 
 
 def _movie_enrichment_payload(row: sqlite3.Row) -> dict[str, Any] | None:
-    if canonical_entry_type(row["entry_type"]) != "Movie":
+    if entry_type_enricher(row["entry_type"]) != "movie":
         return None
     resolved_title = row["movie_resolved_title"]
     release_year = row["movie_release_year"]
@@ -1281,8 +1282,12 @@ def movie_entries_for_enrichment(
     con = _connect(db_path)
     con.row_factory = sqlite3.Row
     try:
-        conditions = ["lower(trim(t.entry_type)) = 'movie'"]
-        parameters: list[Any] = []
+        movie_types = entry_types_for_enricher("movie")
+        if not movie_types:
+            return []
+        type_placeholders = ",".join("?" for _ in movie_types)
+        conditions = [f"lower(trim(t.entry_type)) IN ({type_placeholders})"]
+        parameters: list[Any] = [entry_type.casefold() for entry_type in movie_types]
         if entry_ids is not None:
             unique_ids = list(dict.fromkeys(entry_ids))
             if not unique_ids:

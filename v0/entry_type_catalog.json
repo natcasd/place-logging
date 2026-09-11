@@ -1,0 +1,171 @@
+[
+  {
+    "name": "Restaurant",
+    "description": "A named place whose primary purpose is serving prepared meals. This includes a bar, taberna, or pintxo bar when the recommendation centers on its food and no drink program is the main draw. Use Café for coffee-led places and Bakery for bread or pastry-led places.",
+    "icon": { "system": "fork.knife" },
+    "art": { "asset": "category-restaurant", "tint": "pink" }
+  },
+  {
+    "name": "Café",
+    "description": "A coffee shop, tea shop, or café where drinks and light food are central, even when it also serves meals.",
+    "icon": { "system": "cup.and.saucer.fill" },
+    "art": { "asset": "category-cafe", "tint": "orange" }
+  },
+  {
+    "name": "Cocktail Bar",
+    "description": "A bar or lounge where drinking, cocktails, or mixed drinks are the main draw. When the source only says bar, use Cocktail Bar only when it is presented primarily as a drinking or nightlife destination; use Restaurant when the recommendation centers on food.",
+    "icon": { "asset": "pin-martini-glass" },
+    "art": { "asset": "category-bar", "tint": "purple" }
+  },
+  {
+    "name": "Club",
+    "description": "A nightclub or dance club where DJs, dancing, amplified music, and nightlife are the main draw. Do not use it for a one-off Concert.",
+    "icon": { "system": "hifispeaker.2.fill" },
+    "art": { "asset": "category-bar", "tint": "purple" }
+  },
+  {
+    "name": "Wine Bar",
+    "description": "A bar primarily centered on wine, wine flights, or a wine-focused drinking experience.",
+    "icon": { "asset": "pin-wine-glass" },
+    "art": { "asset": "category-bar", "tint": "purple" }
+  },
+  {
+    "name": "Pub",
+    "description": "A pub, taproom, or beer-led bar where beer, ale, or pints are directly evidenced as the main drinking experience. Do not use Pub for a generic bar, taberna, or pintxo bar merely because it is called a bar.",
+    "icon": { "asset": "pin-beer-mug" },
+    "art": { "asset": "category-bar", "tint": "purple" }
+  },
+  {
+    "name": "Bakery",
+    "description": "A bakery, pastry shop, bread shop, or dessert shop whose baked goods are the main draw. Use Café when coffee or café service is the clearer focus.",
+    "icon": { "asset": "pin-bread-slice" },
+    "art": { "asset": "category-bakery", "tint": "orange" }
+  },
+  {
+    "name": "Museum",
+    "description": "A museum as an institution or place. Use Exhibit for a specific exhibition, installation, or curated show inside it.",
+    "icon": { "system": "building.columns.fill" },
+    "art": { "asset": "category-museum", "tint": "indigo" }
+  },
+  {
+    "name": "Art Gallery",
+    "description": "An art gallery as a standing venue or organization. Use Exhibit for a specific exhibition, installation, or curated show.",
+    "icon": { "asset": "pin-curated-objects" },
+    "art": { "asset": "category-art-gallery", "tint": "indigo" }
+  },
+  {
+    "name": "Furniture Store",
+    "description": "A store primarily selling furniture, home furnishings, or large interior pieces.",
+    "icon": { "asset": "pin-couch" },
+    "art": { "asset": "category-store", "tint": "teal" }
+  },
+  {
+    "name": "Clothes Store",
+    "description": "A clothing-led retailer, boutique, menswear shop, tailor, or apparel-focused thrift shop.",
+    "icon": { "system": "tshirt.fill" },
+    "art": { "asset": "category-store", "tint": "teal" }
+  },
+  {
+    "name": "Health and Beauty Store",
+    "description": "A retailer primarily selling skincare, cosmetics, grooming, personal care, or health and beauty goods. Use Spa for services and treatments.",
+    "icon": { "asset": "pin-pump-bottle" },
+    "art": { "asset": "category-store", "tint": "teal" }
+  },
+  {
+    "name": "Misc. Store",
+    "description": "A physical retailer that does not fit Furniture Store, Clothes Store, or Health and Beauty Store, including antique, specialty food, hobby, and general-goods shops.",
+    "icon": { "system": "bag.fill" },
+    "art": { "asset": "category-store", "tint": "teal" }
+  },
+  {
+    "name": "Spa",
+    "description": "A spa, salon, wellness studio, or place primarily offering beauty, relaxation, or personal-care services rather than selling goods.",
+    "icon": { "system": "bubbles.and.sparkles.fill" },
+    "art": { "asset": "category-spa", "tint": "mint" }
+  },
+  {
+    "name": "Park",
+    "description": "A park, garden, green space, or named outdoor public area. Use Hiking Trail or Bike Route when the route itself is the recommendation.",
+    "icon": { "system": "tree.fill" },
+    "art": { "asset": "category-park", "tint": "green" }
+  },
+  {
+    "name": "Movie Theater",
+    "description": "A physical cinema, repertory theater, drive-in, or movie theater as a place. Use Movie for a film as a creative work.",
+    "icon": { "system": "popcorn.fill" },
+    "art": { "asset": "category-movie", "tint": "red" }
+  },
+  {
+    "name": "Bike Route",
+    "description": "A cycling route, bike path, or ride whose course is the recommendation, whether or not it resolves to one map point.",
+    "icon": { "system": "bicycle" },
+    "art": { "asset": "category-bike-route", "tint": "blue" }
+  },
+  {
+    "name": "Hiking Trail",
+    "description": "A hiking trail, walking trail, or hike whose route is the recommendation, whether or not it resolves to one map point.",
+    "icon": { "system": "figure.hiking" },
+    "art": { "asset": "category-hiking-trail", "tint": "green" }
+  },
+  {
+    "name": "Fitness",
+    "description": "A gym, fitness studio, workout, class, training program, or other exercise-focused recommendation.",
+    "icon": { "system": "dumbbell.fill" },
+    "art": { "asset": "category-fitness", "tint": "blue" }
+  },
+  {
+    "name": "Concert",
+    "description": "A specific live music performance, concert, or music festival. Use Club for a standing nightlife venue rather than a particular performance.",
+    "icon": { "asset": "pin-guitar" },
+    "art": { "asset": "category-concert", "tint": "purple" }
+  },
+  {
+    "name": "Pop-up",
+    "description": "A temporary or limited-run food, retail, service, or event offering that is not better classified as a Concert or Exhibit.",
+    "icon": { "asset": "pin-storefront" },
+    "art": { "asset": "category-popup", "tint": "pink" }
+  },
+  {
+    "name": "Exhibit",
+    "description": "A specific exhibition, installation, or curated show. Use Museum or Art Gallery for the standing institution or venue itself.",
+    "icon": { "asset": "pin-artist-palette" },
+    "art": { "asset": "category-exhibit", "tint": "indigo" }
+  },
+  {
+    "name": "Book",
+    "description": "A book as a creative work. An author or other person is not a Book.",
+    "icon": { "system": "book.fill" },
+    "art": { "asset": "category-book", "tint": "red" }
+  },
+  {
+    "name": "Movie",
+    "description": "A film as a creative work, not a physical cinema. A filmmaker, director, or other person is not a Movie.",
+    "icon": { "system": "film.fill" },
+    "enricher": "movie",
+    "art": { "asset": "category-movie", "tint": "red" }
+  },
+  {
+    "name": "Article",
+    "description": "A specific written article, essay, or published web story. An author or other person is not an Article.",
+    "icon": { "system": "newspaper.fill" },
+    "art": { "asset": "category-article", "tint": "red" }
+  },
+  {
+    "name": "Song",
+    "description": "A specific song or musical recording. A musician or other person is not a Song.",
+    "icon": { "system": "music.note" },
+    "art": { "asset": "category-song", "tint": "purple" }
+  },
+  {
+    "name": "Product",
+    "description": "A specific product or non-location item offered for use or purchase that is not one of the dedicated creative-work types.",
+    "icon": { "system": "shippingbox.fill" },
+    "art": { "asset": "category-product", "tint": "teal" }
+  },
+  {
+    "name": "Unknown",
+    "description": "A valid save-worthy recommendation that fits none of the listed types, including a person or creator when no dedicated person type exists. Unknown may still have a location.",
+    "icon": { "system": "questionmark.circle.fill" },
+    "art": { "asset": "category-unknown", "tint": "gray" }
+  }
+]

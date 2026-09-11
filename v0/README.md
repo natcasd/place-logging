@@ -18,11 +18,10 @@ optionally resolves physical locations through Google Places.
 - Instagram and TikTok media is downloaded into temporary machine storage for
   extraction, then deleted. The source URL, caption, and extracted source text
   are retained.
-- Each extracted entry uses one stable browse type (`Restaurant`, `Café`, `Bar`,
-  `Bakery`, `Park`, `Hiking Trail`, `Bike Route`, `Museum`, `Art Gallery`,
-  `Store`, `Spa`, `Fitness`, `Concert`, `Pop-up`, `Exhibit`, `Book`, `Movie`, `Article`,
-  `Song`, `Product`, or `Unknown`), plus a detailed description, optional
-  availability dates, and optional Google location.
+- Each extracted entry uses one stable browse type from
+  `entry_type_catalog.json`, plus a detailed description and optional timing and
+  Google location. Location and timing are properties of an entry rather than
+  category allowlists.
 - Resolved locations retain Google's display name and Google Place ID. Clients can
   show one map pin per location while keeping distinct saved entries at that pin.
 - Repeated saves of the same logical entry can be presented as one card with all of
@@ -56,6 +55,9 @@ optionally resolves physical locations through Google Places.
 - `bot.py` — Telegram transport adapter
 - `ingest_service.py` — shared process-and-persist application service
 - `pipeline.py` — platform-aware `ingest → extract → resolve` pipeline
+- `entry_type_catalog.json` — authoritative type names, classifier definitions,
+  icons, ordering, and optional enrichment triggers
+- `generate_ios_entry_types.py` — regenerates the checked-in iOS catalog table
 - `movie_enrichment.py` — credential-free Wikidata movie matching
 - `store.py` — SQLite schema + `save_ingest()`
 - `data/` — local SQLite database (gitignored); temporary Instagram and TikTok
@@ -193,6 +195,23 @@ python backfill_entry_types.py \
   --plan data/type-backfill-plan.json \
   --apply
 ```
+
+## Type-catalog regression evaluation
+
+Before planning any Bar/Store split backfill, run the new catalog against a
+small stratified sample and the checked-in edge-case fixtures. This command is
+read-only and cannot update SQLite. Its JSON output shows every current versus
+proposed type and scores the fixture set.
+
+```bash
+python evaluate_entry_type_migration.py \
+  --db-path data/places.db \
+  --per-type 5 \
+  --output data/type-catalog-evaluation.json
+```
+
+Review that report before implementing or applying a separate migration plan.
+The intended first pass is roughly 40–60 saved entries, not the full corpus.
 
 ## Location-name backfill
 

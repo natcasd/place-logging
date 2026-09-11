@@ -338,8 +338,9 @@ private struct SavedCategoryTile: View {
             startPoint: .topLeading,
             endPoint: .bottomTrailing
           )
-          Image(systemName: category.icon)
+          SavedCategoryIconView(icon: category.icon)
             .font(.system(size: 38, weight: .medium))
+            .frame(width: 38, height: 38)
             .foregroundStyle(.white.opacity(0.88))
         }
 
@@ -383,7 +384,9 @@ private struct SavedCategoryList: View {
 
   var body: some View {
     List {
-      if category.isPlaceBased {
+      if places.contains(where: {
+        $0.latitude != nil && $0.longitude != nil && $0.isCurrentlyRelevant
+      }) {
         Section {
           Button(action: viewAroundMe) {
             Label("View in Around Me", systemImage: "map")
@@ -822,6 +825,27 @@ private struct ActivityLocationsMap: View {
   }
 }
 
+private struct CategoryMapPin: View {
+  let category: SavedCategory
+
+  var body: some View {
+    Circle()
+      .fill(.blue)
+      .frame(width: 38, height: 38)
+      .overlay {
+        SavedCategoryIconView(icon: category.icon)
+          .font(.system(size: 19, weight: .semibold))
+          .foregroundStyle(.white)
+          .frame(width: 21, height: 21)
+      }
+      .overlay {
+        Circle().stroke(.white.opacity(0.9), lineWidth: 1.5)
+      }
+      .shadow(color: .black.opacity(0.22), radius: 3, y: 2)
+      .accessibilityLabel(category.title)
+  }
+}
+
 private struct ActivityResultsMap: View {
   let results: [SavedEntryOutcome]
   let allowsInteraction: Bool
@@ -830,15 +854,15 @@ private struct ActivityResultsMap: View {
     Map(initialPosition: .automatic, interactionModes: allowsInteraction ? .all : []) {
       ForEach(results) { result in
         if let latitude = result.latitude, let longitude = result.longitude {
-          Marker(
+          Annotation(
             result.locationName ?? result.name,
-            systemImage: SavedCategory.category(for: result.type).icon,
             coordinate: CLLocationCoordinate2D(
               latitude: latitude,
               longitude: longitude
             )
-          )
-          .tint(SavedCategory.category(for: result.type).artTint)
+          ) {
+            CategoryMapPin(category: SavedCategory.category(for: result.type))
+          }
         }
       }
     }
@@ -1170,12 +1194,12 @@ private struct PlacesMap: View {
         UserAnnotation()
 
         ForEach(groups) { group in
-          Marker(
+          Annotation(
             group.name,
-            systemImage: group.category.icon,
             coordinate: group.coordinate
-          )
-            .tint(.red)
+          ) {
+            CategoryMapPin(category: group.category)
+          }
             .tag(group.id)
         }
 
@@ -1625,9 +1649,12 @@ private struct LocationEntryPicker: View {
           selectEntry(entryGroup.primary)
         } label: {
           HStack(spacing: 12) {
-            Image(systemName: SavedCategory.category(for: entryGroup.type).icon)
+            SavedCategoryIconView(
+              icon: SavedCategory.category(for: entryGroup.type).icon
+            )
               .font(.headline)
               .foregroundStyle(.indigo)
+              .frame(width: 22, height: 22)
               .frame(width: 42, height: 42)
               .background(.indigo.opacity(0.12), in: RoundedRectangle(cornerRadius: 11))
 
