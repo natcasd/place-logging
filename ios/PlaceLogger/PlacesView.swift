@@ -830,14 +830,20 @@ private struct CategoryMapMarker: MapContent {
   let category: SavedCategory
   let coordinate: CLLocationCoordinate2D
 
+  private static let logoOrange = Color(
+    red: 254.0 / 255.0,
+    green: 101.0 / 255.0,
+    blue: 4.0 / 255.0
+  )
+
   @MapContentBuilder var body: some MapContent {
     switch category.icon {
     case .system(let name):
       Marker(title, systemImage: name, coordinate: coordinate)
-        .tint(Color(red: 1, green: 0.55, blue: 0.24))
+        .tint(Self.logoOrange)
     case .asset(let name):
       Marker(title, image: name, coordinate: coordinate)
-        .tint(Color(red: 1, green: 0.55, blue: 0.24))
+        .tint(Self.logoOrange)
     }
   }
 }
@@ -1195,22 +1201,6 @@ private struct PlacesMap: View {
             coordinate: group.coordinate
           )
             .tag(group.id)
-
-          Annotation(
-            "",
-            coordinate: group.coordinate,
-            anchor: .bottom
-          ) {
-            Button {
-              showPlaceDetail(group)
-            } label: {
-              Color.clear
-                .frame(width: 48, height: 52)
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel("Show details for \(group.name)")
-          }
         }
 
         if let searchResult {
@@ -1460,11 +1450,6 @@ private struct PlacesMap: View {
     clearSelectedPlace()
     searchResult = item
     cameraPosition = .item(item, allowsAutomaticPitch: false)
-  }
-
-  private func showPlaceDetail(_ group: MappedPlaceGroup) {
-    preferredDetailEntryID = nil
-    detailGroup = group
   }
 
   private var detailSheetBinding: Binding<MappedPlaceGroup?> {
