@@ -2,7 +2,7 @@
 Isolated test harness for the LLM tiebreaker.
 
 Reproduces the multi-candidate Bao's Pastry case from earlier runs without
-going through the full Telegram → yt-dlp → Gemini-video pipeline. If the
+going through the full yt-dlp → Gemini-video pipeline. If the
 tiebreaker is silently throwing in production, it'll throw here too — with
 a full traceback we can actually read.
 

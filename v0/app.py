@@ -1,4 +1,4 @@
-"""HTTP entrypoint for Telegram and versioned ingest clients."""
+"""HTTP entrypoint for versioned ingest clients."""
 from __future__ import annotations
 
 import asyncio
@@ -15,7 +15,7 @@ import uuid
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any
 
 from dotenv import load_dotenv
 from fastapi import FastAPI, Header, HTTPException, Request, status
@@ -23,12 +23,9 @@ from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field
-from telegram import Update
-from telegram.ext import Application
 
 load_dotenv(Path(__file__).parent / ".env")
 
-from bot import _format_result, build_application  # noqa: E402
 from ingest_service import IngestService  # noqa: E402
 from movie_enrichment import WikidataMovieProvider  # noqa: E402
 
@@ -38,16 +35,12 @@ logging.basicConfig(
     level=logging.INFO,
 )
 log = logging.getLogger("app")
-# Telegram Bot API URLs contain the bot token. Never emit them to app logs.
-logging.getLogger("httpx").setLevel(logging.WARNING)
 
 
 class IngestRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     source_url: str = Field(min_length=1, max_length=4096)
-    user_prompt: str | None = Field(default=None, max_length=4000)
-    delivery: Literal["response_only", "telegram"] = "response_only"
 
 
 class ShortcutIngestRequest(BaseModel):
@@ -61,8 +54,6 @@ class ShortcutIngestRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     source_url_base64: str = Field(min_length=4, max_length=8192)
-    user_prompt: str | None = Field(default=None, max_length=4000)
-    delivery: Literal["response_only", "telegram"] = "response_only"
 
 
 class ReviewLocationCandidate(BaseModel):
@@ -98,7 +89,6 @@ class IngestResponse(BaseModel):
     ingest_id: int
     item_id: int
     source_url: str
-    user_prompt: str | None
     metadata: dict[str, Any]
     places_extracted: list[dict[str, Any]]
     resolved_places: list[dict[str, Any]]
@@ -106,7 +96,6 @@ class IngestResponse(BaseModel):
     resolved_entries: list[dict[str, Any]] = Field(default_factory=list)
     saved_entries: list[SavedEntryOutcome] = Field(default_factory=list)
     already_logged: bool = False
-    delivery_status: Literal["not_requested", "sent", "failed"]
 
 
 class ShortcutDiagnosticResponse(BaseModel):
@@ -188,7 +177,6 @@ class EntriesResponse(BaseModel):
 class SavedSource(BaseModel):
     id: int
     source_url: str
-    user_prompt: str | None
     source_platform: str
     creator: str | None
     caption: str | None
@@ -272,10 +260,7 @@ class DeleteEntriesResponse(BaseModel):
 @dataclass
 class Runtime:
     service: IngestService
-    telegram: Application
     ingest_api_token: str
-    telegram_webhook_secret: str
-    shortcut_chat_id: int | None
 
 
 def _required_env(name: str) -> str:
@@ -283,24 +268,6 @@ def _required_env(name: str) -> str:
     if not value:
         raise RuntimeError(f"Set {name}")
     return value
-
-
-def _public_url() -> str:
-    configured = os.environ.get("PUBLIC_URL")
-    if configured:
-        return configured.rstrip("/")
-    app_name = os.environ.get("FLY_APP_NAME")
-    if not app_name:
-        raise RuntimeError("Set PUBLIC_URL or run on Fly (FLY_APP_NAME auto-injected)")
-    return f"https://{app_name}.fly.dev"
-
-
-def _allowed_ids() -> set[int]:
-    return {
-        int(value)
-        for value in os.environ.get("TELEGRAM_ALLOWED_USER_IDS", "").split(",")
-        if value.strip()
-    }
 
 
 def _validation_diagnostics(exc: RequestValidationError) -> dict[str, Any]:
@@ -328,8 +295,6 @@ def _validation_diagnostics(exc: RequestValidationError) -> dict[str, Any]:
                 diagnostics["source_url_bytes"] = len(source_url)
             else:
                 diagnostics["source_url_shape"] = _safe_shape(source_url)
-        if "delivery" in body:
-            diagnostics["delivery"] = _safe_shape(body["delivery"])
     return diagnostics
 
 
@@ -375,24 +340,9 @@ def build_runtime() -> Runtime:
         movie_provider=WikidataMovieProvider(),
     )
     service.initialize()
-    allowed_ids = _allowed_ids()
-    shortcut_chat_id_value = os.environ.get("SHORTCUT_TELEGRAM_CHAT_ID")
-    shortcut_chat_id = (
-        int(shortcut_chat_id_value)
-        if shortcut_chat_id_value
-        else next(iter(allowed_ids), None)
-    )
-    telegram = build_application(
-        _required_env("TELEGRAM_BOT_TOKEN"),
-        service,
-        allowed_ids,
-    )
     return Runtime(
         service=service,
-        telegram=telegram,
         ingest_api_token=_required_env("INGEST_API_TOKEN"),
-        telegram_webhook_secret=_required_env("TELEGRAM_WEBHOOK_SECRET"),
-        shortcut_chat_id=shortcut_chat_id,
     )
 
 
@@ -401,22 +351,7 @@ def create_app(injected_runtime: Runtime | None = None) -> FastAPI:
     async def lifespan(application: FastAPI):
         runtime = injected_runtime or build_runtime()
         application.state.runtime = runtime
-        if injected_runtime is None:
-            await runtime.telegram.initialize()
-            await runtime.telegram.start()
-            webhook_url = f"{_public_url()}/webhook"
-            await runtime.telegram.bot.set_webhook(
-                url=webhook_url,
-                secret_token=runtime.telegram_webhook_secret,
-                allowed_updates=Update.ALL_TYPES,
-            )
-            log.info("Telegram webhook registered at %s", webhook_url)
-        try:
-            yield
-        finally:
-            if injected_runtime is None:
-                await runtime.telegram.stop()
-                await runtime.telegram.shutdown()
+        yield
 
     application = FastAPI(
         title="Place Logger API",
@@ -637,19 +572,6 @@ def create_app(injected_runtime: Runtime | None = None) -> FastAPI:
             )
         return {"entry_ids": entry_ids, **result}
 
-    @application.post("/webhook", include_in_schema=False)
-    async def telegram_webhook(
-        request: Request,
-        x_telegram_bot_api_secret_token: str | None = Header(default=None),
-    ) -> dict[str, bool]:
-        runtime: Runtime = request.app.state.runtime
-        supplied = x_telegram_bot_api_secret_token or ""
-        if not secrets.compare_digest(supplied, runtime.telegram_webhook_secret):
-            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN)
-        update = Update.de_json(await request.json(), runtime.telegram.bot)
-        await runtime.telegram.update_queue.put(update)
-        return {"ok": True}
-
     @application.post("/api/v1/ingests", response_model=IngestResponse)
     async def create_ingest(
         payload: IngestRequest,
@@ -668,36 +590,15 @@ def create_app(injected_runtime: Runtime | None = None) -> FastAPI:
 
         ingest_started = time.perf_counter()
         log.info(
-            "Ingest accepted request_id=%s source_url=%r delivery=%s",
+            "Ingest accepted request_id=%s source_url=%r",
             getattr(request.state, "request_id", "unknown"),
             payload.source_url,
-            payload.delivery,
         )
-
-        notification = None
-        delivery_status: Literal["not_requested", "sent", "failed"] = (
-            "not_requested"
-        )
-        if payload.delivery == "telegram":
-            if runtime.shortcut_chat_id is None:
-                raise HTTPException(
-                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                    detail="Telegram delivery is not configured",
-                )
-            try:
-                notification = await runtime.telegram.bot.send_message(
-                    runtime.shortcut_chat_id,
-                    "🔎 Working on your shared link…",
-                )
-            except Exception:
-                delivery_status = "failed"
-                log.exception("Could not send Telegram ingest acknowledgement")
 
         try:
             result = await asyncio.to_thread(
                 runtime.service.ingest,
                 payload.source_url,
-                payload.user_prompt,
             )
         except (ValueError, NotImplementedError) as exc:
             log.warning(
@@ -709,8 +610,6 @@ def create_app(injected_runtime: Runtime | None = None) -> FastAPI:
                 payload.source_url,
                 round((time.perf_counter() - ingest_started) * 1000, 1),
             )
-            if notification is not None:
-                await notification.edit_text(f"❌ {type(exc).__name__}: {exc}")
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                 detail=str(exc),
@@ -722,34 +621,19 @@ def create_app(injected_runtime: Runtime | None = None) -> FastAPI:
                 payload.source_url,
                 round((time.perf_counter() - ingest_started) * 1000, 1),
             )
-            if notification is not None:
-                await notification.edit_text("❌ Place Logger could not process that link.")
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail="Place Logger could not process that link",
             ) from exc
-
-        if notification is not None:
-            try:
-                await notification.edit_text(
-                    _format_result(result),
-                    parse_mode="Markdown",
-                    disable_web_page_preview=True,
-                )
-                delivery_status = "sent"
-            except Exception:
-                delivery_status = "failed"
-                log.exception("Ingest saved but Telegram result delivery failed")
         log.info(
             "Ingest completed request_id=%s item_id=%s entries=%s "
-            "delivery_status=%s duration_ms=%s",
+            "duration_ms=%s",
             getattr(request.state, "request_id", "unknown"),
             result.get("item_id"),
             len(result.get("entries_extracted", result.get("places_extracted", []))),
-            delivery_status,
             round((time.perf_counter() - ingest_started) * 1000, 1),
         )
-        return {**result, "delivery_status": delivery_status}
+        return result
 
     @application.post(
         "/api/v1/shortcut/diagnostics",
@@ -841,8 +725,6 @@ def create_app(injected_runtime: Runtime | None = None) -> FastAPI:
         return await create_ingest(
             IngestRequest(
                 source_url=source_url,
-                user_prompt=payload.user_prompt,
-                delivery=payload.delivery,
             ),
             request,
             authorization,

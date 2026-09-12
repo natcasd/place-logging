@@ -2,6 +2,9 @@
 
 *Captured 2026-04-17. Concrete enough to build from, loose enough to still move.*
 
+> Historical design note. This predates the native iOS product and is not a
+> description of currently supported behavior.
+
 ## Decision forced by reality: Google My Maps cannot be the source of truth
 
 There is **no public API** for Google My Maps or Google Maps saved lists — reading or writing. This has been an open feature request [since 2017](https://issuetracker.google.com/issues/35820262) with no movement. The only readback path is Google Takeout (a one-shot export as KML). Google's paid *Maps Platform* APIs (Places, Geocoding, Maps JavaScript) are separate — they query Google's global place database, not your personal map.

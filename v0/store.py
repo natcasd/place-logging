@@ -21,7 +21,6 @@ CREATE TABLE IF NOT EXISTS items (
   id               INTEGER PRIMARY KEY AUTOINCREMENT,
   vertical         TEXT NOT NULL,
   source_url       TEXT NOT NULL,
-  user_prompt      TEXT,
   raw_payload_json TEXT,
   llm_output_json  TEXT,
   created_at       TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
@@ -126,7 +125,6 @@ CREATE INDEX IF NOT EXISTS idx_entry_sources_item ON entry_sources(item_id);
 CREATE TABLE IF NOT EXISTS ingest_runs (
   id              INTEGER PRIMARY KEY AUTOINCREMENT,
   source_url      TEXT NOT NULL,
-  user_prompt     TEXT,
   source_platform TEXT NOT NULL DEFAULT 'other',
   status          TEXT NOT NULL,
   stage           TEXT NOT NULL,
@@ -345,6 +343,44 @@ def _backup_before_normalized_migration(
     return backup_path
 
 
+def _backup_before_user_prompt_removal(
+    con: sqlite3.Connection,
+    db_path: Path,
+) -> Path | None:
+    affected_tables = [
+        table
+        for table in ("items", "ingest_runs")
+        if _has_table(con, table)
+        and "user_prompt"
+        in {row[1] for row in con.execute(f"PRAGMA table_info({table})").fetchall()}
+    ]
+    if not affected_tables:
+        return None
+
+    timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    backup_path = db_path.with_name(
+        f"{db_path.name}.pre-user-prompt-removal-{timestamp}.bak"
+    )
+    backup = sqlite3.connect(backup_path)
+    try:
+        con.backup(backup)
+    finally:
+        backup.close()
+    return backup_path
+
+
+def _migrate_user_prompt_columns(con: sqlite3.Connection) -> None:
+    """Remove the retired per-ingest prompt without disturbing stored records."""
+    for table in ("items", "ingest_runs"):
+        if not _has_table(con, table):
+            continue
+        columns = {
+            row[1] for row in con.execute(f"PRAGMA table_info({table})").fetchall()
+        }
+        if "user_prompt" in columns:
+            con.execute(f"ALTER TABLE {table} DROP COLUMN user_prompt")
+
+
 def init_db(db_path: Path) -> None:
     db_path.parent.mkdir(parents=True, exist_ok=True)
     con = _connect(db_path)
@@ -358,6 +394,8 @@ def init_db(db_path: Path) -> None:
         con.commit()
         _backup_before_normalized_migration(con, db_path)
         con.executescript(NORMALIZED_SCHEMA)
+        _backup_before_user_prompt_removal(con, db_path)
+        _migrate_user_prompt_columns(con)
         _backfill_normalized_model(con)
         _backfill_ingest_runs(con)
         con.commit()
@@ -372,12 +410,11 @@ def save_ingest(db_path: Path, result: dict[str, Any]) -> int:
         cur = con.cursor()
         cur.execute(
             """INSERT INTO items
-               (vertical, source_url, user_prompt, raw_payload_json, llm_output_json)
-               VALUES (?, ?, ?, ?, ?)""",
+               (vertical, source_url, raw_payload_json, llm_output_json)
+               VALUES (?, ?, ?, ?)""",
             (
                 "entry",
                 result["source_url"],
-                result.get("user_prompt"),
                 json.dumps(result.get("metadata", {}), ensure_ascii=False),
                 json.dumps(
                     result.get("entries_extracted", result.get("places_extracted", [])),
@@ -484,7 +521,6 @@ def find_processed_source(
                 "ingest_id": row["ingest_id"] or row["id"],
                 "item_id": row["id"],
                 "source_url": row["source_url"],
-                "user_prompt": row["user_prompt"],
                 "metadata": metadata,
                 "places_extracted": [],
                 "resolved_places": [],
@@ -501,7 +537,6 @@ def find_processed_source(
 def start_ingest_run(
     db_path: Path,
     source_url: str,
-    user_prompt: str | None,
     source_platform: str,
 ) -> int:
     """Create durable processing history before source work begins."""
@@ -509,9 +544,9 @@ def start_ingest_run(
     try:
         cursor = con.execute(
             """INSERT INTO ingest_runs (
-                 source_url, user_prompt, source_platform, status, stage
-               ) VALUES (?, ?, ?, 'processing', 'accepted')""",
-            (source_url, user_prompt, source_platform),
+                 source_url, source_platform, status, stage
+               ) VALUES (?, ?, 'processing', 'accepted')""",
+            (source_url, source_platform),
         )
         run_id = cursor.lastrowid
         con.execute(
@@ -1047,12 +1082,11 @@ def _backfill_ingest_runs(con: sqlite3.Connection) -> None:
         )
         cursor = con.execute(
             """INSERT INTO ingest_runs (
-                 source_url, user_prompt, source_platform, status, stage,
+                 source_url, source_platform, status, stage,
                  item_id, result_json, started_at, updated_at, completed_at
-               ) VALUES (?, ?, ?, ?, 'completed', ?, ?, ?, ?, ?)""",
+               ) VALUES (?, ?, ?, 'completed', ?, ?, ?, ?, ?)""",
             (
                 row["source_url"],
-                row["user_prompt"],
                 metadata.get("source_platform") or "other",
                 status,
                 row["id"],
@@ -1423,7 +1457,7 @@ def list_sources(db_path: Path, limit: int = 200) -> list[dict[str, Any]]:
     con.row_factory = sqlite3.Row
     try:
         rows = con.execute(
-            """SELECT i.id, i.source_url, i.user_prompt, i.raw_payload_json,
+            """SELECT i.id, i.source_url, i.raw_payload_json,
                       i.created_at, COUNT(DISTINCT ts.entry_id) AS entry_count
                FROM items AS i
                LEFT JOIN entry_sources AS ts ON ts.item_id = i.id
@@ -1439,7 +1473,6 @@ def list_sources(db_path: Path, limit: int = 200) -> list[dict[str, Any]]:
                 {
                     "id": row["id"],
                     "source_url": row["source_url"],
-                    "user_prompt": row["user_prompt"],
                     "source_platform": metadata.get("source_platform") or "other",
                     "creator": metadata.get("uploader"),
                     "caption": metadata.get("caption_or_description"),

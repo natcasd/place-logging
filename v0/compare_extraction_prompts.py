@@ -82,27 +82,18 @@ def baseline_schema() -> dict[str, Any]:
 def _prompt(
     template: str,
     metadata: dict[str, Any],
-    user_prompt: str | None,
 ) -> str:
-    prompt = (
+    return (
         template
         + "\n\nSource metadata (supporting evidence, but trust the video itself "
         "for on_screen_text / visual_landmarks):\n"
         + json.dumps(metadata, indent=2, ensure_ascii=False)
     )
-    if user_prompt:
-        prompt += (
-            "\n\nUser prompt (highest authority — may clarify, correct, or override "
-            "what you'd otherwise infer from the content):\n"
-            + user_prompt
-        )
-    return prompt
 
 
 def _extract_with_spec(
     media_paths: list[Path],
     metadata: dict[str, Any],
-    user_prompt: str | None,
     *,
     prompt_template: str,
     response_schema: dict[str, Any],
@@ -118,7 +109,7 @@ def _extract_with_spec(
     response = pipeline._call_gemini_with_retry(
         lambda: pipeline._client().models.generate_content(
             model=os.environ.get("GEMINI_MODEL", "gemini-3.1-flash-lite"),
-            contents=[*media_parts, _prompt(prompt_template, metadata, user_prompt)],
+            contents=[*media_parts, _prompt(prompt_template, metadata)],
             config=types.GenerateContentConfig(
                 response_mime_type="application/json",
                 response_schema=response_schema,
@@ -185,7 +176,7 @@ def source_rows(con: sqlite3.Connection, item_ids: list[int]) -> list[dict[str, 
     con.row_factory = sqlite3.Row
     placeholders = ",".join("?" for _ in item_ids)
     rows = con.execute(
-        f"""SELECT id, source_url, user_prompt
+        f"""SELECT id, source_url
               FROM items
              WHERE id IN ({placeholders})
              ORDER BY id""",
@@ -231,7 +222,6 @@ def run(
             old = _extract_with_spec(
                 media_paths,
                 fetched.metadata,
-                source["user_prompt"],
                 prompt_template=old_prompt,
                 response_schema=old_schema,
                 baseline=True,
@@ -240,7 +230,6 @@ def run(
             new = _extract_with_spec(
                 media_paths,
                 fetched.metadata,
-                source["user_prompt"],
                 prompt_template=pipeline.EXTRACTOR_PROMPT,
                 response_schema=pipeline.EXTRACTION_RESPONSE_SCHEMA,
                 baseline=False,

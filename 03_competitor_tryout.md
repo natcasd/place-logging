@@ -2,6 +2,9 @@
 
 *Started 2026-04-17. Real Reels sent to each tool, notes on what came back.*
 
+> Historical research note. Product-flow comparisons below preserve the options
+> considered at the time and do not describe currently supported behavior.
+
 ## Hold My Pin
 
 **Flow tested:** DM a Reel/post to `@holdmypin` on Instagram.

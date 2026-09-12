@@ -2,6 +2,9 @@
 
 *Captured 2026-04-17. The step between "the LLM said 'Lucali in Brooklyn'" and "here's a pin at 575 Henry St with a Google place_id."*
 
+> Historical design note. This predates the native iOS product and is not a
+> description of currently supported behavior.
+
 ## The problem
 
 Gemini's output for a food Reel looks something like:
