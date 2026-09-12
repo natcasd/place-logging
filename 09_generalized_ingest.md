@@ -1,6 +1,8 @@
-# Generalized Ingest — Beyond Reels
+# Generalized Ingest — Historical Exploration
 
-*Captured 2026-04-17. Noting for the record; not implementing in the first-pass v0 but the ingest layer should leave room.*
+*Captured 2026-04-17. Retained as an archival exploration, not a description of
+the current API. The optional per-ingest prompt described below was never used
+by the native product and was deliberately removed rather than carried forward.*
 
 ## The broader use case
 

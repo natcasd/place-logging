@@ -75,8 +75,7 @@ struct PlaceLoggerAPI: Sendable {
     request.setValue("application/json", forHTTPHeaderField: "Content-Type")
     request.timeoutInterval = 180
     request.httpBody = try JSONSerialization.data(withJSONObject: [
-      "source_url": sourceURL.absoluteString,
-      "delivery": "response_only",
+      "source_url": sourceURL.absoluteString
     ])
     let data = try await perform(request)
     return try JSONDecoder().decode(IngestResponse.self, from: data)

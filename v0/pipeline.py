@@ -701,22 +701,14 @@ MAX_INLINE_MEDIA_BYTES = MAX_INLINE_VIDEO_BYTES
 
 def _extraction_prompt(
     metadata: dict[str, Any],
-    user_prompt: str | None = None,
     existing_types: list[str] | None = None,
 ) -> str:
-    prompt = (
+    return (
         EXTRACTOR_PROMPT
         + "\n\nSource metadata (supporting evidence, but trust the video itself "
           "for on_screen_text / visual_landmarks):\n"
         + json.dumps(metadata, indent=2, ensure_ascii=False)
     )
-    if user_prompt:
-        prompt += (
-            "\n\nUser prompt (highest authority — may clarify, correct, or override "
-            "what you'd otherwise infer from the content):\n"
-            + user_prompt
-        )
-    return prompt
 
 
 _GENERIC_ENTRY_NAMES = {
@@ -811,7 +803,6 @@ def _normalize_media_references(
 def extract_bundle(
     media_paths: Path | list[Path],
     metadata: dict[str, Any],
-    user_prompt: str | None = None,
     existing_types: list[str] | None = None,
 ) -> dict[str, Any]:
     """Analyze downloaded Instagram media and return source content plus entries."""
@@ -833,7 +824,7 @@ def extract_bundle(
         for path in paths
     ]
 
-    prompt = _extraction_prompt(metadata, user_prompt, existing_types)
+    prompt = _extraction_prompt(metadata, existing_types)
 
     model = os.environ.get("GEMINI_MODEL", "gemini-3.1-flash-lite")
     response = _call_gemini_with_retry(
@@ -859,21 +850,18 @@ def extract_bundle(
 def extract(
     media_paths: Path | list[Path],
     metadata: dict[str, Any],
-    user_prompt: str | None = None,
     existing_types: list[str] | None = None,
 ) -> list[dict[str, Any]]:
     """Compatibility wrapper returning only individual saved entries."""
     return extract_bundle(
         media_paths,
         metadata,
-        user_prompt,
         existing_types,
     )["entries"]
 
 
 def extract_youtube_bundle(
     source_url: str,
-    user_prompt: str | None = None,
     existing_types: list[str] | None = None,
 ) -> dict[str, Any]:
     """Analyze a public YouTube URL and return source content plus entries."""
@@ -888,7 +876,7 @@ def extract_youtube_bundle(
             input=[
                 {
                     "type": "text",
-                    "text": _extraction_prompt(metadata, user_prompt, existing_types),
+                    "text": _extraction_prompt(metadata, existing_types),
                 },
                 {"type": "video", "uri": source_url},
             ],
@@ -907,11 +895,10 @@ def extract_youtube_bundle(
 
 def extract_youtube_url(
     source_url: str,
-    user_prompt: str | None = None,
     existing_types: list[str] | None = None,
 ) -> list[dict[str, Any]]:
     """Compatibility wrapper returning only individual saved entries."""
-    return extract_youtube_bundle(source_url, user_prompt, existing_types)["entries"]
+    return extract_youtube_bundle(source_url, existing_types)["entries"]
 
 
 # ---------- Resolver ----------
@@ -1307,7 +1294,6 @@ def _preserve_extraction_failure(
 
 def process_ingest(
     source_url: str | None,
-    user_prompt: str | None,
     workdir: Path,
     existing_types: list[str] | None = None,
     progress: Callable[[str], None] | None = None,
@@ -1328,7 +1314,7 @@ def process_ingest(
             progress("extracting")
         metadata = {"source_platform": "youtube", "webpage_url": source_url}
         try:
-            bundle = extract_youtube_bundle(source_url, user_prompt, existing_types)
+            bundle = extract_youtube_bundle(source_url, existing_types)
         except Exception as exc:
             log.exception("YouTube extraction failed after retries; preserving source")
             _preserve_extraction_failure(metadata, exc)
@@ -1352,7 +1338,6 @@ def process_ingest(
                 bundle = extract_bundle(
                     fetched.media_paths,
                     metadata,
-                    user_prompt,
                     existing_types,
                 )
             except Exception as exc:
@@ -1380,11 +1365,10 @@ def process_ingest(
 
     return {
         "source_url": source_url,
-        "user_prompt": user_prompt,
         "metadata": metadata,
         "entries_extracted": entries,
         "resolved_entries": resolved,
-        # Compatibility aliases for the Telegram bot and released iOS clients.
+        # Compatibility aliases for released iOS clients.
         "places_extracted": entries,
         "resolved_places": resolved,
     }

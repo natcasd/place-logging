@@ -1,14 +1,15 @@
 from __future__ import annotations
 
-import asyncio
 import base64
+import os
+import tempfile
 import unittest
-from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock
+from pathlib import Path
+from unittest.mock import MagicMock, patch
 
 from fastapi.testclient import TestClient
 
-from app import Runtime, create_app
+from app import Runtime, build_runtime, create_app
 
 
 def canonical_result() -> dict:
@@ -16,7 +17,6 @@ def canonical_result() -> dict:
         "ingest_id": 34,
         "item_id": 12,
         "source_url": "https://youtu.be/test",
-        "user_prompt": None,
         "metadata": {"source_platform": "youtube"},
         "places_extracted": [{"extracted_name": "Test Place"}],
         "resolved_places": [
@@ -44,24 +44,13 @@ def canonical_result() -> dict:
     }
 
 
-class FakeTelegram:
-    def __init__(self) -> None:
-        self.bot = MagicMock()
-        self.bot.send_message = AsyncMock()
-        self.update_queue: asyncio.Queue = asyncio.Queue()
-
-
 class ApiTests(unittest.TestCase):
     def setUp(self) -> None:
         self.service = MagicMock()
         self.service.ingest.return_value = canonical_result()
-        self.telegram = FakeTelegram()
         self.runtime = Runtime(
             service=self.service,
-            telegram=self.telegram,  # type: ignore[arg-type]
             ingest_api_token="api-secret",
-            telegram_webhook_secret="webhook-secret",
-            shortcut_chat_id=123,
         )
         self.client_context = TestClient(create_app(self.runtime))
         self.client = self.client_context.__enter__()
@@ -73,6 +62,31 @@ class ApiTests(unittest.TestCase):
         response = self.client.get("/healthz")
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json(), {"status": "ok"})
+
+    def test_runtime_initializes_without_retired_transport_configuration(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir, patch.dict(
+            os.environ,
+            {
+                "DB_PATH": str(Path(temp_dir) / "places.db"),
+                "WORKDIR": str(Path(temp_dir) / "downloads"),
+                "INGEST_API_TOKEN": "api-secret",
+            },
+            clear=True,
+        ):
+            runtime = build_runtime()
+
+        self.assertEqual(runtime.ingest_api_token, "api-secret")
+
+    def test_openapi_contract_excludes_retired_ingest_fields(self) -> None:
+        schema = self.client.get("/openapi.json").json()
+        components = schema["components"]["schemas"]
+
+        for model in ("IngestRequest", "ShortcutIngestRequest", "IngestResponse"):
+            properties = components[model]["properties"]
+            self.assertNotIn("user_prompt", properties)
+            self.assertNotIn("delivery", properties)
+            self.assertNotIn("delivery_status", properties)
+        self.assertNotIn("/webhook", schema["paths"])
 
     def test_ingest_requires_bearer_token(self) -> None:
         response = self.client.post(
@@ -192,7 +206,6 @@ class ApiTests(unittest.TestCase):
             {
                 "id": 12,
                 "source_url": "https://youtu.be/test",
-                "user_prompt": None,
                 "source_platform": "youtube",
                 "creator": None,
                 "caption": None,
@@ -414,11 +427,23 @@ class ApiTests(unittest.TestCase):
         )
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["item_id"], 12)
-        self.assertEqual(response.json()["delivery_status"], "not_requested")
-        self.service.ingest.assert_called_once_with(
-            "https://youtu.be/test",
-            None,
-        )
+        self.assertNotIn("delivery_status", response.json())
+        self.assertNotIn("user_prompt", response.json())
+        self.service.ingest.assert_called_once_with("https://youtu.be/test")
+
+    def test_ingest_rejects_removed_prompt_and_delivery_fields(self) -> None:
+        for field, value in (
+            ("delivery", "response_only"),
+            ("user_prompt", "Focus on Brooklyn"),
+        ):
+            with self.subTest(field=field):
+                response = self.client.post(
+                    "/api/v1/ingests",
+                    headers={"Authorization": "Bearer api-secret"},
+                    json={"source_url": "https://youtu.be/test", field: value},
+                )
+                self.assertEqual(response.status_code, 422)
+        self.service.ingest.assert_not_called()
 
     def test_shortcut_adapter_decodes_url_into_shared_ingest_flow(self) -> None:
         source_url = "https://www.instagram.com/reel/test/"
@@ -427,14 +452,26 @@ class ApiTests(unittest.TestCase):
         response = self.client.post(
             "/api/v1/shortcut/ingests",
             headers={"Authorization": "Bearer api-secret"},
-            json={
-                "source_url_base64": encoded_url,
-                "delivery": "telegram",
-            },
+            json={"source_url_base64": encoded_url},
         )
 
         self.assertEqual(response.status_code, 200)
-        self.service.ingest.assert_called_once_with(source_url, None)
+        self.service.ingest.assert_called_once_with(source_url)
+
+    def test_shortcut_adapter_rejects_removed_prompt_and_delivery_fields(self) -> None:
+        encoded_url = base64.b64encode(b"https://youtu.be/test").decode()
+        for field, value in (
+            ("delivery", "response_only"),
+            ("user_prompt", "Focus on Brooklyn"),
+        ):
+            with self.subTest(field=field):
+                response = self.client.post(
+                    "/api/v1/shortcut/ingests",
+                    headers={"Authorization": "Bearer api-secret"},
+                    json={"source_url_base64": encoded_url, field: value},
+                )
+                self.assertEqual(response.status_code, 422)
+        self.service.ingest.assert_not_called()
 
     def test_shortcut_adapter_rejects_invalid_base64(self) -> None:
         response = self.client.post(
@@ -535,54 +572,9 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertTrue(response.headers["x-request-id"])
 
-    def test_telegram_delivery_reports_result(self) -> None:
-        notification = SimpleNamespace(edit_text=AsyncMock())
-        self.telegram.bot.send_message.return_value = notification
-
-        response = self.client.post(
-            "/api/v1/ingests",
-            headers={"Authorization": "Bearer api-secret"},
-            json={
-                "source_url": "https://youtu.be/test",
-                "delivery": "telegram",
-            },
-        )
-
-        self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.json()["delivery_status"], "sent")
-        self.telegram.bot.send_message.assert_awaited_once()
-        notification.edit_text.assert_awaited_once()
-
-    def test_delivery_failure_does_not_fail_saved_ingest(self) -> None:
-        self.telegram.bot.send_message.side_effect = RuntimeError("Telegram down")
-
-        response = self.client.post(
-            "/api/v1/ingests",
-            headers={"Authorization": "Bearer api-secret"},
-            json={
-                "source_url": "https://youtu.be/test",
-                "delivery": "telegram",
-            },
-        )
-
-        self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.json()["item_id"], 12)
-        self.assertEqual(response.json()["delivery_status"], "failed")
-
-    def test_webhook_rejects_missing_telegram_secret(self) -> None:
+    def test_obsolete_webhook_is_not_registered(self) -> None:
         response = self.client.post("/webhook", json={"update_id": 1})
-        self.assertEqual(response.status_code, 403)
-        self.assertTrue(self.telegram.update_queue.empty())
-
-    def test_webhook_queues_verified_telegram_update(self) -> None:
-        response = self.client.post(
-            "/webhook",
-            headers={"X-Telegram-Bot-Api-Secret-Token": "webhook-secret"},
-            json={"update_id": 1},
-        )
-        self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.json(), {"ok": True})
-        self.assertEqual(self.telegram.update_queue.qsize(), 1)
+        self.assertEqual(response.status_code, 404)
 
 
 if __name__ == "__main__":

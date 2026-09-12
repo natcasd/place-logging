@@ -117,7 +117,6 @@ class IngestService:
     def ingest(
         self,
         source_url: str,
-        user_prompt: str | None = None,
     ) -> dict[str, Any]:
         """Process and persist one source, returning the canonical result."""
         source_url = _resolve_shared_source_url(source_url)
@@ -125,12 +124,11 @@ class IngestService:
         with self._source_locks_guard:
             source_lock = self._source_locks.setdefault(identity, Lock())
         with source_lock:
-            return self._ingest_once(source_url, user_prompt)
+            return self._ingest_once(source_url)
 
     def _ingest_once(
         self,
         source_url: str,
-        user_prompt: str | None,
     ) -> dict[str, Any]:
         existing = find_processed_source(self.db_path, source_url)
         if existing is not None:
@@ -139,7 +137,6 @@ class IngestService:
         run_id = start_ingest_run(
             self.db_path,
             source_url,
-            user_prompt,
             detect_source_platform(source_url),
         )
         current_stage = "accepted"
@@ -159,7 +156,6 @@ class IngestService:
         try:
             result = process_ingest(
                 source_url,
-                user_prompt,
                 self.workdir,
                 progress=report,
             )

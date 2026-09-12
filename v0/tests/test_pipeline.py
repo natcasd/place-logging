@@ -165,7 +165,6 @@ class YouTubeExtractionTests(unittest.TestCase):
 
         places = pipeline.extract_youtube_url(
             "https://www.youtube.com/watch?v=abc",
-            "Focus on Brooklyn",
         )
 
         self.assertEqual(places[0]["extracted_name"], "Mission Sandwich Social")
@@ -182,7 +181,6 @@ class YouTubeExtractionTests(unittest.TestCase):
                 "uri": "https://www.youtube.com/watch?v=abc",
             },
         )
-        self.assertIn("Focus on Brooklyn", call["input"][0]["text"])
         self.assertFalse(call["store"])
 
 
@@ -1107,7 +1105,6 @@ class ProcessIngestTests(unittest.TestCase):
         with patch("pipeline.fetch") as mock_fetch:
             result = pipeline.process_ingest(
                 "https://youtu.be/abc",
-                None,
                 Path("/unused"),
                 progress=stages.append,
             )
@@ -1149,7 +1146,6 @@ class ProcessIngestTests(unittest.TestCase):
 
             result = pipeline.process_ingest(
                 "https://www.tiktok.com/@user/video/123",
-                None,
                 Path(temp_dir),
                 progress=stages.append,
             )
@@ -1216,7 +1212,6 @@ class ProcessIngestTests(unittest.TestCase):
 
             pipeline.process_ingest(
                 "https://www.instagram.com/reel/abc/",
-                None,
                 Path(temp_dir),
                 progress=stages.append,
             )
@@ -1257,7 +1252,6 @@ class ProcessIngestTests(unittest.TestCase):
 
             result = pipeline.process_ingest(
                 "https://www.instagram.com/reel/abc/",
-                None,
                 Path(temp_dir),
             )
 
@@ -1295,7 +1289,6 @@ class ProcessIngestTests(unittest.TestCase):
             with self.assertLogs("pipeline", level="ERROR"):
                 result = pipeline.process_ingest(
                     "https://www.instagram.com/reel/abc/",
-                    None,
                     Path(temp_dir),
                 )
 

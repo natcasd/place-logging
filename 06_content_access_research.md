@@ -2,6 +2,9 @@
 
 *Captured 2026-04-17. Revised after digging into how shipped competitors actually work.*
 
+> Historical research note. Product-flow alternatives below are retained as
+> context and do not describe currently supported behavior.
+
 ## TL;DR (corrected)
 
 There **are** working programmatic paths to Reel / TikTok / YouTube content, and the story is platform-specific:
