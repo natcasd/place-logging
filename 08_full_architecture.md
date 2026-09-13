@@ -1,6 +1,8 @@
-# Full Architecture — Current View
+# Full Architecture — Historical April 2026 View
 
-*Captured 2026-04-17. This is the consolidated, current picture of how we want v0 to work. Supersedes the earlier sketch in doc 05 where they disagree. Detail on specific components lives in docs 05–07.*
+*Captured 2026-04-17. This design exploration predates and is superseded by the
+native iOS product documented in `ios/README.md` and the HTTP service documented
+in `v0/README.md`. References below to earlier transports are archival only.*
 
 ## End-to-end diagram
 

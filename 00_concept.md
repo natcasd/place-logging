@@ -2,6 +2,9 @@
 
 *Captured 2026-04-17*
 
+> Historical design note. This predates the native iOS product and is not a
+> description of currently supported behavior.
+
 ## The problem
 
 Nate keeps a running mental (and Google My Maps) list of restaurants / things to do, sourced mostly from **YouTube, Instagram Reels, and friends**. Today the workflow is:

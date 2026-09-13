@@ -42,7 +42,6 @@ class StoreTests(unittest.TestCase):
                 db_path,
                 {
                     "source_url": "https://www.instagram.com/reel/test/",
-                    "user_prompt": None,
                     "metadata": {},
                     "places_extracted": [],
                     "resolved_places": [
@@ -149,6 +148,97 @@ class StoreTests(unittest.TestCase):
                 con.close()
             self.assertEqual(legacy, ("legacy", "Unknown"))
             self.assertEqual(len(list(Path(temp_dir).glob("*.pre-entries-*.bak"))), 1)
+
+    def test_init_db_removes_user_prompt_columns_without_losing_data(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            db_path = root / "places.db"
+            init_db(db_path)
+            item_id = save_ingest(
+                db_path,
+                {
+                    "source_url": "https://www.instagram.com/reel/legacy-prompt/",
+                    "metadata": {"source_platform": "instagram"},
+                    "resolved_entries": [
+                        self.resolved_place("Legacy Restaurant", "places/legacy-prompt")
+                    ],
+                },
+            )
+            run_id = start_ingest_run(
+                db_path,
+                "https://www.instagram.com/reel/processing/",
+                "instagram",
+            )
+            con = sqlite3.connect(db_path)
+            con.execute("ALTER TABLE items ADD COLUMN user_prompt TEXT")
+            con.execute("ALTER TABLE ingest_runs ADD COLUMN user_prompt TEXT")
+            con.execute(
+                "UPDATE items SET user_prompt = 'legacy source prompt' WHERE id = ?",
+                (item_id,),
+            )
+            con.execute(
+                "UPDATE ingest_runs SET user_prompt = 'legacy run prompt' WHERE id = ?",
+                (run_id,),
+            )
+            con.commit()
+            con.close()
+
+            init_db(db_path)
+            init_db(db_path)
+
+            con = sqlite3.connect(db_path)
+            try:
+                item_columns = {
+                    row[1] for row in con.execute("PRAGMA table_info(items)").fetchall()
+                }
+                run_columns = {
+                    row[1]
+                    for row in con.execute("PRAGMA table_info(ingest_runs)").fetchall()
+                }
+                source_url = con.execute(
+                    "SELECT source_url FROM items WHERE id = ?", (item_id,)
+                ).fetchone()[0]
+                run = con.execute(
+                    "SELECT source_url, source_platform, status FROM ingest_runs WHERE id = ?",
+                    (run_id,),
+                ).fetchone()
+                foreign_key_errors = con.execute("PRAGMA foreign_key_check").fetchall()
+            finally:
+                con.close()
+
+            self.assertNotIn("user_prompt", item_columns)
+            self.assertNotIn("user_prompt", run_columns)
+            self.assertEqual(
+                source_url,
+                "https://www.instagram.com/reel/legacy-prompt/",
+            )
+            self.assertEqual(
+                run,
+                (
+                    "https://www.instagram.com/reel/processing/",
+                    "instagram",
+                    "processing",
+                ),
+            )
+            self.assertEqual(foreign_key_errors, [])
+            backup_paths = list(root.glob("*.pre-user-prompt-removal-*.bak"))
+            self.assertEqual(len(backup_paths), 1)
+            backup = sqlite3.connect(backup_paths[0])
+            try:
+                self.assertEqual(
+                    backup.execute(
+                        "SELECT user_prompt FROM items WHERE id = ?", (item_id,)
+                    ).fetchone()[0],
+                    "legacy source prompt",
+                )
+                self.assertEqual(
+                    backup.execute(
+                        "SELECT user_prompt FROM ingest_runs WHERE id = ?", (run_id,)
+                    ).fetchone()[0],
+                    "legacy run prompt",
+                )
+            finally:
+                backup.close()
 
     def test_init_db_renames_existing_entry_model_without_changing_ids(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -571,7 +661,6 @@ class StoreTests(unittest.TestCase):
             run_id = start_ingest_run(
                 db_path,
                 "https://www.instagram.com/reel/fail/",
-                None,
                 "instagram",
             )
             finish_ingest_run(
@@ -594,7 +683,7 @@ class StoreTests(unittest.TestCase):
             db_path = Path(temp_dir) / "places.db"
             init_db(db_path)
             source_url = "https://www.instagram.com/reel/review/"
-            run_id = start_ingest_run(db_path, source_url, None, "instagram")
+            run_id = start_ingest_run(db_path, source_url, "instagram")
             candidates = [
                 {
                     "id": "places/penny-east-village",
@@ -668,7 +757,6 @@ class StoreTests(unittest.TestCase):
             run_id = start_ingest_run(
                 db_path,
                 "https://www.instagram.com/reel/review/",
-                None,
                 "instagram",
             )
             item_id = save_ingest(
@@ -746,7 +834,7 @@ class StoreTests(unittest.TestCase):
             db_path = Path(temp_dir) / "places.db"
             init_db(db_path)
             source_url = "https://www.instagram.com/reel/delete-review/"
-            run_id = start_ingest_run(db_path, source_url, None, "instagram")
+            run_id = start_ingest_run(db_path, source_url, "instagram")
             item_id = save_ingest(
                 db_path,
                 {

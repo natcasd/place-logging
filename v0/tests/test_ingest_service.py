@@ -48,7 +48,6 @@ class IngestServiceTests(unittest.TestCase):
         mock_resolve_url.side_effect = [canonical, canonical]
         mock_process.return_value = {
             "source_url": canonical,
-            "user_prompt": None,
             "metadata": {"source_platform": "tiktok", "extraction_status": "complete"},
             "places_extracted": [],
             "resolved_places": [],
@@ -72,7 +71,6 @@ class IngestServiceTests(unittest.TestCase):
     ) -> None:
         processed = {
             "source_url": "https://youtu.be/test",
-            "user_prompt": None,
             "metadata": {"source_platform": "youtube"},
             "places_extracted": [],
             "resolved_places": [
@@ -127,7 +125,6 @@ class IngestServiceTests(unittest.TestCase):
     def test_same_processed_post_is_not_processed_or_saved_again(self, mock_process) -> None:
         processed = {
             "source_url": "https://www.instagram.com/reel/duplicate/",
-            "user_prompt": None,
             "metadata": {"source_platform": "instagram", "extraction_status": "complete"},
             "places_extracted": [],
             "resolved_places": [],
@@ -154,7 +151,6 @@ class IngestServiceTests(unittest.TestCase):
     def test_retries_source_whose_saved_extraction_failed(self, mock_process) -> None:
         failed = {
             "source_url": "https://www.instagram.com/reel/retry/",
-            "user_prompt": None,
             "metadata": {"source_platform": "instagram", "extraction_status": "failed"},
             "places_extracted": [],
             "resolved_places": [],

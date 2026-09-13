@@ -33,7 +33,6 @@ from store import list_entry_types
 
 request = json.loads(base64.b64decode(sys.argv[1]).decode())
 source_url = request["source_url"]
-user_prompt = request.get("user_prompt")
 candidate_prompt = request.get("candidate_prompt")
 if candidate_prompt is not None:
     pipeline.EXTRACTOR_PROMPT = candidate_prompt
@@ -44,7 +43,7 @@ existing_types = list_entry_types(Path(os.environ.get("DB_PATH", "/data/places.d
 cleanup_dir = None
 try:
     if platform == "youtube":
-        bundle = extract_youtube_bundle(source_url, user_prompt, existing_types)
+        bundle = extract_youtube_bundle(source_url, existing_types)
         metadata = {"source_platform": "youtube", "webpage_url": source_url}
         model = os.environ.get(
             "GEMINI_YOUTUBE_MODEL",
@@ -60,7 +59,6 @@ try:
         bundle = extract_bundle(
             fetched.media_paths,
             metadata,
-            user_prompt,
             existing_types,
         )
         model = os.environ.get("GEMINI_MODEL", "gemini-3.1-flash-lite")
@@ -68,7 +66,6 @@ try:
         "source_url": source_url,
         "source_platform": platform,
         "model": model,
-        "user_prompt": user_prompt,
         "prompt_source": request.get("prompt_source", "deployed"),
         "prompt_sha256": hashlib.sha256(
             pipeline.EXTRACTOR_PROMPT.encode()
@@ -87,7 +84,6 @@ finally:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--source-url", required=True)
-    parser.add_argument("--user-prompt")
     parser.add_argument(
         "--candidate-pipeline",
         type=Path,
@@ -143,7 +139,7 @@ def remote_command(request: dict[str, Any]) -> str:
 
 def main() -> int:
     args = build_parser().parse_args()
-    request = {"source_url": args.source_url, "user_prompt": args.user_prompt}
+    request = {"source_url": args.source_url}
     if args.candidate_pipeline:
         try:
             candidate_prompt = load_extractor_prompt(args.candidate_pipeline)

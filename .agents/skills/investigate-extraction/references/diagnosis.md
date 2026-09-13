@@ -8,7 +8,7 @@ Name the selected `entry_id`, `source_connection_id`, `item_id`, `ingest_id`, so
 
 Trace only the stages established by stored data:
 
-1. source metadata and user prompt;
+1. source metadata;
 2. stored model output;
 3. normalized source occurrence;
 4. resolution query, candidates, and selected location;

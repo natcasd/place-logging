@@ -1,6 +1,8 @@
 # place_logging — ideation log
 
-Ideation workspace for a personal place-logging app idea. Docs are numbered in rough reading order.
+Ideation workspace for a personal place-logging app idea. The numbered documents
+are an archival design record and intentionally preserve superseded alternatives.
+For supported behavior, use `v0/README.md` and `ios/README.md`.
 
 The working product lives in two directories: `v0/` contains the Fly-hosted
 API and processing pipeline, while `ios/` contains the native SwiftUI app and
@@ -14,8 +16,8 @@ share extension.
 - [05_architecture_sketch.md](05_architecture_sketch.md) — ingest → classify → extract → store → view spine, with a ruthlessly scoped v0
 - [06_content_access_research.md](06_content_access_research.md) — what's actually available for fetching Reels/TikToks (no sanctioned API; paths grounded)
 - [07_place_resolution.md](07_place_resolution.md) — the extracted-name → physical-restaurant step (Google Places Text Search, locationBias, multi-place-per-Reel schema)
-- [**08_full_architecture.md**](08_full_architecture.md) — **current consolidated architecture.** Read this first for the complete v0 picture.
-- [09_generalized_ingest.md](09_generalized_ingest.md) — generalized ingest (tweets, articles, pure text, user_prompt augmentation); notes what stays behind an expand-later seam in v0
+- [08_full_architecture.md](08_full_architecture.md) — historical April 2026 architecture exploration
+- [09_generalized_ingest.md](09_generalized_ingest.md) — historical generalized-ingest exploration
 
 ## Ingest API boundaries
 
