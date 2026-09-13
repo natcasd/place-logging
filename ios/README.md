@@ -13,8 +13,7 @@ The current free, locally provisioned build cannot use APNs. Because completion
 notifications are scheduled by the share extension, tapping them does not open
 the containing app. When the app moves to a paid Apple Developer Program team,
 migrate these to APNs notifications sent by the backend so taps can launch the
-app and navigate to the logged result. Native shares use response-only API
-delivery, so they do not also send Telegram progress or result messages.
+app and navigate to the logged result.
 
 The map shows resolved places as selectable pins. Pins use the saved place
 type's icon (for example, a fork and knife for restaurants or a tree for
