@@ -1192,7 +1192,7 @@ private struct PlacesMap: View {
       )
     } else {
       MapReader { proxy in
-        Map(position: $cameraPosition, selection: $selectedGroupID) {
+        Map(position: $cameraPosition, selection: mapSelectionBinding) {
           UserAnnotation()
 
           ForEach(groups) { group in
@@ -1452,7 +1452,7 @@ private struct PlacesMap: View {
   }
 
   private func showPlaceDetail(_ group: MappedPlaceGroup) {
-    selectedGroupID = group.id
+    setSelectedGroupIDWithoutAnimation(group.id)
     preferredDetailEntryID = nil
     detailGroup = group
   }
@@ -1487,8 +1487,23 @@ private struct PlacesMap: View {
     )
   }
 
+  private var mapSelectionBinding: Binding<String?> {
+    Binding(
+      get: { selectedGroupID },
+      set: { setSelectedGroupIDWithoutAnimation($0) }
+    )
+  }
+
+  private func setSelectedGroupIDWithoutAnimation(_ groupID: String?) {
+    var transaction = Transaction(animation: nil)
+    transaction.disablesAnimations = true
+    withTransaction(transaction) {
+      selectedGroupID = groupID
+    }
+  }
+
   private func clearSelectedPlace() {
-    selectedGroupID = nil
+    setSelectedGroupIDWithoutAnimation(nil)
     dismissSelectedPlace()
   }
 
