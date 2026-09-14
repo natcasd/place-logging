@@ -11,6 +11,8 @@ from store import (
     confirm_activity_location,
     delete_entry,
     delete_entries,
+    delete_failed_ingest_run,
+    due_retry_ids,
     init_db,
     list_ingest_runs,
     list_sources,
@@ -156,6 +158,56 @@ class StoreTests(unittest.TestCase):
             self.assertEqual(run["status"], "retry_scheduled")
             self.assertEqual(run["failure_kind"], "interrupted")
             self.assertIsNotNone(run["next_retry_at"])
+
+    def test_deletes_failed_activity_and_cancels_its_scheduled_retry(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            db_path = Path(temp_dir) / "places.db"
+            init_db(db_path)
+            run_id = start_ingest_run(
+                db_path,
+                "https://www.instagram.com/reel/delete-failure/",
+                "instagram",
+            )
+            record_ingest_failure(
+                db_path,
+                run_id,
+                stage="fetching",
+                error=RuntimeError("HTTP Error 429"),
+                failure_kind="media_fetch_failed",
+                user_message="Instagram media could not be downloaded.",
+                retryable=True,
+                retry_delay_seconds=60,
+            )
+
+            deleted = delete_failed_ingest_run(db_path, run_id)
+
+            con = sqlite3.connect(db_path)
+            try:
+                event_count = con.execute(
+                    "SELECT COUNT(*) FROM ingest_events WHERE ingest_run_id = ?",
+                    (run_id,),
+                ).fetchone()[0]
+            finally:
+                con.close()
+            self.assertTrue(deleted)
+            self.assertIsNone(get_ingest_run(db_path, run_id))
+            self.assertEqual(due_retry_ids(db_path), [])
+            self.assertEqual(event_count, 0)
+
+    def test_does_not_delete_processing_activity(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            db_path = Path(temp_dir) / "places.db"
+            init_db(db_path)
+            run_id = start_ingest_run(
+                db_path,
+                "https://youtu.be/still-processing",
+                "youtube",
+            )
+
+            with self.assertRaisesRegex(ValueError, "Only failed or scheduled"):
+                delete_failed_ingest_run(db_path, run_id)
+
+            self.assertIsNotNone(get_ingest_run(db_path, run_id))
 
     def test_lists_saved_recommendations_newest_first(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

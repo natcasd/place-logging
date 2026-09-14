@@ -77,6 +77,11 @@ final class PlacesModel: ObservableObject {
     places = try await loadedEntries
     activity = try await loadedActivity
   }
+
+  func deleteFailedActivity(ingestID: Int) async throws {
+    try await api.deleteFailedActivity(ingestID: ingestID)
+    activity.removeAll { $0.id == ingestID }
+  }
 }
 
 struct PlacesView: View {
@@ -204,6 +209,9 @@ struct PlacesView: View {
           activity: run,
           retry: {
             try await model.retryActivity(ingestID: ingestID)
+          },
+          deleteActivity: {
+            try await model.deleteFailedActivity(ingestID: ingestID)
           },
           deleteEntry: { entryID in
             try await model.deleteActivityEntry(id: entryID)
@@ -625,11 +633,14 @@ private struct ActivityDetail: View {
   @Environment(\.dismiss) private var dismiss
   let activity: IngestActivity
   let retry: () async throws -> Void
+  let deleteActivity: () async throws -> Void
   let deleteEntry: (Int) async throws -> Void
   let confirmLocation: (Int, String) async throws -> Void
   @State private var pendingDeletion: SavedEntryOutcome?
   @State private var deletingEntryID: Int?
   @State private var isRetrying = false
+  @State private var isDeletingActivity = false
+  @State private var showsActivityDeleteConfirmation = false
   @State private var actionError: String?
 
   private var sourceDescription: String? {
@@ -710,7 +721,23 @@ private struct ActivityDetail: View {
                     .frame(maxWidth: .infinity)
                   }
                   .buttonStyle(.borderedProminent)
-                  .disabled(isRetrying)
+                  .disabled(isRetrying || isDeletingActivity)
+
+                  Button(role: .destructive) {
+                    showsActivityDeleteConfirmation = true
+                  } label: {
+                    HStack {
+                      if isDeletingActivity {
+                        ProgressView()
+                      } else {
+                        Image(systemName: "trash")
+                      }
+                      Text(isDeletingActivity ? "Deleting…" : "Delete from Activity")
+                    }
+                    .frame(maxWidth: .infinity)
+                  }
+                  .buttonStyle(.bordered)
+                  .disabled(isRetrying || isDeletingActivity)
                 }
 
                 if !activity.results.isEmpty {
@@ -795,8 +822,23 @@ private struct ActivityDetail: View {
         Text(activityDeleteMessage(result))
       }
     }
+    .confirmationDialog(
+      "Delete Failed Save?",
+      isPresented: $showsActivityDeleteConfirmation,
+      titleVisibility: .visible
+    ) {
+      Button("Delete from Activity", role: .destructive) {
+        Task { await performActivityDeletion() }
+      }
+      Button("Cancel", role: .cancel) {}
+    } message: {
+      Text(
+        "This removes the failure and its retry history, and cancels any "
+          + "scheduled retry. No recommendations were saved."
+      )
+    }
     .alert(
-      "Couldn’t Complete Review",
+      "Couldn’t Complete Action",
       isPresented: Binding(
         get: { actionError != nil },
         set: { if !$0 { actionError = nil } }
@@ -823,6 +865,17 @@ private struct ActivityDetail: View {
     defer { isRetrying = false }
     do {
       try await retry()
+    } catch {
+      actionError = error.localizedDescription
+    }
+  }
+
+  private func performActivityDeletion() async {
+    isDeletingActivity = true
+    defer { isDeletingActivity = false }
+    do {
+      try await deleteActivity()
+      dismiss()
     } catch {
       actionError = error.localizedDescription
     }

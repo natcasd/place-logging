@@ -65,6 +65,13 @@ struct PlaceLoggerAPI: Sendable {
     _ = try await perform(request)
   }
 
+  func deleteFailedActivity(ingestID: Int) async throws {
+    let url = APIConfig.baseURL.appending(path: "/api/v1/activity/\(ingestID)")
+    var request = URLRequest(url: url)
+    request.httpMethod = "DELETE"
+    _ = try await perform(request)
+  }
+
   func ingest(sourceURL: URL) async throws -> IngestResponse {
     let url = APIConfig.baseURL.appending(path: "/api/v1/ingests")
     var request = URLRequest(url: url)
