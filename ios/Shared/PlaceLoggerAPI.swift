@@ -57,6 +57,14 @@ struct PlaceLoggerAPI: Sendable {
     _ = try await perform(request)
   }
 
+  func retryActivity(ingestID: Int) async throws {
+    let url = APIConfig.baseURL.appending(path: "/api/v1/activity/\(ingestID)/retry")
+    var request = URLRequest(url: url)
+    request.httpMethod = "POST"
+    request.timeoutInterval = 180
+    _ = try await perform(request)
+  }
+
   func ingest(sourceURL: URL) async throws -> IngestResponse {
     let url = APIConfig.baseURL.appending(path: "/api/v1/ingests")
     var request = URLRequest(url: url)

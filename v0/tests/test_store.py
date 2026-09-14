@@ -20,6 +20,10 @@ from store import (
     saved_entry_outcomes,
     start_ingest_run,
     finish_ingest_run,
+    get_ingest_run,
+    prepare_ingest_retry,
+    record_ingest_failure,
+    recover_interrupted_ingests,
 )
 
 
@@ -106,6 +110,52 @@ class StoreTests(unittest.TestCase):
             self.assertNotIn("places", tables)
             self.assertNotIn("legacy_place_id", mention_columns)
             self.assertEqual(foreign_key_errors, [])
+
+    def test_ingest_retry_state_is_durable_and_reuses_one_run(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            db_path = Path(temp_dir) / "places.db"
+            init_db(db_path)
+            run_id = start_ingest_run(
+                db_path,
+                "https://www.instagram.com/reel/retry/",
+                "instagram",
+            )
+
+            status = record_ingest_failure(
+                db_path,
+                run_id,
+                stage="fetching",
+                error=RuntimeError("HTTP Error 429; Retry-After: 10"),
+                failure_kind="media_fetch_failed",
+                user_message="Instagram media could not be downloaded.",
+                retryable=True,
+                retry_delay_seconds=10,
+            )
+            claimed = prepare_ingest_retry(db_path, run_id, automatic=False)
+
+            self.assertEqual(status, "retry_scheduled")
+            self.assertIsNotNone(claimed)
+            self.assertEqual(claimed["attempt_count"], 2)
+            self.assertEqual(get_ingest_run(db_path, run_id)["status"], "processing")
+            self.assertEqual(len(list_ingest_runs(db_path)), 1)
+
+    def test_recovers_interrupted_processing_after_restart(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            db_path = Path(temp_dir) / "places.db"
+            init_db(db_path)
+            run_id = start_ingest_run(
+                db_path,
+                "https://youtu.be/interrupted",
+                "youtube",
+            )
+
+            recovered = recover_interrupted_ingests(db_path)
+            run = get_ingest_run(db_path, run_id)
+
+            self.assertEqual(recovered, 1)
+            self.assertEqual(run["status"], "retry_scheduled")
+            self.assertEqual(run["failure_kind"], "interrupted")
+            self.assertIsNotNone(run["next_retry_at"])
 
     def test_lists_saved_recommendations_newest_first(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

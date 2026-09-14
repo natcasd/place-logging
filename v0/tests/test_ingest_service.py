@@ -2,11 +2,15 @@ from __future__ import annotations
 
 import unittest
 import tempfile
+import sqlite3
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+import requests
+
 import ingest_service
 from ingest_service import IngestService
+from retry_policy import AnalysisFailure
 from store import list_ingest_runs
 
 
@@ -113,13 +117,56 @@ class IngestServiceTests(unittest.TestCase):
             service = IngestService(db_path, Path(temp_dir) / "downloads")
             service.initialize()
 
-            with self.assertRaisesRegex(RuntimeError, "boom"):
-                service.ingest("https://youtu.be/test")
+            result = service.ingest("https://youtu.be/test")
 
             activity = list_ingest_runs(db_path)
             self.assertEqual(activity[0]["status"], "failed")
             self.assertEqual(activity[0]["stage"], "accepted")
-            self.assertEqual(activity[0]["error_message"], "boom")
+            self.assertEqual(activity[0]["failure_kind"], "processing_failed")
+            self.assertEqual(result["status"], "failed")
+            self.assertIsNone(result["item_id"])
+
+    @patch("ingest_service.process_ingest")
+    def test_manual_retry_reuses_activity_and_creates_only_successful_source(
+        self,
+        mock_process: MagicMock,
+    ) -> None:
+        completed = {
+            "source_url": "https://www.instagram.com/reel/retry-once/",
+            "metadata": {"source_platform": "instagram", "extraction_status": "complete"},
+            "places_extracted": [],
+            "resolved_places": [],
+        }
+
+        mock_process.side_effect = [
+            AnalysisFailure("instagram", requests.ConnectionError("connection reset")),
+            completed,
+        ]
+        with tempfile.TemporaryDirectory() as temp_dir:
+            db_path = Path(temp_dir) / "test.db"
+            service = IngestService(db_path, Path(temp_dir) / "downloads")
+            service.initialize()
+
+            first = service.ingest(completed["source_url"])
+            retried = service.retry_ingest(first["ingest_id"])
+
+            con = sqlite3.connect(db_path)
+            try:
+                capture_count = con.execute("SELECT COUNT(*) FROM captures").fetchone()[0]
+                run_count = con.execute("SELECT COUNT(*) FROM ingest_runs").fetchone()[0]
+            finally:
+                con.close()
+            activity = list_ingest_runs(db_path)
+
+        self.assertEqual(first["status"], "retry_scheduled")
+        self.assertEqual(retried["status"], "partial")
+        self.assertEqual(retried["ingest_id"], first["ingest_id"])
+        self.assertEqual(run_count, 1)
+        self.assertEqual(capture_count, 1)
+        self.assertEqual(activity[0]["attempt_count"], 2)
+        self.assertTrue(
+            any("Manual retry started" in event["message"] for event in activity[0]["events"])
+        )
 
     @patch("ingest_service.process_ingest")
     def test_same_processed_post_is_not_processed_or_saved_again(self, mock_process) -> None:
@@ -148,7 +195,10 @@ class IngestServiceTests(unittest.TestCase):
             self.assertEqual(len(list_ingest_runs(db_path)), 1)
 
     @patch("ingest_service.process_ingest")
-    def test_retries_source_whose_saved_extraction_failed(self, mock_process) -> None:
+    def test_legacy_failed_extraction_is_retried_without_saving_a_failed_source(
+        self,
+        mock_process,
+    ) -> None:
         failed = {
             "source_url": "https://www.instagram.com/reel/retry/",
             "metadata": {"source_platform": "instagram", "extraction_status": "failed"},
@@ -168,11 +218,21 @@ class IngestServiceTests(unittest.TestCase):
             first = service.ingest(failed["source_url"])
             second = service.ingest(failed["source_url"])
 
+            con = sqlite3.connect(db_path)
+            try:
+                capture_count = con.execute("SELECT COUNT(*) FROM captures").fetchone()[0]
+            finally:
+                con.close()
+
             self.assertFalse(first["already_logged"])
             self.assertFalse(second["already_logged"])
-            self.assertNotEqual(second["item_id"], first["item_id"])
+            self.assertEqual(first["status"], "retry_scheduled")
+            self.assertEqual(second["status"], "partial")
+            self.assertEqual(second["ingest_id"], first["ingest_id"])
+            self.assertIsNone(first["item_id"])
             self.assertEqual(mock_process.call_count, 2)
-            self.assertEqual(len(list_ingest_runs(db_path)), 2)
+            self.assertEqual(len(list_ingest_runs(db_path)), 1)
+            self.assertEqual(capture_count, 1)
 
     @patch(
         "ingest_service.delete_entry",

@@ -27,12 +27,17 @@ from google import genai
 from google.genai import types
 
 from entry_types import ENTRY_TYPES, normalized_type_label, type_name_guidance
+from retry_policy import (
+    AnalysisFailure,
+    classify_failure,
+    retry_delay_seconds,
+)
 
 log = logging.getLogger(__name__)
 
 GEMINI_MAX_ATTEMPTS = 3
 GEMINI_BACKOFF_SECONDS = 3.0
-TRANSIENT_GEMINI_STATUS_CODES = {429, 500, 502, 503, 504}
+RetryProgress = Callable[[str, str, float, int, int], None]
 
 
 # ---------- Gemini client (lazy) ----------
@@ -63,19 +68,27 @@ def _gemini_status_code(exc: Exception) -> int | None:
 def _call_gemini_with_retry(
     operation: Callable[[], Any],
     operation_name: str,
+    on_retry: RetryProgress | None = None,
 ) -> Any:
-    """Retry only temporary Gemini capacity/service failures with backoff."""
+    """Retry temporary Gemini failures and honor provider Retry-After guidance."""
     for attempt in range(1, GEMINI_MAX_ATTEMPTS + 1):
         try:
             return operation()
         except Exception as exc:
             status_code = _gemini_status_code(exc)
-            if (
-                status_code not in TRANSIENT_GEMINI_STATUS_CODES
-                or attempt == GEMINI_MAX_ATTEMPTS
-            ):
+            decision = classify_failure(
+                exc,
+                stage="extracting",
+                platform="gemini",
+            )
+            if not decision.retryable or attempt == GEMINI_MAX_ATTEMPTS:
                 raise
-            delay = GEMINI_BACKOFF_SECONDS * (2 ** (attempt - 1))
+            delay = retry_delay_seconds(
+                exc,
+                attempt=attempt,
+                base_seconds=GEMINI_BACKOFF_SECONDS,
+                maximum_seconds=60.0,
+            )
             log.warning(
                 "Gemini %s temporarily unavailable status=%s attempt=%d/%d; "
                 "retrying in %.1fs",
@@ -85,6 +98,14 @@ def _call_gemini_with_retry(
                 GEMINI_MAX_ATTEMPTS,
                 delay,
             )
+            if on_retry:
+                on_retry(
+                    "extracting",
+                    f"Gemini analysis temporarily failed; retrying in {delay:g}s",
+                    delay,
+                    attempt + 1,
+                    GEMINI_MAX_ATTEMPTS,
+                )
             time.sleep(delay)
     raise AssertionError("unreachable")
 
@@ -465,24 +486,43 @@ def _tiktok_metadata(info: dict[str, Any], source_url: str) -> dict[str, Any]:
     }
 
 
-def _run_tiktok_yt_dlp(command: list[str], operation: str) -> subprocess.CompletedProcess[str]:
+def _run_tiktok_yt_dlp(
+    command: list[str],
+    operation: str,
+    on_retry: RetryProgress | None = None,
+) -> subprocess.CompletedProcess[str]:
     """Retry the small set of TikTok failures known to be transient."""
     for attempt in range(1, TIKTOK_FETCH_ATTEMPTS + 1):
         result = subprocess.run(command, capture_output=True, text=True, check=False)
         if result.returncode == 0:
             return result
-        message = (result.stderr or "").lower()
+        error = RuntimeError(result.stderr or f"TikTok {operation} failed")
+        message = str(error).lower()
         is_transient = any(fragment in message for fragment in TRANSIENT_TIKTOK_ERRORS)
         if not is_transient or attempt == TIKTOK_FETCH_ATTEMPTS:
             return result
+        delay = retry_delay_seconds(
+            error,
+            attempt=attempt,
+            base_seconds=TIKTOK_FETCH_RETRY_SECONDS,
+            maximum_seconds=60.0,
+        )
         log.warning(
             "TikTok %s failed transiently attempt=%d/%d; retrying in %.1fs",
             operation,
             attempt,
             TIKTOK_FETCH_ATTEMPTS,
-            TIKTOK_FETCH_RETRY_SECONDS,
+            delay,
         )
-        time.sleep(TIKTOK_FETCH_RETRY_SECONDS)
+        if on_retry:
+            on_retry(
+                "fetching",
+                f"TikTok {operation} temporarily failed; retrying in {delay:g}s",
+                delay,
+                attempt + 1,
+                TIKTOK_FETCH_ATTEMPTS,
+            )
+        time.sleep(delay)
     raise AssertionError("unreachable")
 
 
@@ -503,7 +543,11 @@ def _tiktok_fetch_error(operation: str, stderr: str) -> RuntimeError:
     return RuntimeError("TikTok could not be downloaded right now; please try again")
 
 
-def _fetch_tiktok(source_url: str, workdir: Path) -> MediaFetch:
+def _fetch_tiktok(
+    source_url: str,
+    workdir: Path,
+    on_retry: RetryProgress | None = None,
+) -> MediaFetch:
     """Download one public TikTok video and its extraction metadata."""
     workdir.mkdir(parents=True, exist_ok=True)
     cleanup_dir = Path(tempfile.mkdtemp(prefix="tiktok-", dir=workdir))
@@ -517,7 +561,7 @@ def _fetch_tiktok(source_url: str, workdir: Path) -> MediaFetch:
             "--dump-single-json",
             source_url,
         ]
-        probe = _run_tiktok_yt_dlp(probe_command, "metadata probe")
+        probe = _run_tiktok_yt_dlp(probe_command, "metadata probe", on_retry)
         if probe.returncode != 0:
             raise _tiktok_fetch_error("metadata fetch", probe.stderr)
         try:
@@ -542,7 +586,7 @@ def _fetch_tiktok(source_url: str, workdir: Path) -> MediaFetch:
         if preferred_format := _preferred_tiktok_format(info):
             download_command.extend(["-f", preferred_format])
         download_command.append(source_url)
-        download = _run_tiktok_yt_dlp(download_command, "media download")
+        download = _run_tiktok_yt_dlp(download_command, "media download", on_retry)
         downloaded_paths = [
             path
             for line in download.stdout.splitlines()
@@ -565,14 +609,50 @@ def _fetch_tiktok(source_url: str, workdir: Path) -> MediaFetch:
         raise
 
 
-def fetch(source_url: str, workdir: Path) -> MediaFetch:
-    """Download supported source media for extraction."""
+def fetch(
+    source_url: str,
+    workdir: Path,
+    on_retry: RetryProgress | None = None,
+) -> MediaFetch:
+    """Download media with bounded, provider-aware transient retries."""
     platform = source_platform(source_url)
-    if platform == "instagram":
-        return _fetch_instagram(source_url, workdir)
     if platform == "tiktok":
-        return _fetch_tiktok(source_url, workdir)
-    raise ValueError("fetch() supports Instagram and TikTok URLs")
+        return _fetch_tiktok(source_url, workdir, on_retry)
+    if platform != "instagram":
+        raise ValueError("fetch() supports Instagram and TikTok URLs")
+    operation = lambda: _fetch_instagram(source_url, workdir)
+
+    max_attempts = 3
+    for attempt in range(1, max_attempts + 1):
+        try:
+            return operation()
+        except Exception as exc:
+            decision = classify_failure(exc, stage="fetching", platform=platform)
+            if not decision.retryable or attempt == max_attempts:
+                raise
+            delay = retry_delay_seconds(
+                exc,
+                attempt=attempt,
+                base_seconds=3.0,
+                maximum_seconds=60.0,
+            )
+            log.warning(
+                "%s media fetch failed transiently attempt=%d/%d; retrying in %.1fs",
+                platform.capitalize(),
+                attempt,
+                max_attempts,
+                delay,
+            )
+            if on_retry:
+                on_retry(
+                    "fetching",
+                    f"{platform.capitalize()} download temporarily failed; retrying in {delay:g}s",
+                    delay,
+                    attempt + 1,
+                    max_attempts,
+                )
+            time.sleep(delay)
+    raise AssertionError("unreachable")
 
 
 # ---------- Extractor ----------
@@ -804,6 +884,7 @@ def extract_bundle(
     media_paths: Path | list[Path],
     metadata: dict[str, Any],
     existing_types: list[str] | None = None,
+    on_retry: RetryProgress | None = None,
 ) -> dict[str, Any]:
     """Analyze downloaded Instagram media and return source content plus entries."""
     client = _client()
@@ -837,6 +918,7 @@ def extract_bundle(
             ),
         ),
         "Instagram extraction",
+        on_retry,
     )
 
     parsed = json.loads(response.text)
@@ -863,6 +945,7 @@ def extract(
 def extract_youtube_bundle(
     source_url: str,
     existing_types: list[str] | None = None,
+    on_retry: RetryProgress | None = None,
 ) -> dict[str, Any]:
     """Analyze a public YouTube URL and return source content plus entries."""
     metadata = {"source_platform": "youtube", "webpage_url": source_url}
@@ -884,6 +967,7 @@ def extract_youtube_bundle(
             store=False,
         ),
         "YouTube extraction",
+        on_retry,
     )
     parsed = json.loads(response.output_text)
     extracted = parsed.get("entries", parsed.get("places", []))
@@ -1276,27 +1360,12 @@ def resolve(
 # ---------- Orchestrator ----------
 
 
-def _preserve_extraction_failure(
-    metadata: dict[str, Any],
-    exc: Exception,
-) -> None:
-    metadata["source_content"] = {
-        "summary": "",
-        "transcript": "",
-        "on_screen_text": "",
-    }
-    metadata["extraction_status"] = "failed"
-    metadata["extraction_error"] = {
-        "type": type(exc).__name__,
-        "message": str(exc)[:1000],
-    }
-
-
 def process_ingest(
     source_url: str | None,
     workdir: Path,
     existing_types: list[str] | None = None,
     progress: Callable[[str], None] | None = None,
+    retry_progress: RetryProgress | None = None,
 ) -> dict[str, Any]:
     """Full pipeline: returns a dict with source, metadata, extracted, resolved."""
     if not source_url:
@@ -1312,21 +1381,24 @@ def process_ingest(
     if platform == "youtube":
         if progress:
             progress("extracting")
-        metadata = {"source_platform": "youtube", "webpage_url": source_url}
         try:
-            bundle = extract_youtube_bundle(source_url, existing_types)
+            bundle = extract_youtube_bundle(
+                source_url,
+                existing_types,
+                retry_progress,
+            )
         except Exception as exc:
-            log.exception("YouTube extraction failed after retries; preserving source")
-            _preserve_extraction_failure(metadata, exc)
-            entries = []
+            log.exception("YouTube analysis failed after retries")
+            raise AnalysisFailure(platform, exc) from exc
         else:
+            metadata = {"source_platform": "youtube", "webpage_url": source_url}
             entries = bundle["entries"]
             metadata["source_content"] = bundle["source_content"]
             metadata["extraction_status"] = "complete"
     else:
         if progress:
             progress("fetching")
-        fetched = fetch(source_url, workdir)
+        fetched = fetch(source_url, workdir, retry_progress)
         metadata = fetched.metadata
         # Downloaded source media is processing-only. We retain the URL and
         # extracted text, but never copy media to persistent storage.
@@ -1339,14 +1411,14 @@ def process_ingest(
                     fetched.media_paths,
                     metadata,
                     existing_types,
+                    retry_progress,
                 )
             except Exception as exc:
                 log.exception(
-                    "%s extraction failed after retries; preserving source",
+                    "%s analysis failed after retries",
                     "TikTok" if platform == "tiktok" else platform.capitalize(),
                 )
-                _preserve_extraction_failure(metadata, exc)
-                entries = []
+                raise AnalysisFailure(platform, exc) from exc
             else:
                 entries = bundle["entries"]
                 metadata["source_content"] = bundle["source_content"]

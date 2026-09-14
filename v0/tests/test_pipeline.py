@@ -8,6 +8,8 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
+import requests
+
 import pipeline
 
 
@@ -215,6 +217,28 @@ class GeminiRetryTests(unittest.TestCase):
 
 
 class InstagramFetcherTests(unittest.TestCase):
+    @patch("pipeline.time.sleep")
+    @patch("pipeline._fetch_instagram")
+    def test_retries_transient_instagram_fetch_and_reports_attempt(
+        self,
+        mock_fetch: MagicMock,
+        mock_sleep: MagicMock,
+    ) -> None:
+        expected = pipeline.MediaFetch([], {}, Path("/tmp/retry-success"))
+        mock_fetch.side_effect = [requests.ConnectionError("reset"), expected]
+        retries = []
+
+        result = pipeline.fetch(
+            "https://www.instagram.com/reel/abc/",
+            Path("/tmp/place-logging-fetch-test"),
+            lambda *values: retries.append(values),
+        )
+
+        self.assertIs(result, expected)
+        mock_sleep.assert_called_once_with(3.0)
+        self.assertEqual(retries[0][0], "fetching")
+        self.assertEqual(retries[0][3:], (2, 3))
+
     def test_maps_creator_and_native_location_metadata_without_account_id(self) -> None:
         metadata = pipeline._instagram_metadata(
             {
@@ -496,7 +520,7 @@ class InstagramFetcherTests(unittest.TestCase):
         )
 
         with self.assertRaisesRegex(RuntimeError, "download failed"):
-            pipeline.fetch(
+            pipeline._fetch_instagram(
                 "https://www.instagram.com/reel/abc/",
                 Path("/tmp/place-logging-fetch-test"),
             )
@@ -541,7 +565,7 @@ class InstagramFetcherTests(unittest.TestCase):
         ]
 
         with self.assertRaisesRegex(RuntimeError, "download failed"):
-            pipeline.fetch(
+            pipeline._fetch_instagram(
                 "https://www.instagram.com/reel/abc/",
                 Path("/tmp/place-logging-fetch-test"),
             )
@@ -1268,7 +1292,7 @@ class ProcessIngestTests(unittest.TestCase):
 
     @patch("pipeline.extract_bundle", side_effect=FakeGeminiError(503))
     @patch("pipeline.fetch")
-    def test_exhausted_extraction_preserves_source_record_for_review(
+    def test_exhausted_extraction_becomes_retryable_analysis_failure(
         self,
         mock_fetch: MagicMock,
         _mock_extract: MagicMock,
@@ -1287,23 +1311,11 @@ class ProcessIngestTests(unittest.TestCase):
                 cleanup_dir,
             )
             with self.assertLogs("pipeline", level="ERROR"):
-                result = pipeline.process_ingest(
-                    "https://www.instagram.com/reel/abc/",
-                    Path(temp_dir),
-                )
-
-            self.assertEqual(result["entries_extracted"], [])
-            self.assertEqual(result["resolved_entries"], [])
-            self.assertEqual(result["metadata"]["extraction_status"], "failed")
-            self.assertEqual(
-                result["metadata"]["extraction_error"]["type"],
-                "FakeGeminiError",
-            )
-            self.assertFalse(result["metadata"]["media_preserved"])
-            self.assertEqual(
-                result["metadata"]["caption_or_description"],
-                "Saved caption",
-            )
+                with self.assertRaises(pipeline.AnalysisFailure):
+                    pipeline.process_ingest(
+                        "https://www.instagram.com/reel/abc/",
+                        Path(temp_dir),
+                    )
             self.assertFalse(cleanup_dir.exists())
 
 

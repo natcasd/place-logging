@@ -46,9 +46,13 @@ optionally resolves physical locations through Google Places.
 - New extraction saves only distinct principal recommendations; it excludes
   scenery, background posters, host venues, suppliers, and creator CTAs unless
   independently recommended. Generic unnamed records such as `Cafe` are dropped.
-- Temporary Gemini capacity and rate-limit errors receive bounded exponential
-  retries. If extraction still fails, the source URL, caption, and error are
-  saved with zero entries so the source remains visible for later review.
+- Temporary media-download and Gemini analysis failures receive bounded,
+  provider-aware retries. Retry-After instructions are honored. Failures that
+  outlive the request are kept as durable Activity records and retried by the
+  server after restarts without creating failed or duplicate Captures.
+- Activity distinguishes analysis, media-download, save, and general processing
+  failures. The iOS Activity detail presents the failure and lets the user retry
+  the same logical ingest immediately.
 - `/api/v1/entries`, `/api/v1/sources`, and `/api/v1/activity` are the supported
   read APIs.
 
@@ -222,8 +226,8 @@ python backfill_movie_enrichments.py --db-path data/places.db
 
 ## Known gaps
 
-- Instagram or TikTok download/rate-limit failures that remain after bounded
-  retries require the source to be shared again.
+- Automatic retry completion is reflected in Activity when the app refreshes;
+  it does not currently send a remote push notification.
 - URL-only ingest (pure-text + article/tweet URLs are the v0.5 expansion in doc 09).
 - Routes use resolvable anchors such as a trailhead or venue; custom route
   geometry is intentionally not synthesized from a post.

@@ -12,7 +12,7 @@ import secrets
 import tempfile
 import time
 import uuid
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -87,7 +87,7 @@ class SavedEntryOutcome(BaseModel):
 
 class IngestResponse(BaseModel):
     ingest_id: int
-    item_id: int
+    item_id: int | None = None
     source_url: str
     metadata: dict[str, Any]
     places_extracted: list[dict[str, Any]]
@@ -96,6 +96,10 @@ class IngestResponse(BaseModel):
     resolved_entries: list[dict[str, Any]] = Field(default_factory=list)
     saved_entries: list[SavedEntryOutcome] = Field(default_factory=list)
     already_logged: bool = False
+    status: str = "completed"
+    failure_kind: str | None = None
+    error_message: str | None = None
+    next_retry_at: str | None = None
 
 
 class ShortcutDiagnosticResponse(BaseModel):
@@ -208,6 +212,12 @@ class IngestActivity(BaseModel):
     stage: str
     error_type: str | None = None
     error_message: str | None = None
+    failure_kind: str | None = None
+    retryable: bool = False
+    attempt_count: int = Field(default=1, ge=1)
+    max_attempts: int = Field(default=4, ge=1)
+    next_retry_at: str | None = None
+    last_retry_at: str | None = None
     started_at: str
     updated_at: str
     completed_at: str | None = None
@@ -251,6 +261,19 @@ class DeleteEntriesResponse(BaseModel):
 class Runtime:
     service: IngestService
     ingest_api_token: str
+
+
+async def _retry_worker(runtime: Runtime) -> None:
+    """Resume due ingest attempts from SQLite for the lifetime of the server."""
+    while True:
+        try:
+            processed = await asyncio.to_thread(runtime.service.run_due_retries, 10)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            log.exception("Durable ingest retry worker failed")
+            processed = 0
+        await asyncio.sleep(5 if processed else 15)
 
 
 def _required_env(name: str) -> str:
@@ -341,7 +364,21 @@ def create_app(injected_runtime: Runtime | None = None) -> FastAPI:
     async def lifespan(application: FastAPI):
         runtime = injected_runtime or build_runtime()
         application.state.runtime = runtime
-        yield
+        retry_task: asyncio.Task[None] | None = None
+        if injected_runtime is None:
+            recovered = await asyncio.to_thread(
+                runtime.service.recover_interrupted_ingests
+            )
+            if recovered:
+                log.warning("Recovered %d interrupted ingest run(s)", recovered)
+            retry_task = asyncio.create_task(_retry_worker(runtime))
+        try:
+            yield
+        finally:
+            if retry_task is not None:
+                retry_task.cancel()
+                with suppress(asyncio.CancelledError):
+                    await retry_task
 
     application = FastAPI(
         title="Place Logger API",
@@ -443,6 +480,35 @@ def create_app(injected_runtime: Runtime | None = None) -> FastAPI:
                 detail="limit must be between 1 and 500",
             )
         return {"activity": await asyncio.to_thread(runtime.service.activity, limit)}
+
+    @application.post(
+        "/api/v1/activity/{ingest_id}/retry",
+        response_model=IngestResponse,
+    )
+    async def retry_activity(
+        ingest_id: int,
+        request: Request,
+        authorization: str | None = Header(default=None),
+    ) -> dict[str, Any]:
+        """Immediately retry one failed logical save using the same Activity row."""
+        runtime: Runtime = request.app.state.runtime
+        _require_ingest_auth(runtime, authorization)
+        try:
+            result = await asyncio.to_thread(
+                runtime.service.retry_ingest,
+                ingest_id,
+            )
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=str(exc),
+            ) from exc
+        if result is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Activity not found",
+            )
+        return result
 
     @application.post(
         "/api/v1/activity/{ingest_id}/entries/{entry_id}/location",
@@ -574,9 +640,10 @@ def create_app(injected_runtime: Runtime | None = None) -> FastAPI:
                 detail="Place Logger could not process that link",
             ) from exc
         log.info(
-            "Ingest completed request_id=%s item_id=%s entries=%s "
+            "Ingest finished request_id=%s status=%s item_id=%s entries=%s "
             "duration_ms=%s",
             getattr(request.state, "request_id", "unknown"),
+            result.get("status", "completed"),
             result.get("item_id"),
             len(result.get("entries_extracted", result.get("places_extracted", []))),
             round((time.perf_counter() - ingest_started) * 1000, 1),
