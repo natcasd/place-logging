@@ -257,6 +257,10 @@ class DeleteEntriesResponse(BaseModel):
     deleted_sources: int
 
 
+class DeleteActivityResponse(BaseModel):
+    ingest_id: int
+
+
 @dataclass
 class Runtime:
     service: IngestService
@@ -509,6 +513,35 @@ def create_app(injected_runtime: Runtime | None = None) -> FastAPI:
                 detail="Activity not found",
             )
         return result
+
+    @application.delete(
+        "/api/v1/activity/{ingest_id}",
+        response_model=DeleteActivityResponse,
+    )
+    async def delete_failed_activity(
+        ingest_id: int,
+        request: Request,
+        authorization: str | None = Header(default=None),
+    ) -> dict[str, int]:
+        """Delete a failed Activity record and cancel its pending retries."""
+        runtime: Runtime = request.app.state.runtime
+        _require_ingest_auth(runtime, authorization)
+        try:
+            deleted = await asyncio.to_thread(
+                runtime.service.delete_failed_activity,
+                ingest_id,
+            )
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=str(exc),
+            ) from exc
+        if deleted is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Activity not found",
+            )
+        return {"ingest_id": ingest_id}
 
     @application.post(
         "/api/v1/activity/{ingest_id}/entries/{entry_id}/location",

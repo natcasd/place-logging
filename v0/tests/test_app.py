@@ -247,6 +247,30 @@ class ApiTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 404)
 
+    def test_deletes_failed_activity(self) -> None:
+        self.service.delete_failed_activity.return_value = True
+
+        response = self.client.delete(
+            "/api/v1/activity/34",
+            headers={"Authorization": "Bearer api-secret"},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json(), {"ingest_id": 34})
+        self.service.delete_failed_activity.assert_called_once_with(34)
+
+    def test_delete_failed_activity_rejects_processing_activity(self) -> None:
+        self.service.delete_failed_activity.side_effect = ValueError(
+            "Only failed or scheduled Activity can be deleted"
+        )
+
+        response = self.client.delete(
+            "/api/v1/activity/34",
+            headers={"Authorization": "Bearer api-secret"},
+        )
+
+        self.assertEqual(response.status_code, 409)
+
     def test_confirms_activity_location_candidate(self) -> None:
         confirmed = canonical_result()["saved_entries"][0] | {
             "source_connection_id": 21,

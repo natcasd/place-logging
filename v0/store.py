@@ -759,6 +759,55 @@ def get_ingest_run(db_path: Path, run_id: int) -> dict[str, Any] | None:
         con.close()
 
 
+def delete_failed_ingest_run(db_path: Path, run_id: int) -> bool | None:
+    """Delete one failed Activity record and any empty legacy Capture it owns."""
+    con = _connect(db_path)
+    con.row_factory = sqlite3.Row
+    try:
+        con.execute("BEGIN IMMEDIATE")
+        row = con.execute(
+            "SELECT status, item_id FROM ingest_runs WHERE id = ?",
+            (run_id,),
+        ).fetchone()
+        if row is None:
+            con.rollback()
+            return None
+        if row["status"] not in {"failed", "retry_scheduled"}:
+            con.rollback()
+            raise ValueError("Only failed or scheduled Activity can be deleted")
+
+        item_id = row["item_id"]
+        if item_id is not None:
+            capture = con.execute(
+                "SELECT raw_payload_json FROM captures WHERE id = ?",
+                (item_id,),
+            ).fetchone()
+            mention_count = con.execute(
+                "SELECT COUNT(*) FROM recommendation_mentions WHERE item_id = ?",
+                (item_id,),
+            ).fetchone()[0]
+            metadata = _decode_json_object(capture[0]) if capture else {}
+            if mention_count or metadata.get("extraction_status") != "failed":
+                con.rollback()
+                raise ValueError(
+                    "Activity with saved recommendations cannot be deleted here"
+                )
+
+        # Events cascade with the run. Delete the run before a legacy Capture
+        # because ingest_runs.item_id references captures.id.
+        con.execute("DELETE FROM ingest_runs WHERE id = ?", (run_id,))
+        if item_id is not None:
+            con.execute("DELETE FROM captures WHERE id = ?", (item_id,))
+        con.commit()
+        return True
+    except Exception:
+        if con.in_transaction:
+            con.rollback()
+        raise
+    finally:
+        con.close()
+
+
 def find_reusable_ingest_run(db_path: Path, source_url: str) -> int | None:
     """Reuse one failed logical save instead of creating duplicate failures."""
     identity = canonical_source_url(source_url)

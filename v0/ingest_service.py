@@ -21,6 +21,7 @@ from store import (
     confirm_activity_location,
     delete_entry,
     delete_entries,
+    delete_failed_ingest_run,
     due_retry_ids,
     find_reusable_ingest_run,
     find_processed_source,
@@ -360,6 +361,17 @@ class IngestService:
 
     def recover_interrupted_ingests(self) -> int:
         return recover_interrupted_ingests(self.db_path)
+
+    def delete_failed_activity(self, ingest_id: int) -> bool | None:
+        """Delete one failure and cancel any scheduled retry for it."""
+        existing = get_ingest_run(self.db_path, ingest_id)
+        if existing is None:
+            return None
+        identity = canonical_source_url(existing["source_url"])
+        with self._source_locks_guard:
+            source_lock = self._source_locks.setdefault(identity, Lock())
+        with source_lock:
+            return delete_failed_ingest_run(self.db_path, ingest_id)
 
     def entries(self, limit: int = 200) -> list[dict[str, Any]]:
         """Return canonical entries with their source-specific recommendations."""

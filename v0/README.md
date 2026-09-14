@@ -52,7 +52,8 @@ optionally resolves physical locations through Google Places.
   server after restarts without creating failed or duplicate Captures.
 - Activity distinguishes analysis, media-download, save, and general processing
   failures. The iOS Activity detail presents the failure and lets the user retry
-  the same logical ingest immediately.
+  the same logical ingest immediately or delete the failure and cancel its
+  scheduled retries.
 - `/api/v1/entries`, `/api/v1/sources`, and `/api/v1/activity` are the supported
   read APIs.
 
