@@ -1,4 +1,4 @@
-"""Reclassify generic ``Place`` rows into specific recommendation types.
+"""Reclassify generic ``Place`` Recommendations into specific types.
 
 The default mode sends saved source context and existing row descriptions to
 Gemini, then writes a reviewable JSON plan without modifying SQLite. ``--apply``
@@ -25,7 +25,7 @@ from pipeline import (
 )
 
 
-PLAN_VERSION = 1
+PLAN_VERSION = 2
 CLASSIFICATION_SCHEMA = {
     "type": "object",
     "properties": {
@@ -63,13 +63,20 @@ def find_candidates(con: sqlite3.Connection) -> list[dict[str, Any]]:
     """Return generic rows grouped by their preserved source post."""
     con.row_factory = sqlite3.Row
     rows = con.execute(
-        """SELECT p.id, p.item_id, p.ordinal, p.extracted_name,
-                  p.description, p.formatted_address, p.location_query,
-                  i.source_url, i.raw_payload_json
-             FROM places AS p
-             JOIN captures AS i ON i.id = p.item_id
-            WHERE lower(trim(p.entry_type)) = 'place'
-            ORDER BY p.item_id, p.ordinal"""
+        """SELECT r.id, rm.item_id, rm.ordinal, r.name AS extracted_name,
+                  rm.description, l.formatted_address, rm.location_query,
+                  c.source_url, c.raw_payload_json
+             FROM recommendations AS r
+             JOIN recommendation_mentions AS rm
+               ON rm.id = (
+                    SELECT MAX(latest.id)
+                      FROM recommendation_mentions AS latest
+                     WHERE latest.entry_id = r.id
+                  )
+             JOIN captures AS c ON c.id = rm.item_id
+             LEFT JOIN locations AS l ON l.id = r.location_id
+            WHERE lower(trim(r.entry_type)) = 'place'
+            ORDER BY rm.item_id, rm.ordinal"""
     ).fetchall()
     groups: dict[int, dict[str, Any]] = {}
     for row in rows:
@@ -285,7 +292,7 @@ def apply_plan(db_path: Path, plan_path: Path, backup_dir: Path) -> tuple[int, P
         source.execute("BEGIN IMMEDIATE")
         for update in updates:
             current = source.execute(
-                "SELECT entry_type FROM places WHERE id = ?",
+                "SELECT entry_type FROM recommendations WHERE id = ?",
                 (update["entry_id"],),
             ).fetchone()
             if current is None or current[0].strip().casefold() != "place":
@@ -293,12 +300,14 @@ def apply_plan(db_path: Path, plan_path: Path, backup_dir: Path) -> tuple[int, P
                     f"Entry row {update['entry_id']} changed after plan creation; aborting"
                 )
             source.execute(
-                "UPDATE places SET entry_type = ? WHERE id = ?",
+                "UPDATE recommendations SET entry_type = ?, updated_at = CURRENT_TIMESTAMP "
+                "WHERE id = ?",
                 (update["type_name"], update["entry_id"]),
             )
             applied += 1
         remaining = source.execute(
-            "SELECT COUNT(*) FROM places WHERE lower(trim(entry_type)) = 'place'"
+            "SELECT COUNT(*) FROM recommendations "
+            "WHERE lower(trim(entry_type)) = 'place'"
         ).fetchone()[0]
         if remaining:
             raise RuntimeError(f"Backfill would leave {remaining} generic Place rows")

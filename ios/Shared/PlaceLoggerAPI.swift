@@ -7,17 +7,6 @@ struct PlaceLoggerAPI: Sendable {
     self.session = session
   }
 
-  func fetchPlaces(limit: Int = 200) async throws -> [SavedEntry] {
-    var components = URLComponents(
-      url: APIConfig.baseURL.appending(path: "/api/v1/places"),
-      resolvingAgainstBaseURL: false
-    )
-    components?.queryItems = [URLQueryItem(name: "limit", value: String(limit))]
-    guard let url = components?.url else { throw PlaceLoggerError.invalidResponse }
-    let data = try await perform(URLRequest(url: url))
-    return try JSONDecoder().decode(PlacesEnvelope.self, from: data).places
-  }
-
   func fetchEntries(limit: Int = 1_000) async throws -> [SavedEntry] {
     var components = URLComponents(
       url: APIConfig.baseURL.appending(path: "/api/v1/entries"),
@@ -79,13 +68,6 @@ struct PlaceLoggerAPI: Sendable {
     ])
     let data = try await perform(request)
     return try JSONDecoder().decode(IngestResponse.self, from: data)
-  }
-
-  func deletePlace(id: Int) async throws {
-    let url = APIConfig.baseURL.appending(path: "/api/v1/places/\(id)")
-    var request = URLRequest(url: url)
-    request.httpMethod = "DELETE"
-    _ = try await perform(request)
   }
 
   func deleteEntry(id: Int) async throws {

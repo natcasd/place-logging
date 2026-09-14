@@ -33,17 +33,26 @@ class BackfillEntryTypesTests(unittest.TestCase):
                 ),
             )
             con.execute(
-                """INSERT INTO places
-                   (id, item_id, ordinal, extracted_name, resolution_status,
-                    entry_type, description, formatted_address)
-                   VALUES (10, 1, 0, 'Dinner', 'auto', 'Place',
-                           'A restaurant serving dinner.', 'New York, NY')"""
+                """INSERT INTO locations
+                   (id, google_place_id, formatted_address)
+                   VALUES (2, 'google-dinner', 'New York, NY')"""
             )
             con.execute(
-                """INSERT INTO places
-                   (id, item_id, ordinal, extracted_name, resolution_status,
-                    entry_type, description)
-                   VALUES (11, 1, 1, 'Museum', 'auto', 'Museum', 'An art museum.')"""
+                """INSERT INTO recommendations
+                   (id, name, normalized_name, entry_type, type_key,
+                    identity_key, location_id)
+                   VALUES
+                     (10, 'Dinner', 'dinner', 'Place', 'place', 'candidate-10', 2),
+                     (11, 'Museum', 'museum', 'Museum', 'museum', 'candidate-11', NULL)"""
+            )
+            con.execute(
+                """INSERT INTO recommendation_mentions
+                   (entry_id, item_id, ordinal, source_name, source_type,
+                    description, resolution_status)
+                   VALUES
+                     (10, 1, 0, 'Dinner', 'Place',
+                      'A restaurant serving dinner.', 'auto'),
+                     (11, 1, 1, 'Museum', 'Museum', 'An art museum.', 'auto')"""
             )
             con.commit()
         finally:
@@ -108,7 +117,7 @@ class BackfillEntryTypesTests(unittest.TestCase):
             plan_path.write_text(
                 json.dumps(
                     {
-                        "version": 1,
+                        "version": 2,
                         "candidate_count": 1,
                         "complete": True,
                         "results": [
@@ -138,7 +147,7 @@ class BackfillEntryTypesTests(unittest.TestCase):
             con = sqlite3.connect(db_path)
             try:
                 rows = con.execute(
-                    "SELECT id, entry_type FROM places ORDER BY id"
+                    "SELECT id, entry_type FROM recommendations ORDER BY id"
                 ).fetchall()
             finally:
                 con.close()

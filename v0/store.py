@@ -16,7 +16,7 @@ from entry_types import (
     entry_types_for_enricher,
 )
 
-CAPTURE_AND_LEGACY_PLACE_SCHEMA = """
+CAPTURE_SCHEMA = """
 CREATE TABLE IF NOT EXISTS captures (
   id               INTEGER PRIMARY KEY AUTOINCREMENT,
   vertical         TEXT NOT NULL,
@@ -25,35 +25,6 @@ CREATE TABLE IF NOT EXISTS captures (
   llm_output_json  TEXT,
   created_at       TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
-
-CREATE TABLE IF NOT EXISTS places (
-  id                         INTEGER PRIMARY KEY AUTOINCREMENT,
-  item_id                    INTEGER NOT NULL REFERENCES captures(id),
-  ordinal                    INTEGER NOT NULL,
-  extracted_name             TEXT NOT NULL,
-  google_place_id            TEXT,
-  lat                        REAL,
-  lng                        REAL,
-  formatted_address          TEXT,
-  google_maps_url            TEXT,
-  location_name              TEXT,
-  dishes_json                TEXT,
-  why_its_cool               TEXT,
-  tags_json                  TEXT,
-  timestamp_seconds          REAL,
-  slide_index                INTEGER,
-  resolution_status          TEXT NOT NULL,
-  resolution_candidates_json TEXT,
-  entry_type                 TEXT NOT NULL DEFAULT 'Unknown',
-  description                TEXT NOT NULL DEFAULT '',
-  starts_at                  TEXT,
-  ends_at                    TEXT,
-  recurrence_text            TEXT,
-  location_query             TEXT
-);
-
-CREATE INDEX IF NOT EXISTS idx_places_item      ON places(item_id);
-CREATE INDEX IF NOT EXISTS idx_places_google_id ON places(google_place_id);
 """
 
 RECOMMENDATION_SCHEMA = """
@@ -100,7 +71,6 @@ CREATE TABLE IF NOT EXISTS recommendation_mentions (
   id                         INTEGER PRIMARY KEY AUTOINCREMENT,
   entry_id                   INTEGER NOT NULL REFERENCES recommendations(id) ON DELETE CASCADE,
   item_id                    INTEGER NOT NULL REFERENCES captures(id) ON DELETE CASCADE,
-  legacy_place_id            INTEGER UNIQUE REFERENCES places(id),
   ordinal                    INTEGER NOT NULL,
   source_name                TEXT NOT NULL,
   source_type                TEXT NOT NULL,
@@ -194,6 +164,12 @@ def _has_table(con: sqlite3.Connection, name: str) -> bool:
         "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?",
         (name,),
     ).fetchone() is not None
+
+
+def _has_column(con: sqlite3.Connection, table: str, column: str) -> bool:
+    return _has_table(con, table) and column in {
+        row[1] for row in con.execute(f"PRAGMA table_info({table})").fetchall()
+    }
 
 
 def _backup_before_entry_terminology_migration(
@@ -400,7 +376,11 @@ def _backup_before_recommendation_model_migration(
         "SELECT 1 FROM sqlite_master "
         "WHERE type = 'table' AND name = 'recommendation_mentions'"
     ).fetchone()
-    legacy_count = con.execute("SELECT COUNT(*) FROM places").fetchone()[0]
+    legacy_count = (
+        con.execute("SELECT COUNT(*) FROM places").fetchone()[0]
+        if _has_table(con, "places")
+        else 0
+    )
     if recommendation_model_exists or not legacy_count:
         return None
 
@@ -452,6 +432,112 @@ def _migrate_user_prompt_columns(con: sqlite3.Connection) -> None:
             con.execute(f"ALTER TABLE {table} DROP COLUMN user_prompt")
 
 
+def _backup_before_legacy_places_removal(
+    con: sqlite3.Connection,
+    db_path: Path,
+) -> Path | None:
+    if not (
+        _has_table(con, "places")
+        or _has_column(con, "recommendation_mentions", "legacy_place_id")
+    ):
+        return None
+
+    timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    backup_path = db_path.with_name(
+        f"{db_path.name}.pre-legacy-places-removal-{timestamp}.bak"
+    )
+    backup = sqlite3.connect(backup_path)
+    try:
+        con.backup(backup)
+    finally:
+        backup.close()
+    return backup_path
+
+
+def _retire_legacy_places(con: sqlite3.Connection) -> None:
+    """Remove the denormalized compatibility model after canonical backfill."""
+    if _has_table(con, "places"):
+        unmigrated_places = con.execute(
+            """SELECT COUNT(*)
+                 FROM places AS p
+                 LEFT JOIN recommendation_mentions AS rm
+                   ON rm.item_id = p.item_id AND rm.ordinal = p.ordinal
+                WHERE rm.id IS NULL"""
+        ).fetchone()[0]
+        if unmigrated_places:
+            raise RuntimeError(
+                f"Refusing to remove {unmigrated_places} legacy places without mentions"
+            )
+
+    if _has_column(con, "recommendation_mentions", "legacy_place_id"):
+        mention_count = con.execute(
+            "SELECT COUNT(*) FROM recommendation_mentions"
+        ).fetchone()[0]
+        con.execute(
+            """CREATE TABLE recommendation_mentions_without_legacy_place (
+                 id                         INTEGER PRIMARY KEY AUTOINCREMENT,
+                 entry_id                   INTEGER NOT NULL
+                   REFERENCES recommendations(id) ON DELETE CASCADE,
+                 item_id                    INTEGER NOT NULL
+                   REFERENCES captures(id) ON DELETE CASCADE,
+                 ordinal                    INTEGER NOT NULL,
+                 source_name                TEXT NOT NULL,
+                 source_type                TEXT NOT NULL,
+                 description                TEXT NOT NULL DEFAULT '',
+                 dishes_json                TEXT,
+                 why_its_cool               TEXT,
+                 tags_json                  TEXT,
+                 timestamp_seconds          REAL,
+                 slide_index                INTEGER,
+                 resolution_status          TEXT NOT NULL,
+                 resolution_candidates_json TEXT,
+                 location_query             TEXT,
+                 created_at                 TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                 UNIQUE(item_id, ordinal),
+                 UNIQUE(entry_id, item_id)
+               )"""
+        )
+        con.execute(
+            """INSERT INTO recommendation_mentions_without_legacy_place (
+                 id, entry_id, item_id, ordinal, source_name, source_type,
+                 description, dishes_json, why_its_cool, tags_json,
+                 timestamp_seconds, slide_index, resolution_status,
+                 resolution_candidates_json, location_query, created_at
+               )
+               SELECT id, entry_id, item_id, ordinal, source_name, source_type,
+                      description, dishes_json, why_its_cool, tags_json,
+                      timestamp_seconds, slide_index, resolution_status,
+                      resolution_candidates_json, location_query, created_at
+                 FROM recommendation_mentions"""
+        )
+        con.execute("DROP TABLE recommendation_mentions")
+        con.execute(
+            "ALTER TABLE recommendation_mentions_without_legacy_place "
+            "RENAME TO recommendation_mentions"
+        )
+        migrated_mention_count = con.execute(
+            "SELECT COUNT(*) FROM recommendation_mentions"
+        ).fetchone()[0]
+        if migrated_mention_count != mention_count:
+            raise RuntimeError("Recommendation Mention count changed during migration")
+
+    if _has_table(con, "places"):
+        con.execute("DROP TABLE places")
+
+    con.execute(
+        """CREATE INDEX IF NOT EXISTS idx_recommendation_mentions_recommendation
+             ON recommendation_mentions(entry_id)"""
+    )
+    con.execute(
+        """CREATE INDEX IF NOT EXISTS idx_recommendation_mentions_capture
+             ON recommendation_mentions(item_id)"""
+    )
+
+    foreign_key_errors = con.execute("PRAGMA foreign_key_check").fetchall()
+    if foreign_key_errors:
+        raise RuntimeError(f"Foreign key check failed: {foreign_key_errors[:3]}")
+
+
 def init_db(db_path: Path) -> None:
     db_path.parent.mkdir(parents=True, exist_ok=True)
     con = _connect(db_path)
@@ -462,10 +548,11 @@ def init_db(db_path: Path) -> None:
         _backup_before_core_terminology_migration(con, db_path)
         _migrate_core_table_names(con)
         con.commit()
-        con.executescript(CAPTURE_AND_LEGACY_PLACE_SCHEMA)
-        _backup_before_entry_migration(con, db_path)
-        _migrate_places(con)
-        con.commit()
+        con.executescript(CAPTURE_SCHEMA)
+        if _has_table(con, "places"):
+            _backup_before_entry_migration(con, db_path)
+            _migrate_places(con)
+            con.commit()
         _backup_before_recommendation_model_migration(con, db_path)
         con.executescript(RECOMMENDATION_SCHEMA)
         _backup_before_user_prompt_removal(con, db_path)
@@ -473,6 +560,14 @@ def init_db(db_path: Path) -> None:
         _backfill_recommendation_model(con)
         _backfill_ingest_runs(con)
         con.commit()
+        if _backup_before_legacy_places_removal(con, db_path) is not None:
+            con.execute("BEGIN IMMEDIATE")
+            try:
+                _retire_legacy_places(con)
+                con.commit()
+            except Exception:
+                con.rollback()
+                raise
     finally:
         con.close()
 
@@ -510,50 +605,8 @@ def save_ingest(db_path: Path, result: dict[str, Any]) -> int:
             place = r.get("place", {}) or {}
             candidates = r.get("candidates", []) or []
 
-            loc = place.get("location") or {}
-            display = place.get("displayName") or {}
-
-            cur.execute(
-                """INSERT INTO places (
-                    item_id, ordinal, extracted_name,
-                    google_place_id, lat, lng,
-                    formatted_address, google_maps_url,
-                    location_name,
-                    dishes_json, why_its_cool, tags_json,
-                    timestamp_seconds, slide_index,
-                    resolution_status, resolution_candidates_json,
-                    entry_type, description,
-                    starts_at, ends_at, recurrence_text, location_query
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                (
-                    item_id,
-                    ordinal,
-                    extracted.get("extracted_name", display.get("text", "?")),
-                    place.get("id"),
-                    loc.get("latitude"),
-                    loc.get("longitude"),
-                    place.get("formattedAddress"),
-                    place.get("googleMapsUri"),
-                    display.get("text"),
-                    json.dumps(extracted.get("dishes", []), ensure_ascii=False),
-                    extracted.get("why_its_cool", ""),
-                    json.dumps(extracted.get("tags", []), ensure_ascii=False),
-                    extracted.get("timestamp_seconds"),
-                    extracted.get("slide_index"),
-                    status,
-                    json.dumps(candidates, ensure_ascii=False) if candidates else None,
-                    _normalize_type_name(extracted.get("type_name")),
-                    extracted.get("description")
-                    or extracted.get("why_its_cool", ""),
-                    extracted.get("starts_at"),
-                    extracted.get("ends_at"),
-                    extracted.get("recurrence_text"),
-                    extracted.get("location_query"),
-                ),
-            )
             _save_recommendation_mention(
                 con,
-                legacy_place_id=cur.lastrowid,
                 item_id=item_id,
                 ordinal=ordinal,
                 extracted=extracted,
@@ -863,7 +916,6 @@ def _upsert_location(
 def _save_recommendation_mention(
     con: sqlite3.Connection,
     *,
-    legacy_place_id: int,
     item_id: int,
     ordinal: int,
     extracted: dict[str, Any],
@@ -921,16 +973,15 @@ def _save_recommendation_mention(
 
     con.execute(
         """INSERT OR IGNORE INTO recommendation_mentions (
-             entry_id, item_id, legacy_place_id, ordinal, source_name, source_type,
+             entry_id, item_id, ordinal, source_name, source_type,
              description, dishes_json, why_its_cool, tags_json,
              timestamp_seconds, slide_index, resolution_status,
              resolution_candidates_json, location_query, created_at
-           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
                      COALESCE(?, CURRENT_TIMESTAMP))""",
         (
             entry_id,
             item_id,
-            legacy_place_id,
             ordinal,
             name,
             entry_type,
@@ -951,6 +1002,8 @@ def _save_recommendation_mention(
 
 def _backfill_recommendation_model(con: sqlite3.Connection) -> None:
     """Idempotently convert every legacy occurrence into a Recommendation Mention."""
+    if not _has_table(con, "places"):
+        return
     con.row_factory = sqlite3.Row
     legacy_columns = {
         row[1] for row in con.execute("PRAGMA table_info(places)").fetchall()
@@ -986,7 +1039,8 @@ def _backfill_recommendation_model(con: sqlite3.Connection) -> None:
         """SELECT p.*, i.created_at AS source_created_at
            FROM places AS p
            JOIN captures AS i ON i.id = p.item_id
-           LEFT JOIN recommendation_mentions AS ts ON ts.legacy_place_id = p.id
+           LEFT JOIN recommendation_mentions AS ts
+             ON ts.item_id = p.item_id AND ts.ordinal = p.ordinal
            WHERE ts.id IS NULL
            ORDER BY i.created_at ASC, p.item_id ASC, p.ordinal ASC"""
     ).fetchall()
@@ -1016,7 +1070,6 @@ def _backfill_recommendation_model(con: sqlite3.Connection) -> None:
         }
         _save_recommendation_mention(
             con,
-            legacy_place_id=row["id"],
             item_id=row["item_id"],
             ordinal=row["ordinal"],
             extracted=extracted,
@@ -1460,53 +1513,6 @@ def save_movie_enrichment(
         con.close()
 
 
-def list_places(db_path: Path, limit: int = 200) -> list[dict[str, Any]]:
-    """Return legacy occurrence rows for clients still using the places API."""
-    con = _connect(db_path)
-    con.row_factory = sqlite3.Row
-    try:
-        rows = con.execute(
-            """SELECT p.*, i.source_url, i.created_at
-               FROM places AS p
-               JOIN captures AS i ON i.id = p.item_id
-               ORDER BY i.created_at DESC, p.item_id DESC, p.ordinal ASC
-               LIMIT ?""",
-            (limit,),
-        ).fetchall()
-        return [
-            {
-                "id": row["id"],
-                "item_id": row["item_id"],
-                "ordinal": row["ordinal"],
-                "name": row["extracted_name"],
-                "google_place_id": row["google_place_id"],
-                "latitude": row["lat"],
-                "longitude": row["lng"],
-                "formatted_address": row["formatted_address"],
-                "google_maps_url": row["google_maps_url"],
-                "location_name": row["location_name"],
-                "dishes": _decode_json_list(row["dishes_json"]),
-                "why_its_cool": row["why_its_cool"] or "",
-                "tags": _decode_json_list(row["tags_json"]),
-                "timestamp_seconds": row["timestamp_seconds"],
-                "slide_index": row["slide_index"],
-                "resolution_status": row["resolution_status"],
-                "type": row["entry_type"] or "Unknown",
-                "description": row["description"] or row["why_its_cool"] or "",
-                "starts_at": row["starts_at"],
-                "ends_at": row["ends_at"],
-                "recurrence_text": row["recurrence_text"],
-                "location_query": row["location_query"],
-                "source_url": row["source_url"],
-                "saved_at": row["created_at"],
-                "sources": [],
-            }
-            for row in rows
-        ]
-    finally:
-        con.close()
-
-
 def list_entry_types(db_path: Path) -> list[str]:
     """Return the open vocabulary currently used by saved entries."""
     con = _connect(db_path)
@@ -1720,27 +1726,6 @@ def confirm_activity_location(
             (row["id"],),
         )
 
-        display = candidate.get("displayName") or {}
-        location = candidate_location
-        if row["legacy_place_id"] is not None:
-            con.execute(
-                """UPDATE places
-                      SET google_place_id = ?, lat = ?, lng = ?,
-                          formatted_address = ?, google_maps_url = ?,
-                          location_name = ?, resolution_status = 'user_confirmed',
-                          resolution_candidates_json = NULL
-                    WHERE id = ?""",
-                (
-                    candidate_id,
-                    location.get("latitude"),
-                    location.get("longitude"),
-                    candidate.get("formattedAddress"),
-                    candidate.get("googleMapsUri"),
-                    display.get("text"),
-                    row["legacy_place_id"],
-                ),
-            )
-
         _refresh_activity_results(con, row["run_item_id"])
         con.execute(
             """INSERT INTO ingest_events (ingest_run_id, stage, status, message)
@@ -1822,24 +1807,10 @@ def delete_entries(db_path: Path, entry_ids: list[int]) -> dict[str, int] | None
 
 def _delete_canonical_entries(con: sqlite3.Connection, entry_ids: list[int]) -> int:
     placeholders = ",".join("?" for _ in entry_ids)
-    legacy_ids = [
-        row[0]
-        for row in con.execute(
-            f"""SELECT legacy_place_id FROM recommendation_mentions
-                WHERE entry_id IN ({placeholders}) AND legacy_place_id IS NOT NULL""",
-            entry_ids,
-        ).fetchall()
-    ]
     con.execute(
         f"DELETE FROM recommendation_mentions WHERE entry_id IN ({placeholders})",
         entry_ids,
     )
-    if legacy_ids:
-        legacy_placeholders = ",".join("?" for _ in legacy_ids)
-        con.execute(
-            f"DELETE FROM places WHERE id IN ({legacy_placeholders})",
-            legacy_ids,
-        )
     cursor = con.execute(
         f"DELETE FROM recommendations WHERE id IN ({placeholders})",
         entry_ids,
@@ -1863,35 +1834,3 @@ def _record_activity_deletion(
                    VALUES (?, 'reviewing', 'completed', 'Deleted recommendation')""",
                 (run[0],),
             )
-
-
-def delete_place(db_path: Path, place_id: int) -> dict[str, int] | None:
-    """Compatibility deletion by legacy occurrence id; source posts survive."""
-    con = _connect(db_path)
-    try:
-        row = con.execute(
-            """SELECT p.id, ts.entry_id
-               FROM places AS p
-               LEFT JOIN recommendation_mentions AS ts ON ts.legacy_place_id = p.id
-               WHERE p.id = ?""",
-            (place_id,),
-        ).fetchone()
-        if row is None:
-            return None
-        if row[1] is not None:
-            deleted_places = con.execute(
-                "SELECT COUNT(*) FROM recommendation_mentions WHERE entry_id = ?",
-                (row[1],),
-            ).fetchone()[0]
-            _delete_canonical_entries(con, [row[1]])
-        else:
-            cursor = con.execute("DELETE FROM places WHERE id = ?", (place_id,))
-            deleted_places = cursor.rowcount
-
-        con.commit()
-        return {
-            "deleted_places": deleted_places,
-            "deleted_items": 0,
-        }
-    finally:
-        con.close()

@@ -31,5 +31,3 @@ share extension.
   It logs a bounded, redacted description of exactly what Shortcuts sent and
   never processes or persists a place.
 - `GET /api/v1/entries` and `GET /api/v1/activity` power the native iPhone app.
-- `GET /api/v1/places` remains as a legacy compatibility endpoint until the
-  only installed iPhone build has been verified on the canonical APIs.

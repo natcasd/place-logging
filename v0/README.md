@@ -43,17 +43,14 @@ optionally resolves physical locations through Google Places.
 - Existing databases migrate idempotently from `items`, `entries`, and
   `entry_sources` to the terminology above. The service creates a timestamped
   SQLite backup beside the database before the first destructive rename.
-- `places` is a denormalized compatibility table for the legacy places API. It
-  is not part of the canonical persistence model and remains synchronized only
-  until that API is retired.
 - New extraction saves only distinct principal recommendations; it excludes
   scenery, background posters, host venues, suppliers, and creator CTAs unless
   independently recommended. Generic unnamed records such as `Cafe` are dropped.
 - Temporary Gemini capacity and rate-limit errors receive bounded exponential
   retries. If extraction still fails, the source URL, caption, and error are
   saved with zero entries so the source remains visible for later review.
-- `/api/v1/entries` and `/api/v1/sources` power new clients. `/api/v1/places`
-  remains available for released clients.
+- `/api/v1/entries`, `/api/v1/sources`, and `/api/v1/activity` are the supported
+  read APIs.
 
 ## Layout
 
@@ -135,12 +132,12 @@ import question before sharing it with another person.
 
 ```bash
 sqlite3 data/places.db 'select id, source_url, created_at from captures order by id desc limit 5;'
-sqlite3 data/places.db 'select p.id, p.extracted_name, p.resolution_status, p.formatted_address from places p order by p.id desc limit 10;'
+sqlite3 data/places.db 'select id, name, entry_type, location_id from recommendations order by id desc limit 10;'
 ```
 
 ## Generic-type backfill
 
-`backfill_entry_types.py` reclassifies every legacy `Place` row using its saved
+`backfill_entry_types.py` reclassifies every generic `Place` Recommendation using its saved
 source context and description. Its default mode creates a checkpointed,
 reviewable plan. Applying a complete plan backs up SQLite, verifies each target
 is still generic, updates only `entry_type`, and refuses to commit if any
@@ -176,11 +173,11 @@ The intended first pass is roughly 40–60 saved entries, not the full corpus.
 
 ## Location-name backfill
 
-`backfill_location_names.py` retrieves Google Places `displayName` for legacy
+`backfill_location_names.py` retrieves Google Places `displayName` for
 Locations that retained a Place ID but predate name storage. Plan generation is
 checkpointed and read-only with respect to SQLite. Applying a complete plan
 backs up the database, verifies every Location is still unnamed, and updates
-both the normalized Location and its compatibility rows.
+the canonical Location.
 
 ```bash
 python backfill_location_names.py \
