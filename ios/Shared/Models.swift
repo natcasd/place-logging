@@ -346,11 +346,17 @@ struct SavedSource: Decodable, Identifiable, Sendable {
 
 struct IngestResponse: Decodable, Sendable {
   let ingestID: Int
-  let itemID: Int
+  let itemID: Int?
   let savedEntries: [SavedEntryOutcome]
   let alreadyLogged: Bool?
+  let status: String?
+  let failureKind: String?
+  let errorMessage: String?
+  let nextRetryAt: String?
 
   var notificationTitle: String {
+    if status == "retry_scheduled" { return "Retry scheduled" }
+    if status == "failed" { return failureTitle }
     if alreadyLogged == true { return "Already logged" }
     guard savedEntries.count == 1, let entry = savedEntries.first else {
       return savedEntries.isEmpty ? "Nothing found" : "Logged " + Self.typeCountSummary(savedEntries)
@@ -361,6 +367,12 @@ struct IngestResponse: Decodable, Sendable {
   }
 
   var notificationBody: String {
+    if status == "retry_scheduled" {
+      return errorMessage ?? "Jot will retry this save automatically."
+    }
+    if status == "failed" {
+      return errorMessage ?? "Open Activity to retry this save."
+    }
     if alreadyLogged == true { return "" }
     guard !savedEntries.isEmpty else {
       return "The source was saved for review."
@@ -373,11 +385,25 @@ struct IngestResponse: Decodable, Sendable {
     return ""
   }
 
+  private var failureTitle: String {
+    switch failureKind {
+    case "analysis_failed": return "Analysis failed"
+    case "media_fetch_failed": return "Download failed"
+    case "save_failed": return "Save failed"
+    case "interrupted": return "Processing interrupted"
+    default: return "Processing failed"
+    }
+  }
+
   enum CodingKeys: String, CodingKey {
     case ingestID = "ingest_id"
     case itemID = "item_id"
     case savedEntries = "saved_entries"
     case alreadyLogged = "already_logged"
+    case status
+    case failureKind = "failure_kind"
+    case errorMessage = "error_message"
+    case nextRetryAt = "next_retry_at"
   }
 
   private static func typeCountSummary(_ entries: [SavedEntryOutcome]) -> String {
@@ -539,6 +565,12 @@ struct IngestActivity: Decodable, Identifiable, Sendable {
   let stage: String
   let errorType: String?
   let errorMessage: String?
+  let failureKind: String?
+  let retryable: Bool?
+  let attemptCount: Int?
+  let maxAttempts: Int?
+  let nextRetryAt: String?
+  let lastRetryAt: String?
   let startedAt: String
   let updatedAt: String
   let completedAt: String?
@@ -554,10 +586,23 @@ struct IngestActivity: Decodable, Identifiable, Sendable {
 
   var statusText: String {
     switch status {
-    case "processing": return "Processing · \(stage.replacingOccurrences(of: "_", with: " ").capitalized)"
+    case "processing":
+      let verb = (attemptCount ?? 1) > 1 ? "Retrying" : "Processing"
+      return "\(verb) · \(stage.replacingOccurrences(of: "_", with: " ").capitalized)"
+    case "retry_scheduled": return "Retry scheduled"
     case "partial": return "Saved · Needs review"
-    case "failed": return "Failed"
+    case "failed": return failureTitle
     default: return "Saved"
+    }
+  }
+
+  var failureTitle: String {
+    switch failureKind {
+    case "analysis_failed": return "Analysis failed"
+    case "media_fetch_failed": return "Download failed"
+    case "save_failed": return "Save failed"
+    case "interrupted": return "Processing interrupted"
+    default: return "Processing failed"
     }
   }
 
@@ -568,6 +613,12 @@ struct IngestActivity: Decodable, Identifiable, Sendable {
     case sourcePlatform = "source_platform"
     case errorType = "error_type"
     case errorMessage = "error_message"
+    case failureKind = "failure_kind"
+    case retryable
+    case attemptCount = "attempt_count"
+    case maxAttempts = "max_attempts"
+    case nextRetryAt = "next_retry_at"
+    case lastRetryAt = "last_retry_at"
     case startedAt = "started_at"
     case updatedAt = "updated_at"
     case completedAt = "completed_at"

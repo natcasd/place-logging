@@ -225,6 +225,28 @@ class ApiTests(unittest.TestCase):
         )
         self.service.activity.assert_called_once_with(25)
 
+    def test_retries_failed_activity(self) -> None:
+        self.service.retry_ingest.return_value = canonical_result()
+
+        response = self.client.post(
+            "/api/v1/activity/34/retry",
+            headers={"Authorization": "Bearer api-secret"},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["ingest_id"], 34)
+        self.service.retry_ingest.assert_called_once_with(34)
+
+    def test_retry_rejects_missing_activity(self) -> None:
+        self.service.retry_ingest.return_value = None
+
+        response = self.client.post(
+            "/api/v1/activity/999/retry",
+            headers={"Authorization": "Bearer api-secret"},
+        )
+
+        self.assertEqual(response.status_code, 404)
+
     def test_confirms_activity_location_candidate(self) -> None:
         confirmed = canonical_result()["saved_entries"][0] | {
             "source_connection_id": 21,

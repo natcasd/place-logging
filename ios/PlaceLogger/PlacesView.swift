@@ -69,6 +69,14 @@ final class PlacesModel: ObservableObject {
     places = try await loadedEntries
     activity = try await loadedActivity
   }
+
+  func retryActivity(ingestID: Int) async throws {
+    try await api.retryActivity(ingestID: ingestID)
+    async let loadedEntries = api.fetchEntries()
+    async let loadedActivity = api.fetchActivity()
+    places = try await loadedEntries
+    activity = try await loadedActivity
+  }
 }
 
 struct PlacesView: View {
@@ -194,6 +202,9 @@ struct PlacesView: View {
       if let run = model.activity.first(where: { $0.id == ingestID }) {
         ActivityDetail(
           activity: run,
+          retry: {
+            try await model.retryActivity(ingestID: ingestID)
+          },
           deleteEntry: { entryID in
             try await model.deleteActivityEntry(id: entryID)
           },
@@ -540,13 +551,13 @@ private struct ActivityList: View {
 
                     Spacer(minLength: 8)
 
-                    if run.needsReview {
+                    if let badge = run.activityBadge {
                       HStack(spacing: 4) {
-                        Image(systemName: "exclamationmark.circle.fill")
-                        Text("Needs review")
+                        Image(systemName: badge.systemImage)
+                        Text(badge.text)
                       }
                         .font(.caption.weight(.semibold))
-                        .foregroundStyle(.yellow)
+                        .foregroundStyle(badge.color)
                         .lineLimit(1)
                     }
                   }
@@ -613,10 +624,12 @@ private struct ActivitySourceIcon: View {
 private struct ActivityDetail: View {
   @Environment(\.dismiss) private var dismiss
   let activity: IngestActivity
+  let retry: () async throws -> Void
   let deleteEntry: (Int) async throws -> Void
   let confirmLocation: (Int, String) async throws -> Void
   @State private var pendingDeletion: SavedEntryOutcome?
   @State private var deletingEntryID: Int?
+  @State private var isRetrying = false
   @State private var actionError: String?
 
   private var sourceDescription: String? {
@@ -670,14 +683,34 @@ private struct ActivityDetail: View {
                     color: .blue,
                     showsProgress: true
                   )
-                } else if activity.status == "failed" {
+                } else if activity.status == "failed" || activity.status == "retry_scheduled" {
                   ActivityStatePanel(
-                    title: "Processing failed",
+                    title: activity.status == "retry_scheduled"
+                      ? "\(activity.failureTitle) · Retry scheduled"
+                      : activity.failureTitle,
                     message: activity.errorMessage ?? activity.events.last?.message,
-                    systemImage: "xmark.circle.fill",
-                    color: .red,
+                    systemImage: activity.status == "retry_scheduled"
+                      ? "clock.arrow.circlepath"
+                      : "xmark.circle.fill",
+                    color: activity.status == "retry_scheduled" ? .orange : .red,
                     showsProgress: false
                   )
+
+                  Button {
+                    Task { await performRetry() }
+                  } label: {
+                    HStack {
+                      if isRetrying {
+                        ProgressView()
+                      } else {
+                        Image(systemName: "arrow.clockwise")
+                      }
+                      Text(isRetrying ? "Retrying…" : "Retry Now")
+                    }
+                    .frame(maxWidth: .infinity)
+                  }
+                  .buttonStyle(.borderedProminent)
+                  .disabled(isRetrying)
                 }
 
                 if !activity.results.isEmpty {
@@ -705,7 +738,7 @@ private struct ActivityDetail: View {
                       }
                     )
                   }
-                } else if activity.status != "processing" && activity.status != "failed" {
+                } else if !["processing", "failed", "retry_scheduled"].contains(activity.status) {
                   ContentUnavailableView(
                     "No Recommendations Kept",
                     systemImage: "tray",
@@ -780,6 +813,16 @@ private struct ActivityDetail: View {
     defer { deletingEntryID = nil }
     do {
       try await deleteEntry(result.entryID)
+    } catch {
+      actionError = error.localizedDescription
+    }
+  }
+
+  private func performRetry() async {
+    isRetrying = true
+    defer { isRetrying = false }
+    do {
+      try await retry()
     } catch {
       actionError = error.localizedDescription
     }
@@ -1149,6 +1192,23 @@ private extension IngestActivity {
 
   var needsReview: Bool {
     status == "partial"
+  }
+
+  var activityBadge: (text: String, systemImage: String, color: Color)? {
+    if status == "processing", (attemptCount ?? 1) > 1 {
+      return ("Retrying", "arrow.triangle.2.circlepath", .blue)
+    }
+    if status == "failed" || status == "retry_scheduled" {
+      return (
+        failureTitle,
+        status == "retry_scheduled" ? "clock.arrow.circlepath" : "xmark.circle.fill",
+        status == "retry_scheduled" ? .orange : .red
+      )
+    }
+    if needsReview {
+      return ("Needs review", "exclamationmark.circle.fill", .yellow)
+    }
+    return nil
   }
 }
 

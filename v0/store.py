@@ -5,7 +5,7 @@ import json
 import re
 import sqlite3
 import urllib.parse
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -105,6 +105,12 @@ CREATE TABLE IF NOT EXISTS ingest_runs (
   result_json     TEXT,
   error_type      TEXT,
   error_message   TEXT,
+  failure_kind    TEXT,
+  retryable       INTEGER NOT NULL DEFAULT 0,
+  attempt_count   INTEGER NOT NULL DEFAULT 1,
+  max_attempts    INTEGER NOT NULL DEFAULT 4,
+  next_retry_at   TIMESTAMP,
+  last_retry_at   TIMESTAMP,
   started_at      TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at      TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
   completed_at    TIMESTAMP
@@ -133,6 +139,15 @@ PLACE_COLUMN_MIGRATIONS = {
     "recurrence_text": "TEXT",
     "location_query": "TEXT",
     "location_name": "TEXT",
+}
+
+INGEST_RETRY_COLUMN_MIGRATIONS = {
+    "failure_kind": "TEXT",
+    "retryable": "INTEGER NOT NULL DEFAULT 0",
+    "attempt_count": "INTEGER NOT NULL DEFAULT 1",
+    "max_attempts": "INTEGER NOT NULL DEFAULT 4",
+    "next_retry_at": "TIMESTAMP",
+    "last_retry_at": "TIMESTAMP",
 }
 
 
@@ -432,6 +447,24 @@ def _migrate_user_prompt_columns(con: sqlite3.Connection) -> None:
             con.execute(f"ALTER TABLE {table} DROP COLUMN user_prompt")
 
 
+def _migrate_ingest_retry_columns(con: sqlite3.Connection) -> None:
+    """Add durable retry state without rewriting existing Activity history."""
+    if not _has_table(con, "ingest_runs"):
+        return
+    existing = {
+        row[1] for row in con.execute("PRAGMA table_info(ingest_runs)").fetchall()
+    }
+    for column, declaration in INGEST_RETRY_COLUMN_MIGRATIONS.items():
+        if column not in existing:
+            con.execute(
+                f"ALTER TABLE ingest_runs ADD COLUMN {column} {declaration}"
+            )
+    con.execute(
+        """CREATE INDEX IF NOT EXISTS idx_ingest_runs_due_retry
+             ON ingest_runs(status, next_retry_at)"""
+    )
+
+
 def _backup_before_legacy_places_removal(
     con: sqlite3.Connection,
     db_path: Path,
@@ -557,6 +590,7 @@ def init_db(db_path: Path) -> None:
         con.executescript(RECOMMENDATION_SCHEMA)
         _backup_before_user_prompt_removal(con, db_path)
         _migrate_user_prompt_columns(con)
+        _migrate_ingest_retry_columns(con)
         _backfill_recommendation_model(con)
         _backfill_ingest_runs(con)
         con.commit()
@@ -687,6 +721,294 @@ def start_ingest_run(
         con.close()
 
 
+def add_ingest_event(
+    db_path: Path,
+    run_id: int,
+    *,
+    stage: str,
+    status: str,
+    message: str,
+) -> None:
+    """Append user-readable attempt detail to one durable Activity record."""
+    con = _connect(db_path)
+    try:
+        con.execute(
+            """INSERT INTO ingest_events (ingest_run_id, stage, status, message)
+               VALUES (?, ?, ?, ?)""",
+            (run_id, stage, status, message),
+        )
+        con.execute(
+            "UPDATE ingest_runs SET updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+            (run_id,),
+        )
+        con.commit()
+    finally:
+        con.close()
+
+
+def get_ingest_run(db_path: Path, run_id: int) -> dict[str, Any] | None:
+    con = _connect(db_path)
+    con.row_factory = sqlite3.Row
+    try:
+        row = con.execute(
+            "SELECT * FROM ingest_runs WHERE id = ?",
+            (run_id,),
+        ).fetchone()
+        return dict(row) if row is not None else None
+    finally:
+        con.close()
+
+
+def find_reusable_ingest_run(db_path: Path, source_url: str) -> int | None:
+    """Reuse one failed logical save instead of creating duplicate failures."""
+    identity = canonical_source_url(source_url)
+    con = _connect(db_path)
+    con.row_factory = sqlite3.Row
+    try:
+        rows = con.execute(
+            """SELECT id, source_url
+                 FROM ingest_runs
+                WHERE status IN ('failed', 'retry_scheduled')
+                ORDER BY updated_at DESC, id DESC
+                LIMIT 500"""
+        ).fetchall()
+        for row in rows:
+            if canonical_source_url(row["source_url"]) == identity:
+                return int(row["id"])
+        return None
+    finally:
+        con.close()
+
+
+def prepare_ingest_retry(
+    db_path: Path,
+    run_id: int,
+    *,
+    automatic: bool,
+) -> dict[str, Any] | None:
+    """Atomically claim a failed/scheduled run and begin its next attempt."""
+    con = _connect(db_path)
+    con.row_factory = sqlite3.Row
+    try:
+        con.execute("BEGIN IMMEDIATE")
+        row = con.execute(
+            "SELECT * FROM ingest_runs WHERE id = ?",
+            (run_id,),
+        ).fetchone()
+        if row is None:
+            con.rollback()
+            return None
+        if automatic:
+            if row["status"] != "retry_scheduled":
+                con.rollback()
+                return None
+            if row["next_retry_at"] and row["next_retry_at"] > _utc_timestamp():
+                con.rollback()
+                return None
+            if row["attempt_count"] >= row["max_attempts"]:
+                con.rollback()
+                return None
+        elif row["status"] not in {"failed", "retry_scheduled"}:
+            con.rollback()
+            raise ValueError("Only failed or scheduled Activity can be retried")
+
+        item_id = row["item_id"]
+        if item_id is not None:
+            capture = con.execute(
+                "SELECT raw_payload_json FROM captures WHERE id = ?",
+                (item_id,),
+            ).fetchone()
+            mention_count = con.execute(
+                "SELECT COUNT(*) FROM recommendation_mentions WHERE item_id = ?",
+                (item_id,),
+            ).fetchone()[0]
+            metadata = _decode_json_object(capture[0]) if capture else {}
+            if mention_count or metadata.get("extraction_status") != "failed":
+                con.rollback()
+                raise ValueError(
+                    "This Activity already saved recommendations and cannot be retried"
+                )
+            con.execute("UPDATE ingest_runs SET item_id = NULL WHERE id = ?", (run_id,))
+            con.execute("DELETE FROM captures WHERE id = ?", (item_id,))
+
+        attempt_count = int(row["attempt_count"]) + 1
+        max_attempts = max(
+            int(row["max_attempts"]),
+            attempt_count if automatic else attempt_count + 2,
+        )
+        con.execute(
+            """UPDATE ingest_runs
+                  SET status = 'processing', stage = 'accepted', item_id = NULL,
+                      result_json = NULL, error_type = NULL, error_message = NULL,
+                      failure_kind = NULL, retryable = 0, attempt_count = ?,
+                      max_attempts = ?, next_retry_at = NULL,
+                      last_retry_at = CURRENT_TIMESTAMP,
+                      updated_at = CURRENT_TIMESTAMP, completed_at = NULL
+                WHERE id = ?""",
+            (attempt_count, max_attempts, run_id),
+        )
+        con.execute(
+            """INSERT INTO ingest_events (ingest_run_id, stage, status, message)
+               VALUES (?, 'accepted', 'processing', ?)""",
+            (
+                run_id,
+                (
+                    f"Automatic retry started (attempt {attempt_count} of {max_attempts})"
+                    if automatic
+                    else f"Manual retry started (attempt {attempt_count})"
+                ),
+            ),
+        )
+        con.commit()
+        result = dict(row)
+        result.update(
+            status="processing",
+            stage="accepted",
+            item_id=None,
+            attempt_count=attempt_count,
+            max_attempts=max_attempts,
+        )
+        return result
+    except Exception:
+        if con.in_transaction:
+            con.rollback()
+        raise
+    finally:
+        con.close()
+
+
+def record_ingest_failure(
+    db_path: Path,
+    run_id: int,
+    *,
+    stage: str,
+    error: Exception,
+    failure_kind: str,
+    user_message: str,
+    retryable: bool,
+    retry_delay_seconds: float | None,
+) -> str:
+    """Persist a final failure or schedule the same logical run for retry."""
+    con = _connect(db_path)
+    con.row_factory = sqlite3.Row
+    try:
+        row = con.execute(
+            "SELECT attempt_count, max_attempts FROM ingest_runs WHERE id = ?",
+            (run_id,),
+        ).fetchone()
+        if row is None:
+            raise ValueError("Activity not found")
+        should_retry = retryable and row["attempt_count"] < row["max_attempts"]
+        next_retry_at = None
+        if should_retry:
+            delay = max(1.0, float(retry_delay_seconds or 1.0))
+            next_retry_at = (
+                datetime.now(timezone.utc) + timedelta(seconds=delay)
+            ).strftime("%Y-%m-%d %H:%M:%S")
+        status = "retry_scheduled" if should_retry else "failed"
+        completion = None if should_retry else _utc_timestamp()
+        con.execute(
+            """UPDATE ingest_runs
+                  SET status = ?, stage = ?, item_id = NULL, result_json = NULL,
+                      error_type = ?, error_message = ?, failure_kind = ?,
+                      retryable = ?, next_retry_at = ?, updated_at = CURRENT_TIMESTAMP,
+                      completed_at = ?
+                WHERE id = ?""",
+            (
+                status,
+                stage,
+                type(error).__name__,
+                user_message,
+                failure_kind,
+                int(retryable),
+                next_retry_at,
+                completion,
+                run_id,
+            ),
+        )
+        event_message = (
+            f"{user_message} Automatic retry scheduled."
+            if should_retry
+            else user_message
+        )
+        con.execute(
+            """INSERT INTO ingest_events (ingest_run_id, stage, status, message)
+               VALUES (?, ?, ?, ?)""",
+            (run_id, stage, status, event_message),
+        )
+        con.commit()
+        return status
+    finally:
+        con.close()
+
+
+def due_retry_ids(db_path: Path, limit: int = 10) -> list[int]:
+    con = _connect(db_path)
+    try:
+        return [
+            int(row[0])
+            for row in con.execute(
+                """SELECT id
+                     FROM ingest_runs
+                    WHERE status = 'retry_scheduled'
+                      AND next_retry_at <= CURRENT_TIMESTAMP
+                      AND attempt_count < max_attempts
+                    ORDER BY next_retry_at, id
+                    LIMIT ?""",
+                (limit,),
+            ).fetchall()
+        ]
+    finally:
+        con.close()
+
+
+def recover_interrupted_ingests(db_path: Path) -> int:
+    """Schedule processing rows left behind by a server stop or restart."""
+    con = _connect(db_path)
+    con.row_factory = sqlite3.Row
+    try:
+        rows = con.execute(
+            """SELECT id, stage, attempt_count, max_attempts
+                 FROM ingest_runs WHERE status = 'processing'"""
+        ).fetchall()
+        for row in rows:
+            can_retry = row["attempt_count"] < row["max_attempts"]
+            new_status = "retry_scheduled" if can_retry else "failed"
+            con.execute(
+                """UPDATE ingest_runs
+                      SET status = ?, failure_kind = 'interrupted', retryable = 1,
+                          error_type = 'InterruptedIngest',
+                          error_message = 'Processing was interrupted by a server restart.',
+                          next_retry_at = CASE WHEN ? THEN CURRENT_TIMESTAMP ELSE NULL END,
+                          completed_at = CASE WHEN ? THEN NULL ELSE CURRENT_TIMESTAMP END,
+                          updated_at = CURRENT_TIMESTAMP
+                    WHERE id = ?""",
+                (new_status, int(can_retry), int(can_retry), row["id"]),
+            )
+            con.execute(
+                """INSERT INTO ingest_events (ingest_run_id, stage, status, message)
+                   VALUES (?, ?, ?, ?)""",
+                (
+                    row["id"],
+                    row["stage"],
+                    new_status,
+                    (
+                        "Server restarted during processing; retry scheduled"
+                        if can_retry
+                        else "Server restarted during the final processing attempt"
+                    ),
+                ),
+            )
+        con.commit()
+        return len(rows)
+    finally:
+        con.close()
+
+
+def _utc_timestamp() -> str:
+    return datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+
+
 def update_ingest_run(
     db_path: Path,
     run_id: int,
@@ -731,6 +1053,7 @@ def finish_ingest_run(
             """UPDATE ingest_runs
                   SET status = ?, stage = ?, item_id = ?, result_json = ?,
                       error_type = ?, error_message = ?,
+                      failure_kind = NULL, retryable = 0, next_retry_at = NULL,
                       updated_at = CURRENT_TIMESTAMP,
                       completed_at = CURRENT_TIMESTAMP
                 WHERE id = ?""",
@@ -1240,7 +1563,7 @@ def list_ingest_runs(db_path: Path, limit: int = 200) -> list[dict[str, Any]]:
             """SELECT r.*, i.raw_payload_json
                  FROM ingest_runs AS r
                  LEFT JOIN captures AS i ON i.id = r.item_id
-                ORDER BY r.started_at DESC, r.id DESC
+                ORDER BY r.updated_at DESC, r.id DESC
                 LIMIT ?""",
             (limit,),
         ).fetchall()
@@ -1289,6 +1612,12 @@ def list_ingest_runs(db_path: Path, limit: int = 200) -> list[dict[str, Any]]:
                     "stage": row["stage"],
                     "error_type": row["error_type"],
                     "error_message": row["error_message"],
+                    "failure_kind": row["failure_kind"],
+                    "retryable": bool(row["retryable"]),
+                    "attempt_count": row["attempt_count"],
+                    "max_attempts": row["max_attempts"],
+                    "next_retry_at": row["next_retry_at"],
+                    "last_retry_at": row["last_retry_at"],
                     "started_at": row["started_at"],
                     "updated_at": row["updated_at"],
                     "completed_at": row["completed_at"],
