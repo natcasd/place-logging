@@ -2,8 +2,7 @@
 
 The default mode performs read-only Google Place Details lookups and writes a
 reviewable JSON plan. ``--apply`` requires that completed plan, creates a SQLite
-backup, and updates only Locations whose display name is still missing. Legacy
-place rows are updated too so the compatibility API remains consistent.
+backup, and updates only Locations whose display name is still missing.
 """
 from __future__ import annotations
 
@@ -209,12 +208,6 @@ def apply_plan(db_path: Path, plan_path: Path, backup_dir: Path) -> tuple[int, P
             source.execute(
                 "UPDATE locations SET display_name = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
                 (update["display_name"], update["location_id"]),
-            )
-            source.execute(
-                """UPDATE places SET location_name = ?
-                    WHERE google_place_id = ?
-                      AND (location_name IS NULL OR trim(location_name) = '')""",
-                (update["display_name"], update["google_place_id"]),
             )
         source.commit()
     except Exception:

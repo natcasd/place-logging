@@ -166,10 +166,6 @@ class SavedEntry(BaseModel):
     sources: list[SavedEntrySource] = Field(default_factory=list)
 
 
-class PlacesResponse(BaseModel):
-    places: list[SavedEntry]
-
-
 class EntriesResponse(BaseModel):
     entries: list[SavedEntry]
 
@@ -231,12 +227,6 @@ class ConfirmActivityLocationRequest(BaseModel):
 
 class ConfirmActivityLocationResponse(BaseModel):
     entry: SavedEntryOutcome
-
-
-class DeletePlaceResponse(BaseModel):
-    place_id: int
-    deleted_places: int
-    deleted_items: int
 
 
 class DeleteEntryResponse(BaseModel):
@@ -409,21 +399,6 @@ def create_app(injected_runtime: Runtime | None = None) -> FastAPI:
     async def healthz() -> dict[str, str]:
         return {"status": "ok"}
 
-    @application.get("/api/v1/places", response_model=PlacesResponse)
-    async def get_places(
-        request: Request,
-        authorization: str | None = Header(default=None),
-        limit: int = 200,
-    ) -> dict[str, Any]:
-        runtime: Runtime = request.app.state.runtime
-        _require_ingest_auth(runtime, authorization)
-        if not 1 <= limit <= 500:
-            raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail="limit must be between 1 and 500",
-            )
-        return {"places": await asyncio.to_thread(runtime.service.places, limit)}
-
     @application.get("/api/v1/entries", response_model=EntriesResponse)
     async def get_entries(
         request: Request,
@@ -500,33 +475,6 @@ def create_app(injected_runtime: Runtime | None = None) -> FastAPI:
                 detail="Activity recommendation not found",
             )
         return {"entry": result}
-
-    @application.delete(
-        "/api/v1/places/{place_id}",
-        response_model=DeletePlaceResponse,
-    )
-    async def delete_saved_place(
-        place_id: int,
-        request: Request,
-        authorization: str | None = Header(default=None),
-    ) -> dict[str, int]:
-        runtime: Runtime = request.app.state.runtime
-        _require_ingest_auth(runtime, authorization)
-        result = await asyncio.to_thread(runtime.service.delete_place, place_id)
-        if result is None:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Saved place not found",
-            )
-        log.info(
-            "Saved place deleted request_id=%s place_id=%s deleted_places=%s "
-            "deleted_items=%s",
-            getattr(request.state, "request_id", "unknown"),
-            place_id,
-            result["deleted_places"],
-            result["deleted_items"],
-        )
-        return {"place_id": place_id, **result}
 
     @application.delete(
         "/api/v1/entries/{entry_id}",

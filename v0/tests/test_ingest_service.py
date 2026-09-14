@@ -175,18 +175,6 @@ class IngestServiceTests(unittest.TestCase):
             self.assertEqual(len(list_ingest_runs(db_path)), 2)
 
     @patch(
-        "ingest_service.delete_place",
-        return_value={"deleted_places": 2, "deleted_items": 1},
-    )
-    def test_deletes_logical_place(self, mock_delete) -> None:
-        service = IngestService(Path("/tmp/test.db"), Path("/tmp/downloads"))
-
-        result = service.delete_place(7)
-
-        mock_delete.assert_called_once_with(Path("/tmp/test.db"), 7)
-        self.assertEqual(result, {"deleted_places": 2, "deleted_items": 1})
-
-    @patch(
         "ingest_service.delete_entry",
         return_value={"deleted_entries": 1, "deleted_sources": 0},
     )

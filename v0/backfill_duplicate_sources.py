@@ -141,8 +141,6 @@ def _connections(con: sqlite3.Connection, item_id: int) -> list[sqlite3.Row]:
 
 def _delete_connection(con: sqlite3.Connection, connection: sqlite3.Row) -> None:
     con.execute("DELETE FROM recommendation_mentions WHERE id = ?", (connection["id"],))
-    if connection["legacy_place_id"] is not None:
-        con.execute("DELETE FROM places WHERE id = ?", (connection["legacy_place_id"],))
 
 
 def _merge_entry(con: sqlite3.Connection, old_id: int, target_id: int) -> None:
@@ -184,12 +182,7 @@ def _merge_item(con: sqlite3.Connection, duplicate_id: int, keeper_id: int) -> N
             continue
 
         # Preserve a recommendation found by only one processing pass by moving
-        # its connection (and compatibility row) onto the surviving Source.
-        if connection["legacy_place_id"] is not None:
-            con.execute(
-                "UPDATE places SET item_id = ?, ordinal = ? WHERE id = ?",
-                (keeper_id, next_ordinal, connection["legacy_place_id"]),
-            )
+        # its mention onto the surviving Capture.
         con.execute(
             "UPDATE recommendation_mentions SET item_id = ?, ordinal = ? WHERE id = ?",
             (keeper_id, next_ordinal, connection["id"]),
@@ -198,11 +191,10 @@ def _merge_item(con: sqlite3.Connection, duplicate_id: int, keeper_id: int) -> N
         keeper_entry_ids.add(connection["entry_id"])
         next_ordinal += 1
 
-    # Anything still attached to the redundant Source was already represented
-    # by the keeper and can now be removed with its compatibility row.
+    # Anything still attached to the redundant Capture was already represented
+    # by the keeper and can now be removed.
     for connection in _connections(con, duplicate_id):
         _delete_connection(con, connection)
-    con.execute("DELETE FROM places WHERE item_id = ?", (duplicate_id,))
     con.execute("DELETE FROM ingest_runs WHERE item_id = ?", (duplicate_id,))
     con.execute("DELETE FROM captures WHERE id = ?", (duplicate_id,))
 

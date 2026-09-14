@@ -55,7 +55,7 @@ class LocationNameBackfillTests(unittest.TestCase):
             "id,displayName",
         )
 
-    def test_plan_and_apply_backfill_locations_and_legacy_rows(self) -> None:
+    def test_plan_and_apply_backfill_locations(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
             db_path = root / "places.db"
@@ -102,10 +102,6 @@ class LocationNameBackfillTests(unittest.TestCase):
             try:
                 self.assertEqual(
                     con.execute("SELECT display_name FROM locations").fetchone()[0],
-                    "The Metropolitan Museum of Art",
-                )
-                self.assertEqual(
-                    con.execute("SELECT location_name FROM places").fetchone()[0],
                     "The Metropolitan Museum of Art",
                 )
             finally:

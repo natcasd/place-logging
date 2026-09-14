@@ -17,14 +17,12 @@ from pipeline import source_platform as detect_source_platform
 from source_identity import TIKTOK_HOSTS, TIKTOK_SHORT_HOSTS, canonical_source_url
 from store import (
     confirm_activity_location,
-    delete_place,
     delete_entry,
     delete_entries,
     find_processed_source,
     init_db,
     finish_ingest_run,
     list_ingest_runs,
-    list_places,
     list_sources,
     list_entries,
     save_ingest,
@@ -215,10 +213,6 @@ class IngestService:
             )
             raise
 
-    def places(self, limit: int = 200) -> list[dict[str, Any]]:
-        """Return saved entries through the legacy places interface."""
-        return list_places(self.db_path, limit)
-
     def entries(self, limit: int = 200) -> list[dict[str, Any]]:
         """Return canonical entries with their source-specific recommendations."""
         return list_entries(self.db_path, limit)
@@ -230,10 +224,6 @@ class IngestService:
     def activity(self, limit: int = 200) -> list[dict[str, Any]]:
         """Return durable processing history and canonical save outcomes."""
         return list_ingest_runs(self.db_path, limit)
-
-    def delete_place(self, place_id: int) -> dict[str, int] | None:
-        """Delete a logical place while preserving unrelated source places."""
-        return delete_place(self.db_path, place_id)
 
     def delete_entry(self, entry_id: int) -> dict[str, int] | None:
         """Delete one canonical entry without deleting its source posts."""

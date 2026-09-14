@@ -9,11 +9,9 @@ from pathlib import Path
 import store
 from store import (
     confirm_activity_location,
-    delete_place,
     delete_entry,
     delete_entries,
     init_db,
-    list_places,
     list_ingest_runs,
     list_sources,
     list_entry_types,
@@ -25,6 +23,49 @@ from store import (
 )
 
 
+LEGACY_PLACES_SCHEMA = """
+CREATE TABLE places (
+  id                         INTEGER PRIMARY KEY AUTOINCREMENT,
+  item_id                    INTEGER NOT NULL REFERENCES items(id),
+  ordinal                    INTEGER NOT NULL,
+  extracted_name             TEXT NOT NULL,
+  google_place_id            TEXT,
+  lat                        REAL,
+  lng                        REAL,
+  formatted_address          TEXT,
+  google_maps_url            TEXT,
+  location_name              TEXT,
+  dishes_json                TEXT,
+  why_its_cool               TEXT,
+  tags_json                  TEXT,
+  timestamp_seconds          REAL,
+  slide_index                INTEGER,
+  resolution_status          TEXT NOT NULL,
+  resolution_candidates_json TEXT,
+  entry_type                 TEXT NOT NULL DEFAULT 'Unknown',
+  description                TEXT NOT NULL DEFAULT '',
+  starts_at                  TEXT,
+  ends_at                    TEXT,
+  recurrence_text            TEXT,
+  location_query             TEXT
+);
+CREATE INDEX idx_places_item ON places(item_id);
+CREATE INDEX idx_places_google_id ON places(google_place_id);
+"""
+
+
+def pre_104_capture_schema() -> str:
+    return store.CAPTURE_SCHEMA.replace("captures", "items") + LEGACY_PLACES_SCHEMA
+
+
+def pre_105_recommendation_schema() -> str:
+    return store.RECOMMENDATION_SCHEMA.replace(
+        "  ordinal                    INTEGER NOT NULL,",
+        "  legacy_place_id            INTEGER UNIQUE REFERENCES places(id),\n"
+        "  ordinal                    INTEGER NOT NULL,",
+    )
+
+
 class StoreTests(unittest.TestCase):
     @staticmethod
     def resolved_place(name: str, google_place_id: str) -> dict:
@@ -34,7 +75,39 @@ class StoreTests(unittest.TestCase):
             "place": {"id": google_place_id},
         }
 
-    def test_lists_saved_places_newest_first(self) -> None:
+    def test_fresh_database_uses_only_canonical_persistence_model(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            db_path = Path(temp_dir) / "places.db"
+            init_db(db_path)
+            init_db(db_path)
+
+            con = sqlite3.connect(db_path)
+            try:
+                tables = {
+                    row[0]
+                    for row in con.execute(
+                        "SELECT name FROM sqlite_master WHERE type = 'table'"
+                    )
+                }
+                mention_columns = {
+                    row[1]
+                    for row in con.execute(
+                        "PRAGMA table_info(recommendation_mentions)"
+                    )
+                }
+                foreign_key_errors = con.execute("PRAGMA foreign_key_check").fetchall()
+            finally:
+                con.close()
+
+            self.assertTrue(
+                {"captures", "recommendations", "recommendation_mentions", "locations"}
+                <= tables
+            )
+            self.assertNotIn("places", tables)
+            self.assertNotIn("legacy_place_id", mention_columns)
+            self.assertEqual(foreign_key_errors, [])
+
+    def test_lists_saved_recommendations_newest_first(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             db_path = Path(temp_dir) / "places.db"
             init_db(db_path)
@@ -75,49 +148,53 @@ class StoreTests(unittest.TestCase):
                 },
             )
 
-            places = list_places(db_path, 10)
+            recommendations = list_entries(db_path, 10)
 
-            self.assertEqual(len(places), 1)
-            self.assertEqual(places[0]["name"], "La Once Mil")
-            self.assertEqual(places[0]["dishes"], ["sandwich"])
-            self.assertEqual(places[0]["tags"], ["bakery"])
-            self.assertEqual(places[0]["source_url"], "https://www.instagram.com/reel/test/")
-            self.assertEqual(places[0]["latitude"], 19.42)
-            self.assertEqual(places[0]["location_name"], "Google Location Name")
-            self.assertEqual(places[0]["timestamp_seconds"], 12.5)
-            self.assertEqual(places[0]["slide_index"], 3)
-            self.assertEqual(places[0]["type"], "Restaurant")
+            self.assertEqual(len(recommendations), 1)
+            self.assertEqual(recommendations[0]["name"], "La Once Mil")
+            self.assertEqual(recommendations[0]["dishes"], ["sandwich"])
+            self.assertEqual(recommendations[0]["tags"], ["bakery"])
             self.assertEqual(
-                places[0]["description"],
+                recommendations[0]["source_url"],
+                "https://www.instagram.com/reel/test/",
+            )
+            self.assertEqual(recommendations[0]["latitude"], 19.42)
+            self.assertEqual(recommendations[0]["location_name"], "Google Location Name")
+            self.assertEqual(recommendations[0]["timestamp_seconds"], 12.5)
+            self.assertEqual(recommendations[0]["slide_index"], 3)
+            self.assertEqual(recommendations[0]["type"], "Restaurant")
+            self.assertEqual(
+                recommendations[0]["description"],
                 "A bakery with great bread and sandwiches.",
             )
-            self.assertEqual(places[0]["starts_at"], "2026-09-01")
-            self.assertEqual(places[0]["ends_at"], "2026-09-30")
-            self.assertEqual(places[0]["recurrence_text"], "Thursday - Sunday")
-            canonical = list_entries(db_path)[0]
-            self.assertEqual(canonical["starts_at"], "2026-09-01")
-            self.assertEqual(canonical["ends_at"], "2026-09-30")
-            self.assertEqual(canonical["recurrence_text"], "Thursday - Sunday")
-            self.assertEqual(len(canonical["sources"]), 1)
+            self.assertEqual(recommendations[0]["starts_at"], "2026-09-01")
+            self.assertEqual(recommendations[0]["ends_at"], "2026-09-30")
             self.assertEqual(
-                canonical["sources"][0]["description"],
+                recommendations[0]["recurrence_text"], "Thursday - Sunday"
+            )
+            self.assertEqual(len(recommendations[0]["sources"]), 1)
+            self.assertEqual(
+                recommendations[0]["sources"][0]["description"],
                 "A bakery with great bread and sandwiches.",
             )
             self.assertEqual(list_entry_types(db_path), ["Restaurant"])
 
-    def test_init_db_migrates_existing_places_table(self) -> None:
+    def test_init_db_backfills_and_removes_legacy_places_table(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
-            db_path = Path(temp_dir) / "places.db"
+            root = Path(temp_dir)
+            db_path = root / "places.db"
             con = sqlite3.connect(db_path)
+            con.executescript(pre_104_capture_schema())
             con.execute(
-                """CREATE TABLE places (
-                     id INTEGER PRIMARY KEY,
-                     item_id INTEGER NOT NULL,
-                     google_place_id TEXT
-                )"""
+                """INSERT INTO items (id, vertical, source_url)
+                   VALUES (9, 'entry', 'https://example.com/legacy')"""
             )
             con.execute(
-                "INSERT INTO places (id, item_id, google_place_id) VALUES (1, 9, 'legacy')"
+                """INSERT INTO places
+                   (id, item_id, ordinal, extracted_name, google_place_id,
+                    resolution_status, entry_type, description)
+                   VALUES (1, 9, 0, 'Legacy Cafe', 'legacy', 'auto', 'Café',
+                           'A preserved recommendation')"""
             )
             con.commit()
             con.close()
@@ -126,28 +203,30 @@ class StoreTests(unittest.TestCase):
 
             con = sqlite3.connect(db_path)
             try:
-                columns = {
-                    row[1]
-                    for row in con.execute("PRAGMA table_info(places)").fetchall()
+                tables = {
+                    row[0]
+                    for row in con.execute(
+                        "SELECT name FROM sqlite_master WHERE type = 'table'"
+                    )
                 }
-            finally:
-                con.close()
-            self.assertIn("timestamp_seconds", columns)
-            self.assertIn("slide_index", columns)
-            self.assertIn("entry_type", columns)
-            self.assertIn("description", columns)
-            self.assertIn("starts_at", columns)
-            self.assertIn("ends_at", columns)
-            self.assertIn("location_name", columns)
-            con = sqlite3.connect(db_path)
-            try:
-                legacy = con.execute(
-                    "SELECT google_place_id, entry_type FROM places WHERE id = 1"
+                migrated = con.execute(
+                    """SELECT r.name, r.entry_type, rm.description, c.id
+                         FROM recommendations AS r
+                         JOIN recommendation_mentions AS rm ON rm.entry_id = r.id
+                         JOIN captures AS c ON c.id = rm.item_id"""
                 ).fetchone()
+                foreign_key_errors = con.execute("PRAGMA foreign_key_check").fetchall()
             finally:
                 con.close()
-            self.assertEqual(legacy, ("legacy", "Unknown"))
-            self.assertEqual(len(list(Path(temp_dir).glob("*.pre-entries-*.bak"))), 1)
+            self.assertNotIn("places", tables)
+            self.assertEqual(
+                migrated,
+                ("Legacy Cafe", "Café", "A preserved recommendation", 9),
+            )
+            self.assertEqual(foreign_key_errors, [])
+            self.assertEqual(
+                len(list(root.glob("*.pre-legacy-places-removal-*.bak"))), 1
+            )
 
     def test_init_db_removes_user_prompt_columns_without_losing_data(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -244,13 +323,11 @@ class StoreTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
             db_path = root / "places.db"
-            legacy_schema = (
-                store.CAPTURE_AND_LEGACY_PLACE_SCHEMA
-                .replace("captures", "items")
-                .replace("entry_type", "thing_type")
+            legacy_schema = pre_104_capture_schema().replace(
+                "entry_type", "thing_type"
             )
             legacy_normalized = (
-                store.RECOMMENDATION_SCHEMA
+                pre_105_recommendation_schema()
                 .replace("recommendation_mentions", "thing_sources")
                 .replace("entry_id", "thing_id")
                 .replace("entry_type", "thing_type")
@@ -316,9 +393,6 @@ class StoreTests(unittest.TestCase):
                          JOIN recommendation_mentions AS rm ON rm.entry_id = r.id
                          JOIN captures AS c ON c.id = rm.item_id"""
                 ).fetchone()
-                place_type = con.execute(
-                    "SELECT entry_type FROM places WHERE id = 5"
-                ).fetchone()[0]
                 activity_results = json.loads(
                     con.execute(
                         "SELECT result_json FROM ingest_runs WHERE id = 9"
@@ -340,7 +414,7 @@ class StoreTests(unittest.TestCase):
                     "recommendation",
                 ),
             )
-            self.assertEqual(place_type, "Restaurant")
+            self.assertNotIn("places", tables)
             self.assertEqual(
                 activity_results,
                 [{"entry_id": 7, "name": "S&P Lunch"}],
@@ -351,11 +425,9 @@ class StoreTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
             db_path = root / "places.db"
-            legacy_capture_schema = store.CAPTURE_AND_LEGACY_PLACE_SCHEMA.replace(
-                "captures", "items"
-            )
+            legacy_capture_schema = pre_104_capture_schema()
             legacy_recommendation_schema = (
-                store.RECOMMENDATION_SCHEMA
+                pre_105_recommendation_schema()
                 .replace("recommendation_mentions", "entry_sources")
                 .replace("recommendations", "entries")
                 .replace("captures", "items")
@@ -426,9 +498,6 @@ class StoreTests(unittest.TestCase):
                          JOIN movie_enrichments AS me ON me.entry_id = r.id
                          JOIN ingest_runs AS ir ON ir.item_id = c.id"""
                 ).fetchone()
-                place_fk_target = con.execute(
-                    "PRAGMA foreign_key_list(places)"
-                ).fetchone()[2]
                 foreign_key_errors = con.execute("PRAGMA foreign_key_check").fetchall()
             finally:
                 con.close()
@@ -438,6 +507,7 @@ class StoreTests(unittest.TestCase):
                 <= tables
             )
             self.assertTrue({"items", "entries", "entry_sources"}.isdisjoint(tables))
+            self.assertNotIn("places", tables)
             self.assertEqual(
                 migrated,
                 (
@@ -450,42 +520,32 @@ class StoreTests(unittest.TestCase):
                     41,
                 ),
             )
-            self.assertEqual(place_fk_target, "captures")
             self.assertEqual(foreign_key_errors, [])
             self.assertEqual(
                 len(list(root.glob("*.pre-capture-recommendation-rename-*.bak"))),
                 1,
             )
-
-    def test_normalized_migration_backs_up_and_backfills_legacy_rows(self) -> None:
-        with tempfile.TemporaryDirectory() as temp_dir:
-            db_path = Path(temp_dir) / "places.db"
-            init_db(db_path)
-            save_ingest(
-                db_path,
-                {
-                    "source_url": "https://www.instagram.com/reel/legacy/",
-                    "metadata": {},
-                    "resolved_entries": [
-                        self.resolved_place("Legacy Restaurant", "places/legacy")
-                    ],
-                },
+            cleanup_backups = list(
+                root.glob("*.pre-legacy-places-removal-*.bak")
             )
-            con = sqlite3.connect(db_path)
-            con.executescript(
-                "DROP TABLE recommendation_mentions; "
-                "DROP TABLE recommendations; DROP TABLE locations;"
-            )
-            con.commit()
-            con.close()
-
-            init_db(db_path)
-
-            self.assertEqual([entry["name"] for entry in list_entries(db_path)], ["Legacy Restaurant"])
-            self.assertEqual(
-                len(list(Path(temp_dir).glob("*.pre-normalized-*.bak"))),
-                1,
-            )
+            self.assertEqual(len(cleanup_backups), 1)
+            backup = sqlite3.connect(cleanup_backups[0])
+            try:
+                self.assertEqual(
+                    backup.execute("SELECT COUNT(*) FROM places").fetchone()[0],
+                    1,
+                )
+                self.assertIn(
+                    "legacy_place_id",
+                    {
+                        row[1]
+                        for row in backup.execute(
+                            "PRAGMA table_info(recommendation_mentions)"
+                        )
+                    },
+                )
+            finally:
+                backup.close()
 
     def test_conservative_matching_merges_venue_aliases_but_not_exhibits(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -1033,66 +1093,6 @@ class StoreTests(unittest.TestCase):
 
             self.assertIsNone(delete_entries(db_path, [entry["id"], 999]))
             self.assertEqual([saved["name"] for saved in list_entries(db_path)], ["Keep Me"])
-
-    def test_delete_place_removes_all_references_but_preserves_post_siblings(
-        self,
-    ) -> None:
-        with tempfile.TemporaryDirectory() as temp_dir:
-            db_path = Path(temp_dir) / "places.db"
-            init_db(db_path)
-            save_ingest(
-                db_path,
-                {
-                    "source_url": "https://www.instagram.com/reel/multiple/",
-                    "metadata": {},
-                    "places_extracted": [],
-                    "resolved_places": [
-                        self.resolved_place("Delete Me", "places/delete"),
-                        self.resolved_place("Keep Me", "places/keep"),
-                    ],
-                },
-            )
-            save_ingest(
-                db_path,
-                {
-                    "source_url": "https://www.instagram.com/reel/delete-only/",
-                    "metadata": {},
-                    "places_extracted": [],
-                    "resolved_places": [
-                        self.resolved_place("Delete Me", "places/delete"),
-                    ],
-                },
-            )
-            selected = next(
-                place
-                for place in list_places(db_path, 10)
-                if place["google_place_id"] == "places/delete"
-            )
-
-            result = delete_place(db_path, selected["id"])
-
-            self.assertEqual(result, {"deleted_places": 2, "deleted_items": 0})
-            remaining = list_places(db_path, 10)
-            self.assertEqual([place["name"] for place in remaining], ["Keep Me"])
-            self.assertEqual(
-                remaining[0]["source_url"],
-                "https://www.instagram.com/reel/multiple/",
-            )
-            con = sqlite3.connect(db_path)
-            try:
-                self.assertEqual(
-                    con.execute("SELECT COUNT(*) FROM captures").fetchone()[0], 2
-                )
-            finally:
-                con.close()
-
-    def test_delete_place_returns_none_for_unknown_id(self) -> None:
-        with tempfile.TemporaryDirectory() as temp_dir:
-            db_path = Path(temp_dir) / "places.db"
-            init_db(db_path)
-
-            self.assertIsNone(delete_place(db_path, 999))
-
 
 if __name__ == "__main__":
     unittest.main()

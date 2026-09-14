@@ -1,9 +1,5 @@
 import Foundation
 
-struct PlacesEnvelope: Decodable {
-  let places: [SavedEntry]
-}
-
 struct EntriesEnvelope: Decodable {
   let entries: [SavedEntry]
 }

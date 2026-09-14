@@ -87,6 +87,8 @@ class ApiTests(unittest.TestCase):
             self.assertNotIn("delivery", properties)
             self.assertNotIn("delivery_status", properties)
         self.assertNotIn("/webhook", schema["paths"])
+        self.assertNotIn("/api/v1/places", schema["paths"])
+        self.assertNotIn("/api/v1/places/{place_id}", schema["paths"])
 
     def test_ingest_requires_bearer_token(self) -> None:
         response = self.client.post(
@@ -95,46 +97,6 @@ class ApiTests(unittest.TestCase):
         )
         self.assertEqual(response.status_code, 401)
         self.service.ingest.assert_not_called()
-
-    def test_places_requires_bearer_token(self) -> None:
-        response = self.client.get("/api/v1/places")
-
-        self.assertEqual(response.status_code, 401)
-        self.service.places.assert_not_called()
-
-    def test_places_returns_saved_places(self) -> None:
-        self.service.places.return_value = [
-            {
-                "id": 7,
-                "item_id": 12,
-                "ordinal": 0,
-                "name": "Test Place",
-                "google_place_id": "places/test",
-                "latitude": 40.7,
-                "longitude": -74.0,
-                "formatted_address": "123 Test St",
-                "google_maps_url": "https://maps.google.com/test",
-                "dishes": ["cream soda"],
-                "why_its_cool": "A classic.",
-                "tags": ["deli"],
-                "timestamp_seconds": 13.2,
-                "slide_index": None,
-                "resolution_status": "resolved",
-                "source_url": "https://youtu.be/test",
-                "saved_at": "2026-08-13 12:00:00",
-            }
-        ]
-
-        response = self.client.get(
-            "/api/v1/places?limit=25",
-            headers={"Authorization": "Bearer api-secret"},
-        )
-
-        self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.json()["places"][0]["name"], "Test Place")
-        self.assertEqual(response.json()["places"][0]["timestamp_seconds"], 13.2)
-        self.assertIsNone(response.json()["places"][0]["slide_index"])
-        self.service.places.assert_called_once_with(25)
 
     def test_entries_returns_location_and_non_location_entries(self) -> None:
         self.service.entries.return_value = [
@@ -308,15 +270,6 @@ class ApiTests(unittest.TestCase):
             {"detail": "Select one of the available location candidates"},
         )
 
-    def test_places_rejects_excessive_limit(self) -> None:
-        response = self.client.get(
-            "/api/v1/places?limit=501",
-            headers={"Authorization": "Bearer api-secret"},
-        )
-
-        self.assertEqual(response.status_code, 422)
-        self.service.places.assert_not_called()
-
     def test_entries_accepts_temporary_thousand_item_limit(self) -> None:
         self.service.entries.return_value = []
 
@@ -327,41 +280,6 @@ class ApiTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.service.entries.assert_called_once_with(1000)
-
-    def test_delete_place_requires_bearer_token(self) -> None:
-        response = self.client.delete("/api/v1/places/7")
-
-        self.assertEqual(response.status_code, 401)
-        self.service.delete_place.assert_not_called()
-
-    def test_delete_place_returns_deleted_counts(self) -> None:
-        self.service.delete_place.return_value = {
-            "deleted_places": 2,
-            "deleted_items": 1,
-        }
-
-        response = self.client.delete(
-            "/api/v1/places/7",
-            headers={"Authorization": "Bearer api-secret"},
-        )
-
-        self.assertEqual(response.status_code, 200)
-        self.assertEqual(
-            response.json(),
-            {"place_id": 7, "deleted_places": 2, "deleted_items": 1},
-        )
-        self.service.delete_place.assert_called_once_with(7)
-
-    def test_delete_place_returns_not_found(self) -> None:
-        self.service.delete_place.return_value = None
-
-        response = self.client.delete(
-            "/api/v1/places/999",
-            headers={"Authorization": "Bearer api-secret"},
-        )
-
-        self.assertEqual(response.status_code, 404)
-        self.assertEqual(response.json(), {"detail": "Saved place not found"})
 
     def test_delete_entry_uses_compatible_store_operation(self) -> None:
         self.service.delete_entry.return_value = {
