@@ -53,7 +53,7 @@ def duplicate_groups(con: sqlite3.Connection) -> list[dict[str, Any]]:
     con.row_factory = sqlite3.Row
     rows = con.execute(
         """SELECT i.*, r.status AS ingest_status
-             FROM items AS i
+             FROM captures AS i
              LEFT JOIN ingest_runs AS r ON r.item_id = i.id
             ORDER BY i.created_at, i.id"""
     ).fetchall()
@@ -131,8 +131,8 @@ def _connections(con: sqlite3.Connection, item_id: int) -> list[sqlite3.Row]:
     con.row_factory = sqlite3.Row
     return con.execute(
         """SELECT ts.*, t.starts_at, t.ends_at
-             FROM entry_sources AS ts
-             JOIN entries AS t ON t.id = ts.entry_id
+             FROM recommendation_mentions AS ts
+             JOIN recommendations AS t ON t.id = ts.entry_id
             WHERE ts.item_id = ?
             ORDER BY ts.ordinal, ts.id""",
         (item_id,),
@@ -140,7 +140,7 @@ def _connections(con: sqlite3.Connection, item_id: int) -> list[sqlite3.Row]:
 
 
 def _delete_connection(con: sqlite3.Connection, connection: sqlite3.Row) -> None:
-    con.execute("DELETE FROM entry_sources WHERE id = ?", (connection["id"],))
+    con.execute("DELETE FROM recommendation_mentions WHERE id = ?", (connection["id"],))
     if connection["legacy_place_id"] is not None:
         con.execute("DELETE FROM places WHERE id = ?", (connection["legacy_place_id"],))
 
@@ -151,21 +151,21 @@ def _merge_entry(con: sqlite3.Connection, old_id: int, target_id: int) -> None:
         return
     con.row_factory = sqlite3.Row
     old_connections = con.execute(
-        "SELECT * FROM entry_sources WHERE entry_id = ? ORDER BY id", (old_id,)
+        "SELECT * FROM recommendation_mentions WHERE entry_id = ? ORDER BY id", (old_id,)
     ).fetchall()
     for connection in old_connections:
         conflict = con.execute(
-            "SELECT 1 FROM entry_sources WHERE entry_id = ? AND item_id = ?",
+            "SELECT 1 FROM recommendation_mentions WHERE entry_id = ? AND item_id = ?",
             (target_id, connection["item_id"]),
         ).fetchone()
         if conflict:
             _delete_connection(con, connection)
         else:
             con.execute(
-                "UPDATE entry_sources SET entry_id = ? WHERE id = ?",
+                "UPDATE recommendation_mentions SET entry_id = ? WHERE id = ?",
                 (target_id, connection["id"]),
             )
-    con.execute("DELETE FROM entries WHERE id = ?", (old_id,))
+    con.execute("DELETE FROM recommendations WHERE id = ?", (old_id,))
 
 
 def _merge_item(con: sqlite3.Connection, duplicate_id: int, keeper_id: int) -> None:
@@ -191,7 +191,7 @@ def _merge_item(con: sqlite3.Connection, duplicate_id: int, keeper_id: int) -> N
                 (keeper_id, next_ordinal, connection["legacy_place_id"]),
             )
         con.execute(
-            "UPDATE entry_sources SET item_id = ?, ordinal = ? WHERE id = ?",
+            "UPDATE recommendation_mentions SET item_id = ?, ordinal = ? WHERE id = ?",
             (keeper_id, next_ordinal, connection["id"]),
         )
         keeper_by_key[_connection_key(connection)] = connection
@@ -204,7 +204,7 @@ def _merge_item(con: sqlite3.Connection, duplicate_id: int, keeper_id: int) -> N
         _delete_connection(con, connection)
     con.execute("DELETE FROM places WHERE item_id = ?", (duplicate_id,))
     con.execute("DELETE FROM ingest_runs WHERE item_id = ?", (duplicate_id,))
-    con.execute("DELETE FROM items WHERE id = ?", (duplicate_id,))
+    con.execute("DELETE FROM captures WHERE id = ?", (duplicate_id,))
 
 
 def apply_plan(
@@ -234,10 +234,10 @@ def apply_plan(
         backup.close()
 
     before = {
-        "items": con.execute("SELECT COUNT(*) FROM items").fetchone()[0],
-        "entries": con.execute("SELECT COUNT(*) FROM entries").fetchone()[0],
+        "items": con.execute("SELECT COUNT(*) FROM captures").fetchone()[0],
+        "entries": con.execute("SELECT COUNT(*) FROM recommendations").fetchone()[0],
         "locations": con.execute("SELECT COUNT(*) FROM locations").fetchone()[0],
-        "connections": con.execute("SELECT COUNT(*) FROM entry_sources").fetchone()[0],
+        "connections": con.execute("SELECT COUNT(*) FROM recommendation_mentions").fetchone()[0],
     }
     try:
         con.execute("BEGIN IMMEDIATE")
@@ -250,12 +250,14 @@ def apply_plan(
                 _merge_item(con, duplicate["item_id"], keeper_id)
 
         con.execute(
-            "DELETE FROM entries WHERE NOT EXISTS "
-            "(SELECT 1 FROM entry_sources WHERE entry_sources.entry_id = entries.id)"
+            "DELETE FROM recommendations WHERE NOT EXISTS "
+            "(SELECT 1 FROM recommendation_mentions "
+            "WHERE recommendation_mentions.entry_id = recommendations.id)"
         )
         con.execute(
             "DELETE FROM locations WHERE NOT EXISTS "
-            "(SELECT 1 FROM entries WHERE entries.location_id = locations.id)"
+            "(SELECT 1 FROM recommendations "
+            "WHERE recommendations.location_id = locations.id)"
         )
         foreign_key_errors = con.execute("PRAGMA foreign_key_check").fetchall()
         if foreign_key_errors:
@@ -269,10 +271,10 @@ def apply_plan(
         raise
 
     after = {
-        "items": con.execute("SELECT COUNT(*) FROM items").fetchone()[0],
-        "entries": con.execute("SELECT COUNT(*) FROM entries").fetchone()[0],
+        "items": con.execute("SELECT COUNT(*) FROM captures").fetchone()[0],
+        "entries": con.execute("SELECT COUNT(*) FROM recommendations").fetchone()[0],
         "locations": con.execute("SELECT COUNT(*) FROM locations").fetchone()[0],
-        "connections": con.execute("SELECT COUNT(*) FROM entry_sources").fetchone()[0],
+        "connections": con.execute("SELECT COUNT(*) FROM recommendation_mentions").fetchone()[0],
     }
     con.close()
     return {

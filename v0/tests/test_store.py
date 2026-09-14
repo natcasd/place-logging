@@ -170,10 +170,10 @@ class StoreTests(unittest.TestCase):
                 "instagram",
             )
             con = sqlite3.connect(db_path)
-            con.execute("ALTER TABLE items ADD COLUMN user_prompt TEXT")
+            con.execute("ALTER TABLE captures ADD COLUMN user_prompt TEXT")
             con.execute("ALTER TABLE ingest_runs ADD COLUMN user_prompt TEXT")
             con.execute(
-                "UPDATE items SET user_prompt = 'legacy source prompt' WHERE id = ?",
+                "UPDATE captures SET user_prompt = 'legacy source prompt' WHERE id = ?",
                 (item_id,),
             )
             con.execute(
@@ -189,14 +189,14 @@ class StoreTests(unittest.TestCase):
             con = sqlite3.connect(db_path)
             try:
                 item_columns = {
-                    row[1] for row in con.execute("PRAGMA table_info(items)").fetchall()
+                    row[1] for row in con.execute("PRAGMA table_info(captures)").fetchall()
                 }
                 run_columns = {
                     row[1]
                     for row in con.execute("PRAGMA table_info(ingest_runs)").fetchall()
                 }
                 source_url = con.execute(
-                    "SELECT source_url FROM items WHERE id = ?", (item_id,)
+                    "SELECT source_url FROM captures WHERE id = ?", (item_id,)
                 ).fetchone()[0]
                 run = con.execute(
                     "SELECT source_url, source_platform, status FROM ingest_runs WHERE id = ?",
@@ -227,7 +227,7 @@ class StoreTests(unittest.TestCase):
             try:
                 self.assertEqual(
                     backup.execute(
-                        "SELECT user_prompt FROM items WHERE id = ?", (item_id,)
+                        "SELECT user_prompt FROM captures WHERE id = ?", (item_id,)
                     ).fetchone()[0],
                     "legacy source prompt",
                 )
@@ -244,13 +244,18 @@ class StoreTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
             db_path = root / "places.db"
-            legacy_schema = store.SCHEMA.replace("entry_type", "thing_type")
+            legacy_schema = (
+                store.CAPTURE_AND_LEGACY_PLACE_SCHEMA
+                .replace("captures", "items")
+                .replace("entry_type", "thing_type")
+            )
             legacy_normalized = (
-                store.NORMALIZED_SCHEMA
-                .replace("entry_sources", "thing_sources")
+                store.RECOMMENDATION_SCHEMA
+                .replace("recommendation_mentions", "thing_sources")
                 .replace("entry_id", "thing_id")
                 .replace("entry_type", "thing_type")
-                .replace("entries", "things")
+                .replace("recommendations", "things")
+                .replace("captures", "items")
             )
             con = sqlite3.connect(db_path)
             con.executescript(legacy_schema)
@@ -305,11 +310,11 @@ class StoreTests(unittest.TestCase):
                     )
                 }
                 row = con.execute(
-                    """SELECT e.id, e.entry_type, e.identity_key,
-                              es.id, es.entry_id, i.vertical
-                         FROM entries AS e
-                         JOIN entry_sources AS es ON es.entry_id = e.id
-                         JOIN items AS i ON i.id = es.item_id"""
+                    """SELECT r.id, r.entry_type, r.identity_key,
+                              rm.id, rm.entry_id, c.vertical
+                         FROM recommendations AS r
+                         JOIN recommendation_mentions AS rm ON rm.entry_id = r.id
+                         JOIN captures AS c ON c.id = rm.item_id"""
                 ).fetchone()
                 place_type = con.execute(
                     "SELECT entry_type FROM places WHERE id = 5"
@@ -329,10 +334,10 @@ class StoreTests(unittest.TestCase):
                 (
                     7,
                     "Restaurant",
-                    "entry|query:|name:s p lunch|type:restaurant|starts:|ends:",
+                    "recommendation|query:|name:s p lunch|type:restaurant|starts:|ends:",
                     8,
                     7,
-                    "entry",
+                    "recommendation",
                 ),
             )
             self.assertEqual(place_type, "Restaurant")
@@ -341,6 +346,116 @@ class StoreTests(unittest.TestCase):
                 [{"entry_id": 7, "name": "S&P Lunch"}],
             )
             self.assertEqual(len(list(root.glob("*.pre-entry-rename-*.bak"))), 1)
+
+    def test_init_db_renames_current_core_tables_once_without_data_loss(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            db_path = root / "places.db"
+            legacy_capture_schema = store.CAPTURE_AND_LEGACY_PLACE_SCHEMA.replace(
+                "captures", "items"
+            )
+            legacy_recommendation_schema = (
+                store.RECOMMENDATION_SCHEMA
+                .replace("recommendation_mentions", "entry_sources")
+                .replace("recommendations", "entries")
+                .replace("captures", "items")
+            )
+            con = sqlite3.connect(db_path)
+            con.executescript(legacy_capture_schema)
+            con.executescript(legacy_recommendation_schema)
+            con.execute(
+                """INSERT INTO items (id, vertical, source_url)
+                   VALUES (41, 'entry', 'https://example.com/capture')"""
+            )
+            con.execute(
+                """INSERT INTO places
+                   (id, item_id, ordinal, extracted_name, resolution_status,
+                    entry_type)
+                   VALUES (51, 41, 0, 'Migration Movie', 'auto', 'Movie')"""
+            )
+            con.execute(
+                """INSERT INTO locations (id, google_place_id, display_name)
+                   VALUES (61, 'google-migration', 'Migration Theater')"""
+            )
+            con.execute(
+                """INSERT INTO entries
+                   (id, name, normalized_name, entry_type, type_key,
+                    identity_key, location_id)
+                   VALUES (71, 'Migration Movie', 'migration movie', 'Movie',
+                           'movie',
+                           'entry|query:migration|name:migration movie|type:movie|starts:|ends:',
+                           61)"""
+            )
+            con.execute(
+                """INSERT INTO entry_sources
+                   (id, entry_id, item_id, legacy_place_id, ordinal,
+                    source_name, source_type, resolution_status)
+                   VALUES (81, 71, 41, 51, 0, 'Migration Movie', 'Movie', 'auto')"""
+            )
+            con.execute(
+                """INSERT INTO movie_enrichments
+                   (entry_id, provider, match_status)
+                   VALUES (71, 'wikidata', 'matched')"""
+            )
+            con.execute(
+                """INSERT INTO ingest_runs
+                   (id, source_url, source_platform, status, stage, item_id)
+                   VALUES (91, 'https://example.com/capture', 'other',
+                           'completed', 'completed', 41)"""
+            )
+            con.commit()
+            con.close()
+
+            init_db(db_path)
+            init_db(db_path)
+
+            con = sqlite3.connect(db_path)
+            try:
+                tables = {
+                    row[0]
+                    for row in con.execute(
+                        "SELECT name FROM sqlite_master WHERE type = 'table'"
+                    )
+                }
+                migrated = con.execute(
+                    """SELECT r.id, r.identity_key, rm.id, c.id, c.vertical,
+                              me.entry_id, ir.item_id
+                         FROM recommendations AS r
+                         JOIN recommendation_mentions AS rm ON rm.entry_id = r.id
+                         JOIN captures AS c ON c.id = rm.item_id
+                         JOIN movie_enrichments AS me ON me.entry_id = r.id
+                         JOIN ingest_runs AS ir ON ir.item_id = c.id"""
+                ).fetchone()
+                place_fk_target = con.execute(
+                    "PRAGMA foreign_key_list(places)"
+                ).fetchone()[2]
+                foreign_key_errors = con.execute("PRAGMA foreign_key_check").fetchall()
+            finally:
+                con.close()
+
+            self.assertTrue(
+                {"captures", "recommendations", "recommendation_mentions", "locations"}
+                <= tables
+            )
+            self.assertTrue({"items", "entries", "entry_sources"}.isdisjoint(tables))
+            self.assertEqual(
+                migrated,
+                (
+                    71,
+                    "recommendation|query:migration|name:migration movie|type:movie|starts:|ends:",
+                    81,
+                    41,
+                    "recommendation",
+                    71,
+                    41,
+                ),
+            )
+            self.assertEqual(place_fk_target, "captures")
+            self.assertEqual(foreign_key_errors, [])
+            self.assertEqual(
+                len(list(root.glob("*.pre-capture-recommendation-rename-*.bak"))),
+                1,
+            )
 
     def test_normalized_migration_backs_up_and_backfills_legacy_rows(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -358,7 +473,8 @@ class StoreTests(unittest.TestCase):
             )
             con = sqlite3.connect(db_path)
             con.executescript(
-                "DROP TABLE entry_sources; DROP TABLE entries; DROP TABLE locations;"
+                "DROP TABLE recommendation_mentions; "
+                "DROP TABLE recommendations; DROP TABLE locations;"
             )
             con.commit()
             con.close()
@@ -964,7 +1080,9 @@ class StoreTests(unittest.TestCase):
             )
             con = sqlite3.connect(db_path)
             try:
-                self.assertEqual(con.execute("SELECT COUNT(*) FROM items").fetchone()[0], 2)
+                self.assertEqual(
+                    con.execute("SELECT COUNT(*) FROM captures").fetchone()[0], 2
+                )
             finally:
                 con.close()
 

@@ -63,7 +63,9 @@ class DuplicateSourceBackfillTests(unittest.TestCase):
             self.assertTrue(backup.exists())
             con = sqlite3.connect(db_path)
             try:
-                self.assertEqual(con.execute("SELECT COUNT(*) FROM items").fetchone()[0], 1)
+                self.assertEqual(
+                    con.execute("SELECT COUNT(*) FROM captures").fetchone()[0], 1
+                )
                 self.assertEqual(con.execute("SELECT COUNT(*) FROM ingest_runs").fetchone()[0], 1)
                 self.assertFalse(con.execute("PRAGMA foreign_key_check").fetchall())
             finally:

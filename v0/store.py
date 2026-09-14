@@ -1,4 +1,4 @@
-"""SQLite persistence for sources, canonical Entries, Locations, and connections."""
+"""SQLite persistence for Captures, Recommendations, Mentions, and Locations."""
 from __future__ import annotations
 
 import json
@@ -16,8 +16,8 @@ from entry_types import (
     entry_types_for_enricher,
 )
 
-SCHEMA = """
-CREATE TABLE IF NOT EXISTS items (
+CAPTURE_AND_LEGACY_PLACE_SCHEMA = """
+CREATE TABLE IF NOT EXISTS captures (
   id               INTEGER PRIMARY KEY AUTOINCREMENT,
   vertical         TEXT NOT NULL,
   source_url       TEXT NOT NULL,
@@ -28,7 +28,7 @@ CREATE TABLE IF NOT EXISTS items (
 
 CREATE TABLE IF NOT EXISTS places (
   id                         INTEGER PRIMARY KEY AUTOINCREMENT,
-  item_id                    INTEGER NOT NULL REFERENCES items(id),
+  item_id                    INTEGER NOT NULL REFERENCES captures(id),
   ordinal                    INTEGER NOT NULL,
   extracted_name             TEXT NOT NULL,
   google_place_id            TEXT,
@@ -56,7 +56,7 @@ CREATE INDEX IF NOT EXISTS idx_places_item      ON places(item_id);
 CREATE INDEX IF NOT EXISTS idx_places_google_id ON places(google_place_id);
 """
 
-NORMALIZED_SCHEMA = """
+RECOMMENDATION_SCHEMA = """
 CREATE TABLE IF NOT EXISTS locations (
   id                INTEGER PRIMARY KEY AUTOINCREMENT,
   google_place_id   TEXT NOT NULL UNIQUE,
@@ -69,7 +69,7 @@ CREATE TABLE IF NOT EXISTS locations (
   updated_at        TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
-CREATE TABLE IF NOT EXISTS entries (
+CREATE TABLE IF NOT EXISTS recommendations (
   id              INTEGER PRIMARY KEY AUTOINCREMENT,
   name            TEXT NOT NULL,
   normalized_name TEXT NOT NULL,
@@ -85,7 +85,7 @@ CREATE TABLE IF NOT EXISTS entries (
 );
 
 CREATE TABLE IF NOT EXISTS movie_enrichments (
-  entry_id          INTEGER PRIMARY KEY REFERENCES entries(id) ON DELETE CASCADE,
+  entry_id          INTEGER PRIMARY KEY REFERENCES recommendations(id) ON DELETE CASCADE,
   provider          TEXT NOT NULL,
   provider_id       TEXT,
   resolved_title    TEXT,
@@ -96,10 +96,10 @@ CREATE TABLE IF NOT EXISTS movie_enrichments (
   checked_at        TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
-CREATE TABLE IF NOT EXISTS entry_sources (
+CREATE TABLE IF NOT EXISTS recommendation_mentions (
   id                         INTEGER PRIMARY KEY AUTOINCREMENT,
-  entry_id                   INTEGER NOT NULL REFERENCES entries(id) ON DELETE CASCADE,
-  item_id                    INTEGER NOT NULL REFERENCES items(id) ON DELETE CASCADE,
+  entry_id                   INTEGER NOT NULL REFERENCES recommendations(id) ON DELETE CASCADE,
+  item_id                    INTEGER NOT NULL REFERENCES captures(id) ON DELETE CASCADE,
   legacy_place_id            INTEGER UNIQUE REFERENCES places(id),
   ordinal                    INTEGER NOT NULL,
   source_name                TEXT NOT NULL,
@@ -118,9 +118,12 @@ CREATE TABLE IF NOT EXISTS entry_sources (
   UNIQUE(entry_id, item_id)
 );
 
-CREATE INDEX IF NOT EXISTS idx_entries_location ON entries(location_id);
-CREATE INDEX IF NOT EXISTS idx_entry_sources_entry ON entry_sources(entry_id);
-CREATE INDEX IF NOT EXISTS idx_entry_sources_item ON entry_sources(item_id);
+CREATE INDEX IF NOT EXISTS idx_recommendations_location
+  ON recommendations(location_id);
+CREATE INDEX IF NOT EXISTS idx_recommendation_mentions_recommendation
+  ON recommendation_mentions(entry_id);
+CREATE INDEX IF NOT EXISTS idx_recommendation_mentions_capture
+  ON recommendation_mentions(item_id);
 
 CREATE TABLE IF NOT EXISTS ingest_runs (
   id              INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -128,7 +131,7 @@ CREATE TABLE IF NOT EXISTS ingest_runs (
   source_platform TEXT NOT NULL DEFAULT 'other',
   status          TEXT NOT NULL,
   stage           TEXT NOT NULL,
-  item_id         INTEGER UNIQUE REFERENCES items(id),
+  item_id         INTEGER UNIQUE REFERENCES captures(id),
   result_json     TEXT,
   error_type      TEXT,
   error_message   TEXT,
@@ -270,7 +273,8 @@ def _migrate_entry_table_names(con: sqlite3.Connection) -> None:
         ("idx_" + legacy_connections + "_", "item"),
     ):
         con.execute(f"DROP INDEX IF EXISTS {prefix}{suffix}")
-    con.execute("UPDATE items SET vertical = 'entry' WHERE vertical = ?", ("thing",))
+    if _has_table(con, "items"):
+        con.execute("UPDATE items SET vertical = 'entry' WHERE vertical = ?", ("thing",))
 
     # Completed Activity rows contain a JSON snapshot of their saved results.
     # Keep that history readable by the renamed API without changing any IDs.
@@ -301,6 +305,72 @@ def _migrate_entry_table_names(con: sqlite3.Connection) -> None:
                 )
 
 
+def _backup_before_core_terminology_migration(
+    con: sqlite3.Connection,
+    db_path: Path,
+) -> Path | None:
+    if not any(
+        _has_table(con, table)
+        for table in ("items", "entries", "entry_sources")
+    ):
+        return None
+
+    timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    backup_path = db_path.with_name(
+        f"{db_path.name}.pre-capture-recommendation-rename-{timestamp}.bak"
+    )
+    backup = sqlite3.connect(backup_path)
+    try:
+        con.backup(backup)
+    finally:
+        backup.close()
+    return backup_path
+
+
+def _migrate_core_table_names(con: sqlite3.Connection) -> None:
+    """Rename the core persistence tables once without changing stored IDs."""
+    renames = (
+        ("items", "captures"),
+        ("entries", "recommendations"),
+        ("entry_sources", "recommendation_mentions"),
+    )
+    for old_name, new_name in renames:
+        old_exists = _has_table(con, old_name)
+        new_exists = _has_table(con, new_name)
+        if old_exists and new_exists:
+            raise RuntimeError(
+                f"Cannot migrate core schema while both {old_name} and {new_name} exist"
+            )
+        if old_exists:
+            con.execute(f"ALTER TABLE {old_name} RENAME TO {new_name}")
+
+    if _has_table(con, "recommendations"):
+        legacy_prefix = "entry|"
+        con.execute(
+            """UPDATE recommendations
+                  SET identity_key = ? || substr(identity_key, ?)
+                WHERE identity_key LIKE ?""",
+            (
+                "recommendation|",
+                len(legacy_prefix) + 1,
+                legacy_prefix + "%",
+            ),
+        )
+    if _has_table(con, "captures"):
+        con.execute(
+            "UPDATE captures SET vertical = 'recommendation' WHERE vertical = 'entry'"
+        )
+
+    # SQLite updates index ownership during a table rename but preserves the old
+    # index names. The canonical schema below recreates them with durable names.
+    for index_name in (
+        "idx_entries_location",
+        "idx_entry_sources_entry",
+        "idx_entry_sources_item",
+    ):
+        con.execute(f"DROP INDEX IF EXISTS {index_name}")
+
+
 def _backup_before_entry_migration(
     con: sqlite3.Connection,
     db_path: Path,
@@ -322,15 +392,16 @@ def _backup_before_entry_migration(
     return backup_path
 
 
-def _backup_before_normalized_migration(
+def _backup_before_recommendation_model_migration(
     con: sqlite3.Connection,
     db_path: Path,
 ) -> Path | None:
-    normalized_exists = con.execute(
-        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'entry_sources'"
+    recommendation_model_exists = con.execute(
+        "SELECT 1 FROM sqlite_master "
+        "WHERE type = 'table' AND name = 'recommendation_mentions'"
     ).fetchone()
     legacy_count = con.execute("SELECT COUNT(*) FROM places").fetchone()[0]
-    if normalized_exists or not legacy_count:
+    if recommendation_model_exists or not legacy_count:
         return None
 
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
@@ -349,7 +420,7 @@ def _backup_before_user_prompt_removal(
 ) -> Path | None:
     affected_tables = [
         table
-        for table in ("items", "ingest_runs")
+        for table in ("captures", "ingest_runs")
         if _has_table(con, table)
         and "user_prompt"
         in {row[1] for row in con.execute(f"PRAGMA table_info({table})").fetchall()}
@@ -371,7 +442,7 @@ def _backup_before_user_prompt_removal(
 
 def _migrate_user_prompt_columns(con: sqlite3.Connection) -> None:
     """Remove the retired per-ingest prompt without disturbing stored records."""
-    for table in ("items", "ingest_runs"):
+    for table in ("captures", "ingest_runs"):
         if not _has_table(con, table):
             continue
         columns = {
@@ -385,18 +456,21 @@ def init_db(db_path: Path) -> None:
     db_path.parent.mkdir(parents=True, exist_ok=True)
     con = _connect(db_path)
     try:
-        con.executescript(SCHEMA)
         _backup_before_entry_terminology_migration(con, db_path)
         _migrate_entry_table_names(con)
         con.commit()
+        _backup_before_core_terminology_migration(con, db_path)
+        _migrate_core_table_names(con)
+        con.commit()
+        con.executescript(CAPTURE_AND_LEGACY_PLACE_SCHEMA)
         _backup_before_entry_migration(con, db_path)
         _migrate_places(con)
         con.commit()
-        _backup_before_normalized_migration(con, db_path)
-        con.executescript(NORMALIZED_SCHEMA)
+        _backup_before_recommendation_model_migration(con, db_path)
+        con.executescript(RECOMMENDATION_SCHEMA)
         _backup_before_user_prompt_removal(con, db_path)
         _migrate_user_prompt_columns(con)
-        _backfill_normalized_model(con)
+        _backfill_recommendation_model(con)
         _backfill_ingest_runs(con)
         con.commit()
     finally:
@@ -409,11 +483,11 @@ def save_ingest(db_path: Path, result: dict[str, Any]) -> int:
     try:
         cur = con.cursor()
         cur.execute(
-            """INSERT INTO items
+            """INSERT INTO captures
                (vertical, source_url, raw_payload_json, llm_output_json)
                VALUES (?, ?, ?, ?)""",
             (
-                "entry",
+                "recommendation",
                 result["source_url"],
                 json.dumps(result.get("metadata", {}), ensure_ascii=False),
                 json.dumps(
@@ -477,7 +551,7 @@ def save_ingest(db_path: Path, result: dict[str, Any]) -> int:
                     extracted.get("location_query"),
                 ),
             )
-            _save_normalized_occurrence(
+            _save_recommendation_mention(
                 con,
                 legacy_place_id=cur.lastrowid,
                 item_id=item_id,
@@ -505,7 +579,7 @@ def find_processed_source(
     try:
         rows = con.execute(
             """SELECT i.*, r.id AS ingest_id, r.status AS ingest_status
-                 FROM items AS i
+                 FROM captures AS i
                  LEFT JOIN ingest_runs AS r ON r.item_id = i.id
                 ORDER BY i.created_at DESC, i.id DESC"""
         ).fetchall()
@@ -735,7 +809,7 @@ def _identity_key(
         )
         key = "|".join(
             (
-                "temporary" if temporary else "entry",
+                "temporary" if temporary else "recommendation",
                 location_part,
                 f"name:{normalized_name}",
                 f"type:{type_key}",
@@ -786,7 +860,7 @@ def _upsert_location(
     ).fetchone()[0]
 
 
-def _save_normalized_occurrence(
+def _save_recommendation_mention(
     con: sqlite3.Connection,
     *,
     legacy_place_id: int,
@@ -808,13 +882,13 @@ def _save_normalized_occurrence(
     )
     name = " ".join(str(extracted.get("extracted_name") or "Unknown").split())
     existing = con.execute(
-        "SELECT id FROM entries WHERE identity_key = ?",
+        "SELECT id FROM recommendations WHERE identity_key = ?",
         (identity_key,),
     ).fetchone()
     if existing:
         entry_id = existing[0]
         con.execute(
-            """UPDATE entries
+            """UPDATE recommendations
                SET updated_at = COALESCE(?, CURRENT_TIMESTAMP)
                WHERE id = ?
                  AND COALESCE(?, CURRENT_TIMESTAMP) >= updated_at""",
@@ -822,7 +896,7 @@ def _save_normalized_occurrence(
         )
     else:
         cursor = con.execute(
-            """INSERT INTO entries (
+            """INSERT INTO recommendations (
                  name, normalized_name, entry_type, type_key, identity_key,
                  location_id, starts_at, ends_at, recurrence_text,
                  created_at, updated_at
@@ -846,7 +920,7 @@ def _save_normalized_occurrence(
         entry_id = cursor.lastrowid
 
     con.execute(
-        """INSERT OR IGNORE INTO entry_sources (
+        """INSERT OR IGNORE INTO recommendation_mentions (
              entry_id, item_id, legacy_place_id, ordinal, source_name, source_type,
              description, dishes_json, why_its_cool, tags_json,
              timestamp_seconds, slide_index, resolution_status,
@@ -875,8 +949,8 @@ def _save_normalized_occurrence(
     return entry_id
 
 
-def _backfill_normalized_model(con: sqlite3.Connection) -> None:
-    """Idempotently convert every legacy occurrence into the normalized model."""
+def _backfill_recommendation_model(con: sqlite3.Connection) -> None:
+    """Idempotently convert every legacy occurrence into a Recommendation Mention."""
     con.row_factory = sqlite3.Row
     legacy_columns = {
         row[1] for row in con.execute("PRAGMA table_info(places)").fetchall()
@@ -911,8 +985,8 @@ def _backfill_normalized_model(con: sqlite3.Connection) -> None:
     rows = con.execute(
         """SELECT p.*, i.created_at AS source_created_at
            FROM places AS p
-           JOIN items AS i ON i.id = p.item_id
-           LEFT JOIN entry_sources AS ts ON ts.legacy_place_id = p.id
+           JOIN captures AS i ON i.id = p.item_id
+           LEFT JOIN recommendation_mentions AS ts ON ts.legacy_place_id = p.id
            WHERE ts.id IS NULL
            ORDER BY i.created_at ASC, p.item_id ASC, p.ordinal ASC"""
     ).fetchall()
@@ -940,7 +1014,7 @@ def _backfill_normalized_model(con: sqlite3.Connection) -> None:
             "recurrence_text": row["recurrence_text"],
             "location_query": row["location_query"],
         }
-        _save_normalized_occurrence(
+        _save_recommendation_mention(
             con,
             legacy_place_id=row["id"],
             item_id=row["item_id"],
@@ -967,14 +1041,14 @@ def _saved_entry_outcomes(
                   ts.resolution_status, ts.resolution_candidates_json,
                   ts.id AS source_connection_id,
                   (SELECT MIN(first_ts.id)
-                     FROM entry_sources AS first_ts
+                     FROM recommendation_mentions AS first_ts
                     WHERE first_ts.entry_id = t.id) AS first_source_id,
                   (SELECT COUNT(*)
-                     FROM entry_sources AS prior_ts
+                     FROM recommendation_mentions AS prior_ts
                     WHERE prior_ts.entry_id = t.id
                       AND prior_ts.id <= ts.id) AS source_count
-             FROM entry_sources AS ts
-             JOIN entries AS t ON t.id = ts.entry_id
+             FROM recommendation_mentions AS ts
+             JOIN recommendations AS t ON t.id = ts.entry_id
              LEFT JOIN locations AS l ON l.id = t.location_id
             WHERE ts.item_id = ?
             ORDER BY ts.ordinal, ts.id""",
@@ -1058,7 +1132,7 @@ def _backfill_ingest_runs(con: sqlite3.Connection) -> None:
     con.row_factory = sqlite3.Row
     rows = con.execute(
         """SELECT i.*
-             FROM items AS i
+             FROM captures AS i
              LEFT JOIN ingest_runs AS r ON r.item_id = i.id
             WHERE r.id IS NULL
             ORDER BY i.created_at, i.id"""
@@ -1112,7 +1186,7 @@ def list_ingest_runs(db_path: Path, limit: int = 200) -> list[dict[str, Any]]:
         rows = con.execute(
             """SELECT r.*, i.raw_payload_json
                  FROM ingest_runs AS r
-                 LEFT JOIN items AS i ON i.id = r.item_id
+                 LEFT JOIN captures AS i ON i.id = r.item_id
                 ORDER BY r.started_at DESC, r.id DESC
                 LIMIT ?""",
             (limit,),
@@ -1181,9 +1255,9 @@ def list_entries(db_path: Path, limit: int = 200) -> list[dict[str, Any]]:
     try:
         selected = con.execute(
             """SELECT t.id, MAX(i.created_at) AS latest_saved_at
-               FROM entries AS t
-               JOIN entry_sources AS ts ON ts.entry_id = t.id
-               JOIN items AS i ON i.id = ts.item_id
+               FROM recommendations AS t
+               JOIN recommendation_mentions AS ts ON ts.entry_id = t.id
+               JOIN captures AS i ON i.id = ts.item_id
                GROUP BY t.id
                ORDER BY latest_saved_at DESC, t.id DESC
                LIMIT ?""",
@@ -1212,11 +1286,11 @@ def list_entries(db_path: Path, limit: int = 200) -> list[dict[str, Any]]:
                  ts.tags_json, ts.timestamp_seconds, ts.slide_index,
                  ts.resolution_status, ts.location_query,
                  i.source_url, i.raw_payload_json, i.created_at
-               FROM entries AS t
+               FROM recommendations AS t
                LEFT JOIN locations AS l ON l.id = t.location_id
                LEFT JOIN movie_enrichments AS me ON me.entry_id = t.id
-               JOIN entry_sources AS ts ON ts.entry_id = t.id
-               JOIN items AS i ON i.id = ts.item_id
+               JOIN recommendation_mentions AS ts ON ts.entry_id = t.id
+               JOIN captures AS i ON i.id = ts.item_id
                WHERE t.id IN ({placeholders})
                ORDER BY i.created_at DESC, ts.id DESC""",
             entry_ids,
@@ -1334,8 +1408,8 @@ def movie_entries_for_enrichment(
         rows = con.execute(
             f"""SELECT t.id, t.name,
                        GROUP_CONCAT(ts.description, ' ') AS descriptions
-                  FROM entries AS t
-                  JOIN entry_sources AS ts ON ts.entry_id = t.id
+                  FROM recommendations AS t
+                  JOIN recommendation_mentions AS ts ON ts.entry_id = t.id
                   LEFT JOIN movie_enrichments AS me ON me.entry_id = t.id
                  WHERE {' AND '.join(conditions)}
                  GROUP BY t.id, t.name
@@ -1394,7 +1468,7 @@ def list_places(db_path: Path, limit: int = 200) -> list[dict[str, Any]]:
         rows = con.execute(
             """SELECT p.*, i.source_url, i.created_at
                FROM places AS p
-               JOIN items AS i ON i.id = p.item_id
+               JOIN captures AS i ON i.id = p.item_id
                ORDER BY i.created_at DESC, p.item_id DESC, p.ordinal ASC
                LIMIT ?""",
             (limit,),
@@ -1440,7 +1514,7 @@ def list_entry_types(db_path: Path) -> list[str]:
         try:
             rows = con.execute(
                 """SELECT DISTINCT entry_type
-                   FROM entries
+                   FROM recommendations
                    WHERE entry_type IS NOT NULL AND trim(entry_type) != ''
                    ORDER BY entry_type COLLATE NOCASE"""
             ).fetchall()
@@ -1459,8 +1533,8 @@ def list_sources(db_path: Path, limit: int = 200) -> list[dict[str, Any]]:
         rows = con.execute(
             """SELECT i.id, i.source_url, i.raw_payload_json,
                       i.created_at, COUNT(DISTINCT ts.entry_id) AS entry_count
-               FROM items AS i
-               LEFT JOIN entry_sources AS ts ON ts.item_id = i.id
+               FROM captures AS i
+               LEFT JOIN recommendation_mentions AS ts ON ts.item_id = i.id
                GROUP BY i.id
                ORDER BY i.created_at DESC, i.id DESC
                LIMIT ?""",
@@ -1551,8 +1625,8 @@ def confirm_activity_location(
                       t.starts_at, t.ends_at, t.recurrence_text,
                       r.item_id AS run_item_id
                  FROM ingest_runs AS r
-                 JOIN entry_sources AS ts ON ts.item_id = r.item_id
-                 JOIN entries AS t ON t.id = ts.entry_id
+                 JOIN recommendation_mentions AS ts ON ts.item_id = r.item_id
+                 JOIN recommendations AS t ON t.id = ts.entry_id
                 WHERE r.id = ? AND ts.entry_id = ?""",
             (ingest_id, entry_id),
         ).fetchone()
@@ -1598,14 +1672,14 @@ def confirm_activity_location(
             candidate_id,
         )
         existing = con.execute(
-            "SELECT id FROM entries WHERE identity_key = ? AND id != ?",
+            "SELECT id FROM recommendations WHERE identity_key = ? AND id != ?",
             (identity_key, entry_id),
         ).fetchone()
         resolved_entry_id = entry_id
         if existing is not None:
             target_entry_id = existing["id"]
             duplicate_source = con.execute(
-                """SELECT 1 FROM entry_sources
+                """SELECT 1 FROM recommendation_mentions
                     WHERE entry_id = ? AND item_id = ?""",
                 (target_entry_id, row["run_item_id"]),
             ).fetchone()
@@ -1614,18 +1688,18 @@ def confirm_activity_location(
                     "That location is already attached to another recommendation from this post"
                 )
             con.execute(
-                "UPDATE entry_sources SET entry_id = ? WHERE id = ?",
+                "UPDATE recommendation_mentions SET entry_id = ? WHERE id = ?",
                 (target_entry_id, row["id"]),
             )
             con.execute(
-                "DELETE FROM entries WHERE id = ? AND NOT EXISTS "
-                "(SELECT 1 FROM entry_sources WHERE entry_id = ?)",
+                "DELETE FROM recommendations WHERE id = ? AND NOT EXISTS "
+                "(SELECT 1 FROM recommendation_mentions WHERE entry_id = ?)",
                 (entry_id, entry_id),
             )
             resolved_entry_id = target_entry_id
         else:
             con.execute(
-                """UPDATE entries
+                """UPDATE recommendations
                       SET location_id = ?, identity_key = ?, normalized_name = ?,
                           type_key = ?, updated_at = CURRENT_TIMESTAMP
                     WHERE id = ?""",
@@ -1633,13 +1707,13 @@ def confirm_activity_location(
             )
 
         con.execute(
-            """UPDATE entries
+            """UPDATE recommendations
                   SET location_id = ?, updated_at = CURRENT_TIMESTAMP
                 WHERE id = ?""",
             (location_id, resolved_entry_id),
         )
         con.execute(
-            """UPDATE entry_sources
+            """UPDATE recommendation_mentions
                   SET resolution_status = 'user_confirmed',
                       resolution_candidates_json = NULL
                 WHERE id = ?""",
@@ -1694,13 +1768,13 @@ def delete_entry(db_path: Path, entry_id: int) -> dict[str, int] | None:
     """Delete one canonical entry and its connections, retaining source posts."""
     con = _connect(db_path)
     try:
-        row = con.execute("SELECT id FROM entries WHERE id = ?", (entry_id,)).fetchone()
+        row = con.execute("SELECT id FROM recommendations WHERE id = ?", (entry_id,)).fetchone()
         if row is None:
             return None
         item_ids = [
             value[0]
             for value in con.execute(
-                "SELECT DISTINCT item_id FROM entry_sources WHERE entry_id = ?",
+                "SELECT DISTINCT item_id FROM recommendation_mentions WHERE entry_id = ?",
                 (entry_id,),
             ).fetchall()
         ]
@@ -1724,7 +1798,7 @@ def delete_entries(db_path: Path, entry_ids: list[int]) -> dict[str, int] | None
         found = {
             row[0]
             for row in con.execute(
-                f"SELECT id FROM entries WHERE id IN ({placeholders})",
+                f"SELECT id FROM recommendations WHERE id IN ({placeholders})",
                 unique_ids,
             ).fetchall()
         }
@@ -1733,7 +1807,7 @@ def delete_entries(db_path: Path, entry_ids: list[int]) -> dict[str, int] | None
         item_ids = [
             row[0]
             for row in con.execute(
-                f"""SELECT DISTINCT item_id FROM entry_sources
+                f"""SELECT DISTINCT item_id FROM recommendation_mentions
                     WHERE entry_id IN ({placeholders})""",
                 unique_ids,
             ).fetchall()
@@ -1751,13 +1825,13 @@ def _delete_canonical_entries(con: sqlite3.Connection, entry_ids: list[int]) -> 
     legacy_ids = [
         row[0]
         for row in con.execute(
-            f"""SELECT legacy_place_id FROM entry_sources
+            f"""SELECT legacy_place_id FROM recommendation_mentions
                 WHERE entry_id IN ({placeholders}) AND legacy_place_id IS NOT NULL""",
             entry_ids,
         ).fetchall()
     ]
     con.execute(
-        f"DELETE FROM entry_sources WHERE entry_id IN ({placeholders})",
+        f"DELETE FROM recommendation_mentions WHERE entry_id IN ({placeholders})",
         entry_ids,
     )
     if legacy_ids:
@@ -1767,7 +1841,7 @@ def _delete_canonical_entries(con: sqlite3.Connection, entry_ids: list[int]) -> 
             legacy_ids,
         )
     cursor = con.execute(
-        f"DELETE FROM entries WHERE id IN ({placeholders})",
+        f"DELETE FROM recommendations WHERE id IN ({placeholders})",
         entry_ids,
     )
     return cursor.rowcount
@@ -1798,7 +1872,7 @@ def delete_place(db_path: Path, place_id: int) -> dict[str, int] | None:
         row = con.execute(
             """SELECT p.id, ts.entry_id
                FROM places AS p
-               LEFT JOIN entry_sources AS ts ON ts.legacy_place_id = p.id
+               LEFT JOIN recommendation_mentions AS ts ON ts.legacy_place_id = p.id
                WHERE p.id = ?""",
             (place_id,),
         ).fetchone()
@@ -1806,7 +1880,7 @@ def delete_place(db_path: Path, place_id: int) -> dict[str, int] | None:
             return None
         if row[1] is not None:
             deleted_places = con.execute(
-                "SELECT COUNT(*) FROM entry_sources WHERE entry_id = ?",
+                "SELECT COUNT(*) FROM recommendation_mentions WHERE entry_id = ?",
                 (row[1],),
             ).fetchone()[0]
             _delete_canonical_entries(con, [row[1]])

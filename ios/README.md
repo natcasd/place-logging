@@ -9,6 +9,10 @@ The native MVP contains two targets:
   continues; on completion, it schedules a local notification summarizing the
   logged Entries.
 
+The app reads canonical Recommendations from `/api/v1/entries` and processing
+history from `/api/v1/activity`. The older `/api/v1/places` compatibility API is
+not used by current screens.
+
 The current free, locally provisioned build cannot use APNs. Because completion
 notifications are scheduled by the share extension, tapping them does not open
 the containing app. When the app moves to a paid Apple Developer Program team,

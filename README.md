@@ -30,5 +30,6 @@ share extension.
 - `POST /api/v1/shortcut/diagnostics` is an authenticated debugging endpoint.
   It logs a bounded, redacted description of exactly what Shortcuts sent and
   never processes or persists a place.
-- `GET /api/v1/places` is the authenticated, read-only list API used by the
-  native iPhone app. It returns saved places newest-first.
+- `GET /api/v1/entries` and `GET /api/v1/activity` power the native iPhone app.
+- `GET /api/v1/places` remains as a legacy compatibility endpoint until the
+  only installed iPhone build has been verified on the canonical APIs.

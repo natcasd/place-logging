@@ -33,7 +33,7 @@ def find_candidates(con: sqlite3.Connection) -> list[dict[str, Any]]:
         """SELECT l.id AS location_id, l.google_place_id,
                   GROUP_CONCAT(DISTINCT t.name) AS entry_names
              FROM locations AS l
-             LEFT JOIN entries AS t ON t.location_id = l.id
+             LEFT JOIN recommendations AS t ON t.location_id = l.id
             WHERE l.display_name IS NULL OR trim(l.display_name) = ''
             GROUP BY l.id
             ORDER BY l.id"""
