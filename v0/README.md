@@ -3,14 +3,17 @@
 The service preserves each source post, extracts individual saved entries, and
 optionally resolves physical locations through Google Places.
 
-## Saved-entries model
+## Capture and recommendation model
 
-- Every ingest creates a source record, even when extraction returns no entries.
-- `entries` stores one canonical recommendation, `locations` stores an optional
-  Google-resolved venue, and `entry_sources` records which source recommended
-  which Entry together with that source's description and media reference.
-- An Entry has zero or one Location. Many Entries can share a Location, and many
-  Sources can recommend the same Entry.
+- Every ingest creates one `captures` row, even when extraction returns no
+  recommendations. A Capture is one unit of information supplied to Jot; social
+  URLs are the currently supported input, not a constraint of the model.
+- `recommendations` stores one canonical, deduplicated saved thing. `locations`
+  stores an optional Google-resolved venue, and `recommendation_mentions`
+  preserves what one Capture said about one Recommendation, including its
+  description and media reference.
+- A Recommendation has zero or one Location. Many Recommendations can share a
+  Location, and many Captures can mention the same Recommendation.
 - Matching is deliberately conservative: permanent venues match by Google Place
   ID and compatible type; temporary entries additionally require the same title
   and dates; non-location entries require the same title and type. Uncertain
@@ -37,9 +40,12 @@ optionally resolves physical locations through Google Places.
   recommendations appear on its map, unresolved location-based recommendations can
   be deleted, and ambiguous recommendations expand so the user can confirm one of
   the stored location candidates. General field editing is intentionally absent.
-- Existing place rows migrate in place with `Unknown` as their temporary type. Before
-  the first additive migration, the service creates a timestamped SQLite backup
-  beside the database.
+- Existing databases migrate idempotently from `items`, `entries`, and
+  `entry_sources` to the terminology above. The service creates a timestamped
+  SQLite backup beside the database before the first destructive rename.
+- `places` is a denormalized compatibility table for the legacy places API. It
+  is not part of the canonical persistence model and remains synchronized only
+  until that API is retired.
 - New extraction saves only distinct principal recommendations; it excludes
   scenery, background posters, host venues, suppliers, and creator CTAs unless
   independently recommended. Generic unnamed records such as `Cafe` are dropped.
@@ -128,7 +134,7 @@ import question before sharing it with another person.
 ## Sanity-checking a run
 
 ```bash
-sqlite3 data/places.db 'select id, source_url, created_at from items order by id desc limit 5;'
+sqlite3 data/places.db 'select id, source_url, created_at from captures order by id desc limit 5;'
 sqlite3 data/places.db 'select p.id, p.extracted_name, p.resolution_status, p.formatted_address from places p order by p.id desc limit 10;'
 ```
 
@@ -242,7 +248,7 @@ transport. It is not part of normal setup or deployment.
    the old backend. The old API accepts the reduced request, so this is
    backward-compatible.
 2. Merge and deploy the backend cleanup. Confirm `/healthz`, make one authenticated
-   ingest, and verify that `user_prompt` is absent from both `items` and
+   ingest, and verify that `user_prompt` is absent from both `captures` and
    `ingest_runs`. Startup creates a timestamped database backup before removing
    either legacy column.
 3. While the old bot token is still available to the running Fly Machine, call

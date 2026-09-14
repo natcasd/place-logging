@@ -67,7 +67,7 @@ def find_candidates(con: sqlite3.Connection) -> list[dict[str, Any]]:
                   p.description, p.formatted_address, p.location_query,
                   i.source_url, i.raw_payload_json
              FROM places AS p
-             JOIN items AS i ON i.id = p.item_id
+             JOIN captures AS i ON i.id = p.item_id
             WHERE lower(trim(p.entry_type)) = 'place'
             ORDER BY p.item_id, p.ordinal"""
     ).fetchall()

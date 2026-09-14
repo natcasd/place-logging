@@ -62,9 +62,9 @@ def saved_sample(
                       l.formatted_address,
                       GROUP_CONCAT(es.description, '\n') AS source_descriptions,
                       GROUP_CONCAT(es.location_query, '\n') AS location_queries
-                 FROM entries AS e
+                 FROM recommendations AS e
                  LEFT JOIN locations AS l ON l.id = e.location_id
-                 LEFT JOIN entry_sources AS es ON es.entry_id = e.id
+                 LEFT JOIN recommendation_mentions AS es ON es.entry_id = e.id
                 WHERE lower(trim(e.entry_type)) = lower(trim(?))
                 GROUP BY e.id
                 ORDER BY e.id DESC

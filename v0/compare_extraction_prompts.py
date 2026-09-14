@@ -177,7 +177,7 @@ def source_rows(con: sqlite3.Connection, item_ids: list[int]) -> list[dict[str, 
     placeholders = ",".join("?" for _ in item_ids)
     rows = con.execute(
         f"""SELECT id, source_url
-              FROM items
+              FROM captures
              WHERE id IN ({placeholders})
              ORDER BY id""",
         item_ids,

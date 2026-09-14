@@ -19,9 +19,9 @@ class BackfillEntryTypesTests(unittest.TestCase):
         con = sqlite3.connect(db_path)
         try:
             con.execute(
-                """INSERT INTO items
+                """INSERT INTO captures
                    (id, vertical, source_url, raw_payload_json)
-                   VALUES (1, 'entry', 'https://example.com/post', ?)""",
+                   VALUES (1, 'recommendation', 'https://example.com/post', ?)""",
                 (
                     json.dumps(
                         {
