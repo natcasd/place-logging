@@ -19,14 +19,14 @@ enrichment and ingest history remain supporting tables.
   an immutable successful original result. No shared result is populated from
   Nathan's current mutable library.
 - Removed mentions can retain their capture/output identity after their parent
-  recommendation is removed. Implementing the transactional delete/restore
-  operations is the next storage stage; schema support alone does not run them.
+  recommendation is removed. Transactional delete/restore operations are
+  implemented in `CaptureStore`; migration itself never restores a removal.
 - New intentional shares have separate ingest request keys and histories.
   Delivery retries reuse an existing key. Request intent and mutation ordering
   are persisted for later workers to enforce.
 
 See `multi_user_schema.sql` for columns, constraints, and indexes. The schema
-uses `PRAGMA application_id = 0x4A4F544D` and `user_version = 2`.
+uses `PRAGMA application_id = 0x4A4F544D` and `user_version = 3`.
 
 ## Rehearse against a database copy
 
@@ -63,24 +63,48 @@ The JSON report contains counts and hashes, not source URLs or library content.
 The internal `migrate_copy()` operation is idempotent on an already migrated
 database for the same owner. The CLI deliberately requires a new output path.
 
-## Legacy data and duplicates
+## Reconcile historical captures on another offline copy
 
-All imported captures are marked `legacy_unverified`. Existing editable fields
-and original payloads are preserved privately, and the shared cache starts empty.
-Synthetic `legacy-mention:<id>` keys identify retained mentions without pretending
-that historical ordinals reliably map to a new original extraction.
+The schema-only command above preserves captures as `legacy_unverified`. The
+release preparation command also freezes verified **private** restoration
+baselines, still without modifying its source:
 
-Existing duplicate captures are preserved and reported by capture ID. The
-normal unique owner/post index excludes these unverified historical rows. This
-is an explicit migration exception, not permission for new duplicate saves.
-Account-scoped ingest must inspect and reconcile matching legacy captures before
-creating/promoting a normal capture. It must never discard an older capture's
-surviving mentions or restore old deletions merely because a source is reused.
+```sh
+python legacy_reconciliation.py \
+  --source /absolute/path/to/current-snapshot.sqlite \
+  --output /absolute/path/to/new-reconciled.sqlite \
+  --owner-id nathan \
+  --owner-name Nathan
+```
 
-If baseline provenance cannot be established, retain the user's current library
-and process a fresh shared baseline for a later requester. Reconciliation and
-intentional restoration of ambiguous legacy captures must be completed and
-tested before production cutover.
+Original extraction ordinals and names must match surviving mentions. Current
+private categories and place resolutions remain private: they are never offered
+to another user through the shared cache. Unknown correspondence or malformed
+original extraction fails the whole copy without publishing an output.
+
+Missing outputs receive hidden removal identities. All surviving IDs, edited
+fields, timestamps, and Activity remain unchanged, checked field by field.
+Neither migration nor an automatic retry restores removed outputs. A later
+deliberate re-share can restore them; if an old deleted place resolution is no
+longer available, the restored mention is unresolved rather than guessed.
+
+The private baseline uses the existing `private_result_json` column. Schema 3
+permits this only for historical public captures with no shared-cache reference.
+New public captures still use shared results, and direct/Siri captures remain
+private. Completed baselines cannot be replaced or changed into another channel.
+No new tables or columns are added.
+
+Historical duplicate captures retain their IDs and mentions. A deliberate share
+restores the matching private source group atomically, preserving active edits.
+The unique owner/post index excludes these complete historical captures as well
+as unreconciled ones; new normal captures retain their uniqueness constraint.
+Another account saving that post uses fresh public processing, never these
+historical private baselines.
+
+Both offline commands accept version-1/version-2 account snapshots and preserve
+every stored field and sequence high-water mark while rebuilding constraints.
+Unknown tables, columns, triggers/views, or additional indexes require review.
+Nothing runs on server startup or changes the deployed single-user database.
 
 ## Legacy API guard
 
@@ -117,25 +141,26 @@ One duplicate public-capture group was found (IDs 283 and 420); both were
 retained. Zero original library rows were promoted into the shared cache.
 Foreign-key and integrity checks passed.
 
-## Next implementation stages
+## Remaining release stages
 
-1. Account-scoped reads/library mutations and the session-verifier boundary are
-   implemented in [the opt-in account API](ACCOUNT_API.md). Production identity
-   integration and account ingest remain required before cutover.
-2. Shared result validation and job claims; private materialization;
-   mention/map deletion and deliberate re-share restoration, including races.
-3. Legacy-capture reconciliation, source identity/output-key validation, and
-   provider-data retention handling. JSON item keys require application-level
-   validation; SQL currently validates the envelope, not each output's contents.
-4. iOS/extension sessions, account-scoped local state, and fast ingest acceptance.
-5. Production identity integration, end-to-end isolation and recovery tests,
-   then a separately rehearsed cutover with a write pause and fresh backup.
+Account-scoped reads/mutations, durable ingestion, shared processing, ordered
+restoration, and conservative legacy reconciliation are implemented. Remaining:
 
-Do not claim the app supports a second account until these dependent stages
-are implemented. Temporary-file cleanup and provider costs remain independent
-of the schema migration. This command copies database records, not downloaded
-media files; existing legacy JSON remains private pending baseline validation.
+1. Firebase identity verification and explicit binding of Nathan's verified UID
+   to his existing internal account. Never assign it to the first registrant.
+2. iOS/extension sessions, account-scoped local state, and async ingest handling.
+3. Account deletion, provider-data retention/refresh, and operational limits.
+4. End-to-end isolation and recovery tests, then a separately rehearsed cutover
+   with a write pause and a fresh backup. The old application cannot safely run
+   against the account schema; rollback must use the matching code and database.
 
-Version 2 removes the old recommendation/capture uniqueness restriction; see
-[private capture behavior](PRIVATE_CAPTURES.md). The same offline command accepts
-a version-1 source and publishes an upgraded copy without modifying it.
+### Reconciliation rehearsal
+
+The same saved production snapshot was reconciled on September 15, 2026.
+All 432 captures were reconciled, including both captures in the duplicate group.
+The 14 absent original outputs stayed hidden. Of all restoration outputs, 26
+have no usable resolved place (including those 14); active library data remains
+unchanged. All 598 recommendations, 432 sources, and 448 Activity responses
+matched the original API projections exactly. Original-file SHA-256 was unchanged,
+and upgrading the prior version-2 snapshot produced the same reconciliation
+counts. This is rehearsal evidence, not a claim that production was migrated.

@@ -80,6 +80,7 @@ class PostProcessingStore:
             JOIN captures c ON c.id = r.item_id AND c.user_id = r.user_id
             JOIN users u ON u.id = r.user_id AND u.status = 'active'
             WHERE c.input_kind = 'public_post' AND c.materialization_state != 'legacy_unverified'
+                AND c.private_result_json IS NULL
                 AND c.source_platform = ? AND c.source_post_id = ?
                 AND (c.post_cache_id IS NULL OR c.post_cache_id = ?)
                 AND r.intent != 'legacy' AND r.accepted_sequence > 0
@@ -237,9 +238,11 @@ class PostProcessingStore:
                 SELECT r.id, r.user_id, pc.id AS cache_id FROM ingest_runs r
                 JOIN users u ON u.id = r.user_id AND u.status = 'active'
                 JOIN captures c ON c.id = r.item_id AND c.user_id = r.user_id
-                JOIN post_processing_cache pc ON pc.platform = c.source_platform AND pc.post_id = c.source_post_id
+                LEFT JOIN post_processing_cache pc ON c.private_result_json IS NULL
+                    AND pc.platform = c.source_platform AND pc.post_id = c.source_post_id
                     AND ((c.post_cache_id IS NULL AND pc.processing_version = ?) OR c.post_cache_id = pc.id)
-                WHERE pc.status = 'completed' AND c.input_kind = 'public_post'
+                WHERE (pc.status = 'completed' OR (c.capture_channel = 'legacy' AND c.private_result_json IS NOT NULL))
+                    AND c.input_kind = 'public_post'
                     AND c.materialization_state != 'legacy_unverified' AND r.intent != 'legacy'
                     AND r.accepted_sequence > 0 AND r.status IN ('queued', 'processing', 'retry_scheduled')
                 ORDER BY r.id LIMIT ?

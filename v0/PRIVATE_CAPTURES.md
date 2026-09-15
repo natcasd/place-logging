@@ -47,11 +47,12 @@ it is not embedded in the immutable original result.
 Public captures reference the shared result without copying its metadata or
 original extraction. Account reads join its metadata when needed. Direct
 captures keep their original result privately. Active/removed output keys and
-ordinals must match the pinned result exactly before restoration. Existing
-legacy captures are not silently promoted; acceptance reports a reconciliation
-conflict until the next stage handles their historical provenance.
+ordinals must match the pinned result exactly before restoration. Historical public captures use a narrowly scoped private-baseline exception
+after [offline reconciliation](MULTI_USER_MIGRATION.md). Unreconciled captures
+still return a conflict. Reconciliation preserves original rows and removals;
+only a later deliberate re-share can restore absent historical outputs.
 
-## Schema version 2
+## Schema versions 2 and 3
 
 A post may produce multiple mentions of the same place. An edit followed by a
 re-share may also legitimately group two of that post's outputs together. Remove
@@ -59,9 +60,9 @@ the obsolete unique `(recommendation, capture)` index while retaining unique
 `(capture, output_key)` and `(capture, ordinal)` lifecycle identities. Source
 counts count distinct captures. No tables or columns are added.
 
-The offline migration now creates version 2. Applying it to a version-1 copy
-transactionally drops that one index, validates ownership/integrity, and advances
-the version. The source file remains unchanged. There is no automatic startup
+Version 2 removed that index. Version 3 adds the historical private-baseline
+exception without adding tables or columns. The offline migration rebuilds
+version-1/version-2 copies, verifies every original field, and advances the version. The source file remains unchanged. There is no automatic startup
 migration; the live database is still single-user.
 
 When a capture has several mentions in one recommendation, location confirmation

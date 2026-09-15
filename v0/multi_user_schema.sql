@@ -80,7 +80,7 @@ CREATE TABLE captures (
       AND source_platform IS NOT NULL AND source_post_id IS NOT NULL
       AND length(trim(source_post_id)) > 0
       AND source_platform IN ('instagram', 'tiktok', 'youtube')
-      AND private_result_json IS NULL)
+      AND (private_result_json IS NULL OR (capture_channel = 'legacy' AND post_cache_id IS NULL)))
     OR (input_kind = 'direct' AND post_cache_id IS NULL
       AND source_platform IS NULL AND source_post_id IS NULL)
     OR (input_kind = 'legacy' AND post_cache_id IS NULL
@@ -92,13 +92,15 @@ CREATE TABLE captures (
     AND COALESCE(json_type(private_result_json, '$.mentions') = 'array', 0)
     ELSE 0 END),
   CHECK (materialization_state != 'complete'
-    OR (input_kind = 'public_post' AND post_cache_id IS NOT NULL)
+    OR (input_kind = 'public_post' AND (post_cache_id IS NOT NULL
+      OR (capture_channel = 'legacy' AND private_result_json IS NOT NULL)))
     OR (input_kind = 'direct' AND private_result_json IS NOT NULL))
 );
 
 CREATE UNIQUE INDEX idx_captures_owner_source
   ON captures(user_id, source_platform, source_post_id)
-  WHERE input_kind = 'public_post' AND materialization_state != 'legacy_unverified';
+  WHERE input_kind = 'public_post' AND materialization_state != 'legacy_unverified'
+    AND (capture_channel != 'legacy' OR materialization_state != 'complete');
 -- Historical duplicate captures keep their IDs and mentions until explicitly
 -- reconciled. Account-scoped ingest must inspect them before creating/promoting
 -- a normal capture; the migration must not silently merge personal history.
@@ -106,6 +108,7 @@ CREATE UNIQUE INDEX idx_captures_owner_source
 CREATE TRIGGER completed_capture_requires_published_cache_insert
 BEFORE INSERT ON captures
 WHEN NEW.materialization_state = 'complete' AND NEW.input_kind = 'public_post'
+  AND NEW.private_result_json IS NULL
   AND NOT EXISTS (SELECT 1 FROM post_processing_cache
     WHERE id = NEW.post_cache_id AND status = 'completed')
 BEGIN
@@ -115,6 +118,7 @@ END;
 CREATE TRIGGER completed_capture_requires_published_cache_update
 BEFORE UPDATE ON captures
 WHEN NEW.materialization_state = 'complete' AND NEW.input_kind = 'public_post'
+  AND NEW.private_result_json IS NULL
   AND NOT EXISTS (SELECT 1 FROM post_processing_cache
     WHERE id = NEW.post_cache_id AND status = 'completed')
 BEGIN
@@ -130,6 +134,7 @@ WHEN OLD.materialization_state = 'complete' AND (
   OR NEW.source_platform IS NOT OLD.source_platform
   OR NEW.source_post_id IS NOT OLD.source_post_id
   OR NEW.materialization_state IS NOT OLD.materialization_state
+  OR NEW.capture_channel IS NOT OLD.capture_channel
 )
 BEGIN
   SELECT RAISE(ABORT, 'Completed capture baseline is pinned');

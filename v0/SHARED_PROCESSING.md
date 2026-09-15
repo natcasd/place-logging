@@ -55,8 +55,9 @@ worker; completed captures remain pinned regardless of the current version.
 - HTTP acceptance, Shortcuts URL handling, manual retry, and optional worker
   lifespan are implemented. Configure the final Firebase-authenticated service
   entrypoint before release.
-- Reconcile historical captures conservatively before allowing their re-share.
-  They currently return a conflict and are never fed into the shared cache.
+- Run the offline historical-capture reconciliation during release preparation.
+  Reconciled historical requests are delivered from their private pinned result,
+  without creating public jobs; unreconciled captures still return a conflict.
 - Complete client sessions, account deletion, operational limits, and cutover
   rehearsal. Firebase Authentication on Blaze with Apple/Google is selected; integration remains.
 - Complete the existing Google Places retention/refresh and map-display review
