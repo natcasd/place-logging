@@ -216,10 +216,22 @@ python backfill_movie_enrichments.py --db-path data/places.db
 ## Delivery
 
 - Pull requests and pushes to `main` run `.github/workflows/ci.yml`.
-- A successful CI run for a push to `main` triggers `.github/workflows/deploy.yml`.
+- Merging to `main` does not deploy. Production stays on its existing release
+  until `.github/workflows/deploy.yml` is manually run.
+- To release, wait for CI on the intended `main` commit to pass, then open
+  **Actions → Deploy to Fly.io → Run workflow**, select **main**, and run it.
+  The workflow deploys the commit selected when the run starts, even if `main`
+  advances afterward. It refuses deployment unless the latest push CI run for
+  that exact commit has completed successfully; other branches are skipped.
+- CLI equivalent: `gh workflow run deploy.yml --ref main`.
 - Deployment uses an app-scoped `FLY_API_TOKEN`, updates existing Machines only,
   disables Fly high-availability provisioning, and preserves scale-to-zero.
 - Pull requests never receive the production Fly token and never deploy.
+- CI builds the iOS app and share extension for the simulator without signing;
+  it does not install or distribute phone builds. Phone updates are separate.
+- During the multi-user transition, keep production on its current release
+  until the matching backend, database migration, and phone build are ready.
+  Running the deploy workflow does not perform the offline database migration.
 
 ## One-time retirement checklist
 
