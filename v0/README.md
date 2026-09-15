@@ -233,6 +233,13 @@ python backfill_movie_enrichments.py --db-path data/places.db
   until the matching backend, database migration, and phone build are ready.
   Running the deploy workflow does not perform the offline database migration.
 
+## Multi-user schema rehearsal
+
+The opt-in [SQLite multi-user migration](MULTI_USER_MIGRATION.md) creates and
+verifies a separate database copy. It is not enabled at startup and must not be
+deployed as the production database before account-scoped API/client work is
+complete. The existing single-user app continues to use its current schema.
+
 ## One-time retirement checklist
 
 This checklist applies only to the release that removes the former chat-bot
