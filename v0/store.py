@@ -153,6 +153,15 @@ INGEST_RETRY_COLUMN_MIGRATIONS = {
 
 def _connect(db_path: Path) -> sqlite3.Connection:
     con = sqlite3.connect(db_path)
+    if (
+        con.execute("PRAGMA application_id").fetchone()[0] == 0x4A4F544D
+        or any(row[1] == "user_id" for row in con.execute("PRAGMA table_info(captures)"))
+    ):
+        con.close()
+        raise RuntimeError(
+            "This is a multi-user database. The legacy unscoped store/API cannot open it; "
+            "account-scoped storage must be implemented before cutover."
+        )
     con.execute("PRAGMA foreign_keys = ON")
     return con
 
