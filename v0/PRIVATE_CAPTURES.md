@@ -2,8 +2,9 @@
 
 `CaptureStore` accepts durable user intent and materializes a validated original
 result into that user's library. It performs no downloading or model calls and
-does not publish public cache results. The next worker stage connects these
-operations to processing; the HTTP ingest routes still return 501 for now.
+does not publish public cache results. The [shared worker](SHARED_PROCESSING.md)
+connects these operations to processing; HTTP ingestion remains disabled until
+transport integration is complete.
 
 ## Operations
 
