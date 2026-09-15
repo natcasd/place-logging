@@ -173,7 +173,7 @@ class CaptureStore(AccountStore):
                 raise AccountConflict('Legacy input requires explicit reconciliation')
             if run['status'] in {'completed', 'partial'}:
                 return self._accepted(con, run)
-            if run['status'] not in {'queued', 'processing'}:
+            if run['status'] not in {'queued', 'processing', 'retry_scheduled'}:
                 raise AccountConflict('This request is not eligible to save a result')
             complete = capture['materialization_state'] == 'complete'
             if capture['input_kind'] == 'public_post':
