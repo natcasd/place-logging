@@ -1891,24 +1891,6 @@ def save_movie_enrichment(
         con.close()
 
 
-def list_entry_types(db_path: Path) -> list[str]:
-    """Return the open vocabulary currently used by saved entries."""
-    con = _connect(db_path)
-    try:
-        try:
-            rows = con.execute(
-                """SELECT DISTINCT entry_type
-                   FROM recommendations
-                   WHERE entry_type IS NOT NULL AND trim(entry_type) != ''
-                   ORDER BY entry_type COLLATE NOCASE"""
-            ).fetchall()
-        except sqlite3.OperationalError:
-            return []
-        return [row[0] for row in rows]
-    finally:
-        con.close()
-
-
 def list_sources(db_path: Path, limit: int = 200) -> list[dict[str, Any]]:
     """Return every preserved source, including sources with zero extracted entries."""
     con = _connect(db_path)
@@ -2192,6 +2174,13 @@ def _delete_canonical_entries(con: sqlite3.Connection, entry_ids: list[int]) -> 
     cursor = con.execute(
         f"DELETE FROM recommendations WHERE id IN ({placeholders})",
         entry_ids,
+    )
+    con.execute(
+        """DELETE FROM locations
+           WHERE NOT EXISTS (
+             SELECT 1 FROM recommendations
+             WHERE recommendations.location_id = locations.id
+           )"""
     )
     return cursor.rowcount
 

@@ -42,12 +42,6 @@ final class PlacesModel: ObservableObject {
     activity = try await api.fetchActivity()
   }
 
-  func deleteEntryCard(_ entry: SavedEntry) async throws {
-    try await api.deleteEntry(id: entry.id)
-    places.removeAll { $0.id == entry.id }
-    activity = try await api.fetchActivity()
-  }
-
   func deleteActivityEntry(id: Int) async throws {
     try await api.deleteEntry(id: id)
     places.removeAll { $0.id == id }
@@ -113,7 +107,7 @@ struct PlacesView: View {
             places: model.places,
             requestedEntryID: $requestedMapEntryID,
             selectedType: $aroundMeFilterType,
-            deleteEntryCard: { entry in try await model.deleteEntryCard(entry) }
+            deleteEntryCard: { entry in try await model.delete(entry) }
           )
             .tabItem {
               Label("Around Me", systemImage: "location")
@@ -201,7 +195,7 @@ struct PlacesView: View {
       SavedItemView(
         places: model.places.filter { $0.id == entryID },
         isLoading: model.isLoading,
-        deleteEntry: { entry in try await model.deleteEntryCard(entry) }
+        deleteEntry: { entry in try await model.delete(entry) }
       )
     case .activity(let ingestID):
       if let run = model.activity.first(where: { $0.id == ingestID }) {
@@ -233,7 +227,7 @@ struct PlacesView: View {
           entry.itemID == itemID || entry.sources.contains { $0.itemID == itemID }
         },
         isLoading: model.isLoading,
-        deleteEntry: { entry in try await model.deleteEntryCard(entry) }
+        deleteEntry: { entry in try await model.delete(entry) }
       )
     case .category(let type):
       SavedCategoryList(
@@ -476,7 +470,6 @@ private struct MappedEntryGroup: Identifiable {
   var name: String { primary.name }
   var type: String { primary.displayType }
   var sourceCount: Int { primary.sources.count }
-  var dishes: [String] { primary.dishes }
 }
 
 private struct MappedPlaceGroup: Identifiable {
