@@ -31,36 +31,12 @@ struct SavedCategory: Identifiable, Hashable {
 
   static func category(for type: String) -> SavedCategory {
     known.first { $0.type.caseInsensitiveCompare(type) == .orderedSame }
-      ?? legacyCategory(for: type)
       ?? SavedCategory(
         type: type,
         icon: .system("questionmark.circle.fill"),
         artAssetName: "category-unknown",
         artTint: .gray
       )
-  }
-
-  // Display compatibility only. New extraction cannot emit these retired types;
-  // keep old saved rows legible until their reviewed migration is applied.
-  private static func legacyCategory(for type: String) -> SavedCategory? {
-    switch type.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
-    case "bar":
-      return SavedCategory(
-        type: type,
-        icon: .asset("pin-martini-glass"),
-        artAssetName: "category-bar",
-        artTint: .purple
-      )
-    case "store":
-      return SavedCategory(
-        type: type,
-        icon: .system("bag.fill"),
-        artAssetName: "category-store",
-        artTint: .teal
-      )
-    default:
-      return nil
-    }
   }
 
   static func categories(for entries: [SavedEntry]) -> [SavedCategory] {
