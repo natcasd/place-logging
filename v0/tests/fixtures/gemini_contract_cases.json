@@ -1,0 +1,127 @@
+[
+  {
+    "id": "food-led-bar",
+    "suite": "text",
+    "post_text": "Social video narration: 'Spring Bar is my favorite stop for pintxos and a full dinner. I recommend it for the anchovy toast and the kitchen, not for cocktails.' The only visible sign reads Spring Bar.",
+    "expected_entries": [{"name": "Spring Bar", "type": "Restaurant", "has_location_query": true}]
+  },
+  {
+    "id": "drink-led-bar",
+    "suite": "text",
+    "post_text": "Social video narration: 'The Campbell is a gorgeous cocktail lounge. Come for the martinis and the drink program; this is my nightlife recommendation.' The sign reads The Campbell.",
+    "expected_entries": [{"name": "The Campbell", "type": "Cocktail Bar", "has_location_query": true}]
+  },
+  {
+    "id": "coffee-led-cafe",
+    "suite": "text",
+    "post_text": "Post caption: 'Save Little Ember Café for its espresso and pour-over coffee. There are pastries and sandwiches too, but the coffee is why I keep returning.'",
+    "expected_entries": [{"name": "Little Ember Café", "type": "Café", "has_location_query": true}]
+  },
+  {
+    "id": "dessert-led-shop-current-taxonomy",
+    "suite": "text",
+    "post_text": "Post caption: 'Alain Ducasse Chocolate & Glace is a dessert shop I recommend for handmade chocolates and ice cream. There is no full restaurant menu or coffee program.'",
+    "expected_entries": [{"name": "Alain Ducasse Chocolate & Glace", "type": "Bakery", "has_location_query": true}]
+  },
+  {
+    "id": "exhibit-not-host-museum",
+    "suite": "text",
+    "post_text": "Video narration: 'Go see Giacometti in the Temple of Dendur, the special exhibition at The Met. The show itself is my recommendation; The Met is the venue, not a second recommendation.'",
+    "expected_entries": [{"name": "Giacometti in the Temple of Dendur", "type": "Exhibit", "has_location_query": true}]
+  },
+  {
+    "id": "creator-not-unnamed-movie",
+    "suite": "text",
+    "post_text": "This is a retrospective praising filmmaker Éric Rohmer and recommending that viewers explore his body of work. It shows unlabeled film clips but names and recommends no individual film.",
+    "expected_entries": [{"name": "Éric Rohmer", "type": "Unknown", "has_location_query": false}]
+  },
+  {
+    "id": "list-not-supplier",
+    "suite": "text",
+    "post_text": "Caption: 'Two restaurants worth saving: S&P Lunch for sandwiches and Keepers for dinner. Both are independently recommended. Their bread supplier Example Milling is credited, but it is not recommended as a destination.'",
+    "expected_entries": [
+      {"name": "S&P Lunch", "type": "Restaurant", "has_location_query": true},
+      {"name": "Keepers", "type": "Restaurant", "has_location_query": true}
+    ]
+  },
+  {
+    "id": "no-distinct-entry",
+    "suite": "text",
+    "post_text": "A walking video shows city scenery, background shop signs, and an unlabeled movie poster. The narrator does not endorse, recommend, or name any specific thing to save.",
+    "expected_entries": []
+  },
+  {
+    "id": "ordinary-hours-not-temporary",
+    "suite": "text",
+    "post_text": "Caption: 'Save The Audley Public House for its beer and pub atmosphere. It is open Thursday through Sunday and closes at 11 p.m. Those are its ordinary business hours, not a limited-run event.'",
+    "expected_entries": [{"name": "The Audley Public House", "type": "Pub", "has_location_query": true, "absent_fields": ["starts_at", "ends_at", "recurrence_text"]}]
+  },
+  {
+    "id": "youtube-sandwich-source",
+    "suite": "media",
+    "source_url": "https://www.youtube.com/watch?v=4cnYFmYd0vA",
+    "expected_entries": [{"name": "Mission Sandwich Social", "type": "Restaurant", "has_location_query": true}]
+  },
+  {
+    "id": "instagram-pub-source",
+    "suite": "media",
+    "source_url": "https://www.instagram.com/reel/DdBvJ0rtWbB/",
+    "expected_entries": [{"name": "The Audley Public House", "type": "Pub", "has_location_query": true}]
+  },
+  {
+    "id": "instagram-carousel-restaurant-source",
+    "suite": "media",
+    "source_url": "https://www.instagram.com/p/DdSRgp4kZw9/",
+    "expected_entries": [{"name": "Keepers", "type": "Restaurant", "has_location_query": true}]
+  },
+  {
+    "id": "instagram-popup-and-cafe-source",
+    "suite": "media",
+    "source_url": "https://www.instagram.com/reel/DdRiTM1gN2w/",
+    "expected_entries": [
+      {"name": "Enso", "type": "Pop-up", "has_location_query": true},
+      {"name": "Cafe+ at PAGU", "type": "Café", "has_location_query": true}
+    ]
+  },
+  {
+    "id": "tiktok-bakery-source",
+    "suite": "media",
+    "source_url": "https://www.tiktok.com/@alinayqi/video/7673013843957730574",
+    "expected_entries": [{"name": "Madison Fare", "type": "Bakery", "has_location_query": true}]
+  },
+  {
+    "id": "tiebreaker-aligned-venue",
+    "suite": "tiebreaker",
+    "place": {
+      "extracted_name": "Le Chêne",
+      "type_name": "Restaurant",
+      "description": "A French restaurant in the West Village of New York City, recommended for dinner.",
+      "location_query": "Le Chêne West Village New York City",
+      "location_hints": {"neighborhood": "West Village", "city": "New York City"},
+      "extraction_confidence": "high",
+      "timestamp_seconds": 12.5,
+      "slide_index": 2
+    },
+    "candidates": [
+      {"displayName": {"text": "Le Chêne"}, "formattedAddress": "West Village, New York, NY", "types": ["restaurant", "french_restaurant"]},
+      {"displayName": {"text": "Le Chene"}, "formattedAddress": "Los Angeles, CA", "types": ["restaurant"]}
+    ],
+    "expected_decision": {"pick": 0, "confidence": "high"}
+  },
+  {
+    "id": "tiebreaker-no-location-evidence",
+    "suite": "tiebreaker",
+    "place": {
+      "extracted_name": "The Corner Café",
+      "type_name": "Café",
+      "description": "A coffee spot called The Corner Café; the post gives no city or neighborhood.",
+      "location_query": "The Corner Café",
+      "extraction_confidence": "medium"
+    },
+    "candidates": [
+      {"displayName": {"text": "The Corner Café"}, "formattedAddress": "Brooklyn, New York", "types": ["cafe"]},
+      {"displayName": {"text": "The Corner Café"}, "formattedAddress": "Portland, Oregon", "types": ["cafe"]}
+    ],
+    "expected_decision": {"pick": null, "confidence": "low"}
+  }
+]

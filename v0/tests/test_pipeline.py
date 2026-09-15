@@ -159,7 +159,7 @@ class YouTubeExtractionTests(unittest.TestCase):
     def test_sends_youtube_url_directly_to_gemini(self, mock_client: MagicMock) -> None:
         response = SimpleNamespace(
             output_text=json.dumps(
-                {"places": [{"extracted_name": "Mission Sandwich Social"}]}
+                {"entries": [{"extracted_name": "Mission Sandwich Social"}]}
             )
         )
         mock_client.return_value.interactions.create.return_value = response
@@ -885,7 +885,7 @@ class InstagramExtractionTests(unittest.TestCase):
         video_part = object()
         mock_from_bytes.return_value = video_part
         mock_client.return_value.models.generate_content.return_value = SimpleNamespace(
-            text=json.dumps({"places": [{"extracted_name": "Test Place"}]})
+            text=json.dumps({"entries": [{"extracted_name": "Test Place"}]})
         )
 
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -914,7 +914,7 @@ class InstagramExtractionTests(unittest.TestCase):
         video_part = object()
         mock_from_bytes.side_effect = [image_part, video_part]
         mock_client.return_value.models.generate_content.return_value = SimpleNamespace(
-            text=json.dumps({"places": []})
+            text=json.dumps({"entries": []})
         )
 
         with tempfile.TemporaryDirectory() as temp_dir:
