@@ -240,6 +240,10 @@ verifies a separate database copy. It is not enabled at startup and must not be
 deployed as the production database before account-scoped API/client work is
 complete. The existing single-user app continues to use its current schema.
 
+The [account API foundation](ACCOUNT_API.md) adds isolated reads and library
+mutations behind an explicit session-verifier interface. It is not the deployed
+entrypoint; account ingest and real login integration remain follow-up stages.
+
 ## One-time retirement checklist
 
 This checklist applies only to the release that removes the former chat-bot

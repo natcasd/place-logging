@@ -119,7 +119,9 @@ Foreign-key and integrity checks passed.
 
 ## Next implementation stages
 
-1. Account-scoped store/service methods and authenticated request context.
+1. Account-scoped reads/library mutations and the session-verifier boundary are
+   implemented in [the opt-in account API](ACCOUNT_API.md). Production identity
+   integration and account ingest remain required before cutover.
 2. Shared result validation and job claims; private materialization;
    mention/map deletion and deliberate re-share restoration, including races.
 3. Legacy-capture reconciliation, source identity/output-key validation, and
