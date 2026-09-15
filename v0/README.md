@@ -83,8 +83,8 @@ cp .env.example .env
 
 ### Getting `.env` values
 
-- `GEMINI_API_KEY` — copy from `../extractor-test/.env`
-- `GOOGLE_PLACES_API_KEY` — copy from `../extractor-test/.env`
+- `GEMINI_API_KEY` — create an API key for the configured Gemini project
+- `GOOGLE_PLACES_API_KEY` — create an API key with Places API access
 - `INGEST_API_TOKEN` — a private bearer token for authenticated API requests
 
 ## Running
@@ -140,25 +140,6 @@ sqlite3 data/places.db 'select id, source_url, created_at from captures order by
 sqlite3 data/places.db 'select id, name, entry_type, location_id from recommendations order by id desc limit 10;'
 ```
 
-## Generic-type backfill
-
-`backfill_entry_types.py` reclassifies every generic `Place` Recommendation using its saved
-source context and description. Its default mode creates a checkpointed,
-reviewable plan. Applying a complete plan backs up SQLite, verifies each target
-is still generic, updates only `entry_type`, and refuses to commit if any
-`Place` rows would remain.
-
-```bash
-python backfill_entry_types.py \
-  --db-path data/places.db \
-  --plan data/type-backfill-plan.json
-
-python backfill_entry_types.py \
-  --db-path data/places.db \
-  --plan data/type-backfill-plan.json \
-  --apply
-```
-
 ## Type-catalog regression evaluation
 
 Before planning any Bar/Store split backfill, run the new catalog against a
@@ -175,25 +156,6 @@ python evaluate_entry_type_migration.py \
 
 Review that report before implementing or applying a separate migration plan.
 The intended first pass is roughly 40–60 saved entries, not the full corpus.
-
-## Location-name backfill
-
-`backfill_location_names.py` retrieves Google Places `displayName` for
-Locations that retained a Place ID but predate name storage. Plan generation is
-checkpointed and read-only with respect to SQLite. Applying a complete plan
-backs up the database, verifies every Location is still unnamed, and updates
-the canonical Location.
-
-```bash
-python backfill_location_names.py \
-  --db-path data/places.db \
-  --plan data/location-name-backfill-plan.json
-
-python backfill_location_names.py \
-  --db-path data/places.db \
-  --plan data/location-name-backfill-plan.json \
-  --apply
-```
 
 ## Duplicate-source backfill
 

@@ -4,10 +4,6 @@ struct EntriesEnvelope: Decodable {
   let entries: [SavedEntry]
 }
 
-struct SourcesEnvelope: Decodable {
-  let sources: [SavedSource]
-}
-
 struct ActivityEnvelope: Decodable {
   let activity: [IngestActivity]
 }
@@ -16,106 +12,33 @@ struct SavedEntry: Decodable, Identifiable, Sendable {
   let id: Int
   let locationID: Int?
   let itemID: Int
-  let ordinal: Int
   let name: String
-  let googlePlaceID: String?
   let latitude: Double?
   let longitude: Double?
   let formattedAddress: String?
-  let googleMapsURL: URL?
   let locationName: String?
-  let dishes: [String]
   let whyItsCool: String
-  let tags: [String]
-  let timestampSeconds: Double?
-  let slideIndex: Int?
-  let resolutionStatus: String
   let type: String?
   let description: String?
   let startsAt: String?
   let endsAt: String?
   let recurrenceText: String?
   let movieEnrichment: MovieEnrichment?
-  let sourceURL: URL
-  let savedAt: String
   let sources: [SavedEntrySource]
 
   enum CodingKeys: String, CodingKey {
-    case id, ordinal, name, latitude, longitude, dishes, tags
+    case id, name, latitude, longitude
     case sources
     case locationID = "location_id"
     case itemID = "item_id"
-    case googlePlaceID = "google_place_id"
     case formattedAddress = "formatted_address"
-    case googleMapsURL = "google_maps_url"
     case locationName = "location_name"
     case whyItsCool = "why_its_cool"
-    case timestampSeconds = "timestamp_seconds"
-    case slideIndex = "slide_index"
-    case resolutionStatus = "resolution_status"
     case type, description
     case startsAt = "starts_at"
     case endsAt = "ends_at"
     case recurrenceText = "recurrence_text"
     case movieEnrichment = "movie_enrichment"
-    case sourceURL = "source_url"
-    case savedAt = "saved_at"
-  }
-
-  var mediaReferenceText: String? {
-    let timestamp = timestampSeconds.map(Self.formatTimestamp)
-    switch (slideIndex, timestamp) {
-    case let (.some(slide), .some(time)):
-      return "Slide \(slide) · Appears at \(time)"
-    case let (.some(slide), .none):
-      return "Slide \(slide)"
-    case let (.none, .some(time)):
-      return "Appears at \(time)"
-    case (.none, .none):
-      return nil
-    }
-  }
-
-  var mediaReferenceSystemImage: String {
-    slideIndex == nil ? "play.rectangle" : "rectangle.stack"
-  }
-
-  var linkedSourceURL: URL {
-    guard var components = URLComponents(url: sourceURL, resolvingAgainstBaseURL: false) else {
-      return sourceURL
-    }
-    var items = components.queryItems ?? []
-
-    if let slideIndex {
-      items.removeAll { $0.name == "img_index" }
-      items.append(URLQueryItem(name: "img_index", value: String(slideIndex)))
-    }
-
-    if let timestampSeconds, isYouTubeSource {
-      items.removeAll { $0.name == "t" }
-      items.append(
-        URLQueryItem(name: "t", value: "\(max(0, Int(timestampSeconds.rounded())))s")
-      )
-    }
-
-    components.queryItems = items
-    return components.url ?? sourceURL
-  }
-
-  var sourceLinkText: String {
-    let host = sourceURL.host?.lowercased() ?? ""
-    if host.contains("instagram") { return "Instagram Post" }
-    if isYouTubeSource { return "Watch on YouTube" }
-    if host.contains("tiktok") { return "Open in TikTok" }
-    return "Open original post"
-  }
-
-  var sourceSystemImage: String {
-    let host = sourceURL.host?.lowercased() ?? ""
-    if host.contains("instagram") { return "camera" }
-    if isYouTubeSource { return "play.rectangle.fill" }
-    if host.contains("tiktok") { return "music.note" }
-    return "link"
   }
 
   /// A precise-location fallback for Apple Maps when its place search cannot
@@ -167,22 +90,6 @@ struct SavedEntry: Decodable, Identifiable, Sendable {
     }
   }
 
-  private var isYouTubeSource: Bool {
-    let host = sourceURL.host?.lowercased() ?? ""
-    return host.contains("youtube.com") || host.contains("youtu.be")
-  }
-
-  private static func formatTimestamp(_ value: Double) -> String {
-    let totalSeconds = max(0, Int(value.rounded()))
-    let hours = totalSeconds / 3600
-    let minutes = (totalSeconds % 3600) / 60
-    let seconds = totalSeconds % 60
-    if hours > 0 {
-      return String(format: "%d:%02d:%02d", hours, minutes, seconds)
-    }
-    return String(format: "%d:%02d", minutes, seconds)
-  }
-
   private static func parseFlexibleDate(_ value: String) -> Date? {
     if let date = ISO8601DateFormatter().date(from: value) { return date }
     let formatter = DateFormatter()
@@ -211,24 +118,16 @@ struct MovieEnrichment: Decodable, Sendable {
 struct SavedEntrySource: Decodable, Identifiable, Sendable {
   let id: Int
   let itemID: Int
-  let ordinal: Int
-  let name: String
-  let type: String
   let sourceURL: URL
   let sourcePlatform: String
   let creator: String?
   let description: String
-  let dishes: [String]
   let whyItsCool: String
-  let tags: [String]
   let timestampSeconds: Double?
   let slideIndex: Int?
-  let resolutionStatus: String
-  let locationQuery: String?
-  let savedAt: String
 
   enum CodingKeys: String, CodingKey {
-    case id, ordinal, name, type, description, dishes, tags
+    case id, description
     case itemID = "item_id"
     case sourceURL = "source_url"
     case sourcePlatform = "source_platform"
@@ -236,9 +135,6 @@ struct SavedEntrySource: Decodable, Identifiable, Sendable {
     case whyItsCool = "why_its_cool"
     case timestampSeconds = "timestamp_seconds"
     case slideIndex = "slide_index"
-    case resolutionStatus = "resolution_status"
-    case locationQuery = "location_query"
-    case savedAt = "saved_at"
   }
 
   var mediaReferenceText: String? {
@@ -309,38 +205,6 @@ struct SavedEntrySource: Decodable, Identifiable, Sendable {
       return String(format: "%d:%02d:%02d", hours, minutes, seconds)
     }
     return String(format: "%d:%02d", minutes, seconds)
-  }
-}
-
-struct SavedSource: Decodable, Identifiable, Sendable {
-  let id: Int
-  let sourceURL: URL
-  let sourcePlatform: String
-  let creator: String?
-  let caption: String?
-  let summary: String?
-  let mediaCount: Int
-  let mediaPreserved: Bool
-  let entryCount: Int
-  let needsReview: Bool
-  let savedAt: String
-
-  enum CodingKeys: String, CodingKey {
-    case id, creator, caption, summary
-    case sourceURL = "source_url"
-    case sourcePlatform = "source_platform"
-    case mediaCount = "media_count"
-    case mediaPreserved = "media_preserved"
-    case entryCount = "entry_count"
-    case needsReview = "needs_review"
-    case savedAt = "saved_at"
-  }
-
-  var title: String {
-    if let creator, !creator.isEmpty { return creator }
-    if sourcePlatform.caseInsensitiveCompare("youtube") == .orderedSame { return "YouTube" }
-    if sourcePlatform.caseInsensitiveCompare("tiktok") == .orderedSame { return "TikTok" }
-    return sourcePlatform.capitalized
   }
 }
 
@@ -563,17 +427,9 @@ struct IngestActivity: Decodable, Identifiable, Sendable {
   let summary: String?
   let status: String
   let stage: String
-  let errorType: String?
   let errorMessage: String?
   let failureKind: String?
-  let retryable: Bool?
   let attemptCount: Int?
-  let maxAttempts: Int?
-  let nextRetryAt: String?
-  let lastRetryAt: String?
-  let startedAt: String
-  let updatedAt: String
-  let completedAt: String?
   let results: [SavedEntryOutcome]
   let events: [IngestActivityEvent]
 
@@ -611,31 +467,14 @@ struct IngestActivity: Decodable, Identifiable, Sendable {
     case itemID = "item_id"
     case sourceURL = "source_url"
     case sourcePlatform = "source_platform"
-    case errorType = "error_type"
     case errorMessage = "error_message"
     case failureKind = "failure_kind"
-    case retryable
     case attemptCount = "attempt_count"
-    case maxAttempts = "max_attempts"
-    case nextRetryAt = "next_retry_at"
-    case lastRetryAt = "last_retry_at"
-    case startedAt = "started_at"
-    case updatedAt = "updated_at"
-    case completedAt = "completed_at"
   }
 }
 
-struct IngestActivityEvent: Decodable, Identifiable, Sendable {
-  let id: Int
-  let stage: String
-  let status: String
+struct IngestActivityEvent: Decodable, Sendable {
   let message: String
-  let createdAt: String
-
-  enum CodingKeys: String, CodingKey {
-    case id, stage, status, message
-    case createdAt = "created_at"
-  }
 }
 
 struct APIErrorEnvelope: Decodable {

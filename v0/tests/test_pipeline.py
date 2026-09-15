@@ -39,7 +39,6 @@ class YouTubeExtractionTests(unittest.TestCase):
     def test_prompt_requires_main_intent_and_uses_fixed_types(self) -> None:
         prompt = pipeline._extraction_prompt(
             {"caption_or_description": "An exhibit at a museum."},
-            existing_types=["Place", "Unknown", "Restaurant", "Restaurant", "Exhibit"],
         )
 
         self.assertIn("part of the post's main intent", prompt)
@@ -165,11 +164,14 @@ class YouTubeExtractionTests(unittest.TestCase):
         )
         mock_client.return_value.interactions.create.return_value = response
 
-        places = pipeline.extract_youtube_url(
+        bundle = pipeline.extract_youtube_bundle(
             "https://www.youtube.com/watch?v=abc",
         )
 
-        self.assertEqual(places[0]["extracted_name"], "Mission Sandwich Social")
+        self.assertEqual(
+            bundle["entries"][0]["extracted_name"],
+            "Mission Sandwich Social",
+        )
         properties = pipeline.EXTRACTION_RESPONSE_SCHEMA["properties"]["entries"]["items"]["properties"]
         self.assertIn("timestamp_seconds", properties)
         self.assertIn("type_name", properties)
@@ -890,7 +892,7 @@ class InstagramExtractionTests(unittest.TestCase):
             video = Path(temp_dir) / "post.mp4"
             video.write_bytes(b"test-video")
 
-            places = pipeline.extract(video, {"webpage_url": "instagram"})
+            bundle = pipeline.extract_bundle(video, {"webpage_url": "instagram"})
 
         mock_from_bytes.assert_called_once_with(
             data=b"test-video",
@@ -898,7 +900,7 @@ class InstagramExtractionTests(unittest.TestCase):
         )
         call = mock_client.return_value.models.generate_content.call_args.kwargs
         self.assertIs(call["contents"][0], video_part)
-        self.assertEqual(places[0]["extracted_name"], "Test Place")
+        self.assertEqual(bundle["entries"][0]["extracted_name"], "Test Place")
         mock_client.return_value.files.upload.assert_not_called()
 
     @patch("pipeline.types.Part.from_bytes")
@@ -920,7 +922,7 @@ class InstagramExtractionTests(unittest.TestCase):
             video = Path(temp_dir) / "002-slide.mp4"
             image.write_bytes(b"image")
             video.write_bytes(b"video")
-            pipeline.extract(
+            pipeline.extract_bundle(
                 [image, video],
                 {
                     "caption_or_description": "First caption\n\nSecond caption",
@@ -947,7 +949,7 @@ class InstagramExtractionTests(unittest.TestCase):
                 handle.truncate(pipeline.MAX_INLINE_VIDEO_BYTES + 1)
 
             with self.assertRaisesRegex(ValueError, "too large"):
-                pipeline.extract(video, {})
+                pipeline.extract_bundle(video, {})
 
         mock_client.return_value.models.generate_content.assert_not_called()
 

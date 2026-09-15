@@ -16,7 +16,6 @@ from store import (
     init_db,
     list_ingest_runs,
     list_sources,
-    list_entry_types,
     list_entries,
     save_ingest,
     saved_entry_outcomes,
@@ -279,7 +278,6 @@ class StoreTests(unittest.TestCase):
                 recommendations[0]["sources"][0]["description"],
                 "A bakery with great bread and sandwiches.",
             )
-            self.assertEqual(list_entry_types(db_path), ["Restaurant"])
 
     def test_init_db_backfills_and_removes_legacy_places_table(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -777,8 +775,7 @@ class StoreTests(unittest.TestCase):
                     ],
                 },
             )
-
-            self.assertEqual(list_entry_types(db_path), ["Unknown"])
+            self.assertEqual(list_entries(db_path)[0]["type"], "Unknown")
 
     def test_normalizes_case_and_accents_to_catalog_types(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -806,8 +803,8 @@ class StoreTests(unittest.TestCase):
                 )
 
             self.assertEqual(
-                list_entry_types(db_path),
-                ["Café", "Exhibit", "Fitness", "Pop-up", "Restaurant"],
+                [entry["type"] for entry in list_entries(db_path, 10)],
+                ["Pop-up", "Fitness", "Exhibit", "Café", "Restaurant"],
             )
 
     def test_saves_non_location_entry_and_preserves_source(self) -> None:
@@ -1146,6 +1143,33 @@ class StoreTests(unittest.TestCase):
             self.assertEqual(activity["status"], "completed")
             self.assertEqual(activity["results"], [])
             self.assertEqual(len(list_sources(db_path)), 1)
+
+    def test_delete_entry_removes_its_unreferenced_location(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            db_path = Path(temp_dir) / "places.db"
+            init_db(db_path)
+            save_ingest(
+                db_path,
+                {
+                    "source_url": "https://www.instagram.com/reel/location/",
+                    "metadata": {},
+                    "resolved_entries": [
+                        self.resolved_place("Delete Me", "places/delete-me")
+                    ],
+                },
+            )
+            entry = list_entries(db_path)[0]
+
+            delete_entry(db_path, entry["id"])
+
+            con = sqlite3.connect(db_path)
+            try:
+                self.assertEqual(
+                    con.execute("SELECT COUNT(*) FROM locations").fetchone()[0],
+                    0,
+                )
+            finally:
+                con.close()
 
     def test_delete_entries_removes_exact_card_rows_and_preserves_sources(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

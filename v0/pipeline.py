@@ -1,7 +1,5 @@
 """
 Ingest pipeline: source URL → platform ingest → Gemini extract → optional location resolve.
-
-Stays synchronous for simplicity; bot.py offloads to a thread via asyncio.to_thread.
 """
 from __future__ import annotations
 
@@ -781,7 +779,6 @@ MAX_INLINE_MEDIA_BYTES = MAX_INLINE_VIDEO_BYTES
 
 def _extraction_prompt(
     metadata: dict[str, Any],
-    existing_types: list[str] | None = None,
 ) -> str:
     return (
         EXTRACTOR_PROMPT
@@ -883,7 +880,6 @@ def _normalize_media_references(
 def extract_bundle(
     media_paths: Path | list[Path],
     metadata: dict[str, Any],
-    existing_types: list[str] | None = None,
     on_retry: RetryProgress | None = None,
 ) -> dict[str, Any]:
     """Analyze downloaded Instagram media and return source content plus entries."""
@@ -905,7 +901,7 @@ def extract_bundle(
         for path in paths
     ]
 
-    prompt = _extraction_prompt(metadata, existing_types)
+    prompt = _extraction_prompt(metadata)
 
     model = os.environ.get("GEMINI_MODEL", "gemini-3.1-flash-lite")
     response = _call_gemini_with_retry(
@@ -929,22 +925,8 @@ def extract_bundle(
     }
 
 
-def extract(
-    media_paths: Path | list[Path],
-    metadata: dict[str, Any],
-    existing_types: list[str] | None = None,
-) -> list[dict[str, Any]]:
-    """Compatibility wrapper returning only individual saved entries."""
-    return extract_bundle(
-        media_paths,
-        metadata,
-        existing_types,
-    )["entries"]
-
-
 def extract_youtube_bundle(
     source_url: str,
-    existing_types: list[str] | None = None,
     on_retry: RetryProgress | None = None,
 ) -> dict[str, Any]:
     """Analyze a public YouTube URL and return source content plus entries."""
@@ -959,7 +941,7 @@ def extract_youtube_bundle(
             input=[
                 {
                     "type": "text",
-                    "text": _extraction_prompt(metadata, existing_types),
+                    "text": _extraction_prompt(metadata),
                 },
                 {"type": "video", "uri": source_url},
             ],
@@ -975,14 +957,6 @@ def extract_youtube_bundle(
         "source_content": parsed.get("source_content") or {},
         "entries": _normalize_extracted_entries(extracted, metadata),
     }
-
-
-def extract_youtube_url(
-    source_url: str,
-    existing_types: list[str] | None = None,
-) -> list[dict[str, Any]]:
-    """Compatibility wrapper returning only individual saved entries."""
-    return extract_youtube_bundle(source_url, existing_types)["entries"]
 
 
 # ---------- Resolver ----------
@@ -1363,7 +1337,6 @@ def resolve(
 def process_ingest(
     source_url: str | None,
     workdir: Path,
-    existing_types: list[str] | None = None,
     progress: Callable[[str], None] | None = None,
     retry_progress: RetryProgress | None = None,
 ) -> dict[str, Any]:
@@ -1384,7 +1357,6 @@ def process_ingest(
         try:
             bundle = extract_youtube_bundle(
                 source_url,
-                existing_types,
                 retry_progress,
             )
         except Exception as exc:
@@ -1410,7 +1382,6 @@ def process_ingest(
                 bundle = extract_bundle(
                     fetched.media_paths,
                     metadata,
-                    existing_types,
                     retry_progress,
                 )
             except Exception as exc:

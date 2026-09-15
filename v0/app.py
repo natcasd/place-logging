@@ -432,7 +432,7 @@ def create_app(injected_runtime: Runtime | None = None) -> FastAPI:
             _validation_diagnostics(exc),
         )
         return JSONResponse(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             content={"detail": jsonable_encoder(exc.errors())},
         )
 
@@ -450,7 +450,7 @@ def create_app(injected_runtime: Runtime | None = None) -> FastAPI:
         _require_ingest_auth(runtime, authorization)
         if not 1 <= limit <= 1_000:
             raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
                 detail="limit must be between 1 and 1000",
             )
         return {"entries": await asyncio.to_thread(runtime.service.entries, limit)}
@@ -465,7 +465,7 @@ def create_app(injected_runtime: Runtime | None = None) -> FastAPI:
         _require_ingest_auth(runtime, authorization)
         if not 1 <= limit <= 500:
             raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
                 detail="limit must be between 1 and 500",
             )
         return {"sources": await asyncio.to_thread(runtime.service.sources, limit)}
@@ -480,7 +480,7 @@ def create_app(injected_runtime: Runtime | None = None) -> FastAPI:
         _require_ingest_auth(runtime, authorization)
         if not 1 <= limit <= 500:
             raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
                 detail="limit must be between 1 and 500",
             )
         return {"activity": await asyncio.to_thread(runtime.service.activity, limit)}
@@ -658,7 +658,7 @@ def create_app(injected_runtime: Runtime | None = None) -> FastAPI:
                 round((time.perf_counter() - ingest_started) * 1000, 1),
             )
             raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
                 detail=str(exc),
             ) from exc
         except Exception as exc:
@@ -698,7 +698,7 @@ def create_app(injected_runtime: Runtime | None = None) -> FastAPI:
         body = await request.body()
         if len(body) > 2_000_000:
             raise HTTPException(
-                status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                status_code=status.HTTP_413_CONTENT_TOO_LARGE,
                 detail="Diagnostic body exceeds 2 MB",
             )
 
@@ -760,13 +760,13 @@ def create_app(injected_runtime: Runtime | None = None) -> FastAPI:
             ).decode("utf-8").strip()
         except (binascii.Error, UnicodeDecodeError, ValueError) as exc:
             raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
                 detail="source_url_base64 must encode a UTF-8 URL",
             ) from exc
 
         if not 1 <= len(source_url) <= 4096:
             raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
                 detail="Decoded source URL must contain 1 to 4096 characters",
             )
 
