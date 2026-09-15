@@ -52,8 +52,10 @@ class CaptureStore(AccountStore):
         ''', (self.user_id, run_id))
         return self._accepted(con, self._run(con, run_id))
 
-    def accept_public(self, source_url: str, request_key: str) -> dict[str, Any]:
+    def accept_public(self, source_url: str, request_key: str, *, channel: str = 'share_extension') -> dict[str, Any]:
         self._request_key(request_key)
+        if channel not in {'share_extension', 'shortcut'}:
+            raise ValueError('Unsupported capture channel')
         if not isinstance(source_url, str) or not 1 <= len(source_url) <= 4096:
             raise ValueError('A supported public post URL is required')
         parsed = urlsplit(source_url.strip())
@@ -86,10 +88,34 @@ class CaptureStore(AccountStore):
                 capture_id = con.execute('''
                     INSERT INTO captures (user_id, vertical, source_url, input_kind, capture_channel,
                         source_platform, source_post_id) VALUES (?, 'recommendation', ?, 'public_post',
-                        'share_extension', ?, ?)
-                ''', (self.user_id, canonical, platform, post_id)).lastrowid
+                        ?, ?, ?)
+                ''', (self.user_id, canonical, channel, platform, post_id)).lastrowid
                 intent = 'capture'
             return self._new_run(con, capture_id, request_key, intent)
+
+    def retry_public(self, ingest_id: int) -> dict[str, Any]:
+        """Retry the same operation without granting new restoration intent."""
+        with self._transaction(write=True) as con:
+            run = self._run(con, ingest_id)
+            capture = self._capture(con, run['item_id']) if run['item_id'] is not None else None
+            if (capture is None or capture['input_kind'] != 'public_post'
+                    or capture['materialization_state'] == 'legacy_unverified'
+                    or run['intent'] == 'legacy' or run['accepted_sequence'] <= 0):
+                raise AccountConflict('This saved post requires reconciliation before retrying')
+            if run['status'] in {'queued', 'processing'}:
+                return self._accepted(con, run)
+            if run['status'] not in {'failed', 'retry_scheduled'}:
+                raise AccountConflict('Only failed or scheduled saves can be retried')
+            con.execute('''
+                UPDATE ingest_runs SET status = 'queued', stage = 'accepted', error_type = NULL,
+                    error_message = NULL, failure_kind = NULL, retryable = 0,
+                    next_retry_at = NULL, completed_at = NULL, last_retry_at = CURRENT_TIMESTAMP,
+                    updated_at = CURRENT_TIMESTAMP WHERE user_id = ? AND id = ?
+            ''', (self.user_id, ingest_id))
+            con.execute('''INSERT INTO ingest_events (user_id, ingest_run_id, stage, status, message)
+                           VALUES (?, ?, 'accepted', 'queued', 'Retry accepted')''',
+                        (self.user_id, ingest_id))
+            return self._accepted(con, self._run(con, ingest_id))
 
     def accept_direct(self, text: str, request_key: str, *, channel: str = 'typed',
                       context: dict | None = None) -> dict[str, Any]:

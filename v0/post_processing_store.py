@@ -121,18 +121,21 @@ class PostProcessingStore:
                 return None
             jobs = con.execute('''
                 SELECT * FROM post_processing_cache WHERE processing_version = ? AND (
-                    status IN ('queued', 'failed') OR (status = 'retry_scheduled' AND next_retry_at <= ?)
+                    status IN ('queued', 'failed', 'retry_scheduled')
                     OR (status = 'processing' AND lease_expires_at <= ?)) ORDER BY id
-            ''', (self.processing_version, now, now)).fetchall()
+            ''', (self.processing_version, now)).fetchall()
             for job in jobs:
                 members = self._members(con, job, due_only=True)
                 if not members or (job['status'] == 'failed' and not any(r['status'] == 'queued' for r in members)):
+                    continue
+                manual = any(r['status'] == 'queued' for r in members)
+                if job['status'] == 'retry_scheduled' and job['next_retry_at'] > now and not manual:
                     continue
                 if job['status'] == 'processing' and job['attempt_count'] >= self.max_attempts:
                     self._fail(con, job, 'processing', 'interrupted', 'Processing was interrupted.', False, None)
                     continue
                 token = uuid.uuid4().hex
-                attempt = 1 if job['status'] == 'failed' else job['attempt_count'] + 1
+                attempt = 1 if job['status'] == 'failed' or (job['status'] == 'retry_scheduled' and manual) else job['attempt_count'] + 1
                 con.execute('''
                     UPDATE post_processing_cache SET status = 'processing', lease_token = ?, lease_expires_at = ?,
                         attempt_count = ?, next_retry_at = NULL, error_type = NULL, error_message = NULL,

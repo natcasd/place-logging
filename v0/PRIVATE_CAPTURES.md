@@ -3,8 +3,7 @@
 `CaptureStore` accepts durable user intent and materializes a validated original
 result into that user's library. It performs no downloading or model calls and
 does not publish public cache results. The [shared worker](SHARED_PROCESSING.md)
-connects these operations to processing; HTTP ingestion remains disabled until
-transport integration is complete.
+connects these operations to processing; authenticated HTTP ingestion now durably queues requests before returning 202.
 
 ## Operations
 

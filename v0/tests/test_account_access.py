@@ -387,13 +387,13 @@ class AccountAccessTests(unittest.TestCase):
         self.assertEqual(con.execute("SELECT COUNT(*) FROM recommendation_mentions WHERE user_id = 'nathan' AND removed_at IS NOT NULL").fetchone()[0], 2)
         self.assertEqual(len(self.friend.entries()[0]['sources']), 1)
 
-    def test_unimplemented_ingest_routes_cannot_fall_back_to_legacy(self):
+    def test_ingest_requires_request_keys_and_legacy_retry_cannot_fall_back(self):
         before = self.snapshot()
         with patch('ingest_service.IngestService.ingest', side_effect=AssertionError('legacy called')):
-            self.assertEqual(self.request('POST', '/ingests', json={'source_url': 'https://youtu.be/shared'}).status_code, 501)
+            self.assertEqual(self.request('POST', '/ingests', json={'source_url': 'https://youtu.be/shared'}).status_code, 422)
             encoded = base64.b64encode(b'https://youtu.be/shared').decode()
-            self.assertEqual(self.request('POST', '/shortcut/ingests', json={'source_url_base64': encoded}).status_code, 501)
-            self.assertEqual(self.request('POST', f'/activity/{self.run}/retry').status_code, 501)
+            self.assertEqual(self.request('POST', '/shortcut/ingests', json={'source_url_base64': encoded}).status_code, 422)
+            self.assertEqual(self.request('POST', f'/activity/{self.run}/retry').status_code, 409)
         self.assertEqual(before, self.snapshot())
 
     def test_query_limits_are_validated(self):

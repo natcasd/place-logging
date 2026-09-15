@@ -1,9 +1,8 @@
 # Account-scoped backend foundation
 
-This is the second multi-user implementation stage. It adds private library
-reads and existing library mutations against the migrated schema. It does not
-yet provide a deployable multi-user app: login and account ingest processing
-are subsequent stages.
+The account API provides isolated library access and durable public-post
+acceptance against the migrated schema. Firebase/client integration, historical
+reconciliation, and release verification remain before production cutover.
 
 ## Boundary
 
@@ -14,14 +13,14 @@ and server-side mapping to an internal account. Invalid, expired, or revoked
 credentials must raise `InvalidSession`. There is no default verifier, public
 development-token map, `X-User-ID` shortcut, or shared-token fallback.
 
-The chosen login methods are Apple, Google, and email. The identity/session
-provider remains to be selected and integrated. It must validate credentials
+The chosen login methods are Apple and Google through standard Firebase
+Authentication on Blaze. The provider adapter remains to be integrated. It must validate credentials
 with its maintained SDK and enforce issuer/audience/expiry/revocation as
 applicable. Linking login methods to an existing account requires verified
 control; matching an unverified email must never merge accounts. Provider
 identities and the stable internal owner ID are separate concepts. The tests
 use a fake verifier only to exercise the account boundary; they do not implement
-or validate real Apple/Google/email login.
+or validate real Apple/Google login.
 
 Every API data route uses the same authentication dependency. `AccountStore`
 requires an explicit owner and checks that the account still exists and is
@@ -41,12 +40,13 @@ nonexistent resource IDs both produce the same 404 response.
 | `DELETE /api/v1/entries` | All-or-nothing ownership check for the entire batch. |
 | `DELETE /api/v1/activity/{id}` | Hide an owned failed/scheduled run, retain its cancellation identity, and remove its events. |
 | `POST /api/v1/activity/{run}/entries/{entry}/location` | Confirm a stored candidate and group recommendations only within the owner. |
-| `POST /api/v1/ingests`, `/shortcut/ingests` | Authenticate, then return 501 until account ingest is implemented. |
-| `POST /api/v1/activity/{id}/retry` | Authenticate and check ownership, then return 501. |
+| `POST /api/v1/ingests`, `/shortcut/ingests` | Authenticate and durably accept a save, returning 202. |
+| `POST /api/v1/activity/{id}/retry` | Requeue an owned failed/scheduled public save without advancing its original action sequence. |
 
 The Shortcuts diagnostic endpoint is not registered in the account API. Health
-and framework documentation contain no library data. There is no processing
-worker or legacy service attached to this factory.
+and framework documentation contain no library data. An optional explicit `PostProcessingWorker` is started and drained through the
+application lifespan. Its database must match the API database. No legacy
+service is attached, and startup never creates or migrates a database.
 
 Map deletion detaches and hides removed mentions while retaining their stable
 output identities and mutation sequence. It preserves captures, public cache
@@ -95,3 +95,34 @@ The private capture stage adds `DELETE /api/v1/mentions/{id}` and optional
 `mention_id` in location confirmation. Cancelled Activity retains its request
 key privately to prevent replay. Shared workers and production login remain
 subsequent stages.
+
+## Durable HTTP acceptance
+
+`POST /api/v1/ingests` accepts `source_url` and a required `request_key` (1–128
+ASCII letters, digits, underscores, periods, colons, or hyphens). Generate the
+key once for a deliberate share and retain it for every transport retry. A
+new deliberate re-share uses a new key. Keys are scoped to the account.
+
+`POST /api/v1/shortcut/ingests` uses the same key and `source_url_base64` instead.
+The strict base64/UTF-8 adapter enters the same account acceptance flow. Caller
+owner fields are rejected. Unsupported URLs return 422; temporarily unresolved
+TikTok share links return 503 before creating a request. Each short-link redirect
+is checked against the TikTok host allowlist before it is requested.
+
+The 202 response contains `ingest_id`, `item_id`, `status`, `accepted_sequence`,
+and current `saved_entries`. It means the operation is durably recorded, not
+that extraction has completed. Replays return the existing operation, including
+a cancelled status for a removed failure. Clients refresh the owned Activity
+endpoint for completion; the legacy synchronous extraction envelope is unchanged.
+
+Manual retry uses the existing Activity ID and original intent/sequence. Repeated
+requests while queued or processing return that operation. A retry of a failed
+attempt can start a fresh bounded attempt cycle; it never acquires new restoration
+rights. Reconciliation is still required for legacy captures.
+
+The optional worker is injected as
+`create_account_app(db_path=..., verify_session=..., worker=...)`. Without one,
+acceptance remains durable and a separate trusted worker must drain the queue.
+Orderly shutdown stops claims and waits for in-flight processing/cleanup. Forced
+termination leaves a recoverable lease. Docker still starts the legacy service;
+no production database, deploy configuration, or phone build changes here.

@@ -2,8 +2,8 @@
 
 `PostProcessingStore` and `PostProcessingWorker` connect accepted private
 captures to one shared job per platform, post, and processing version. The
-worker is explicitly constructed; it is not started by the released API or
-the account API factory yet. No schema changes or additional tables are needed.
+worker is explicitly constructed and can be injected into the account API
+factory for managed startup/shutdown. The released legacy API never starts it. No schema changes or additional tables are needed.
 
 ## Lifecycle
 
@@ -52,12 +52,13 @@ worker; completed captures remain pinned regardless of the current version.
 
 ## Remaining integration and release requirements
 
-- Connect authenticated HTTP acceptance, Shortcuts URL handling, and manual
-  retry to this queue; wire startup/shutdown in the final account service.
+- HTTP acceptance, Shortcuts URL handling, manual retry, and optional worker
+  lifespan are implemented. Configure the final Firebase-authenticated service
+  entrypoint before release.
 - Reconcile historical captures conservatively before allowing their re-share.
   They currently return a conflict and are never fed into the shared cache.
 - Complete client sessions, account deletion, operational limits, and cutover
-  rehearsal. Real auth provider selection remains open.
+  rehearsal. Firebase Authentication on Blaze with Apple/Google is selected; integration remains.
 - Complete the existing Google Places retention/refresh and map-display review
   before release. Keeping place payloads out of the immutable result does not
   by itself establish a compliant lifetime for the mutable location lookup.
