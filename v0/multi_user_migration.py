@@ -18,7 +18,7 @@ from urllib.parse import parse_qs, urlsplit
 from source_identity import canonical_source_url
 
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 APPLICATION_ID = 0x4A4F544D  # JOTM; distinguishes this from unrelated user_version values.
 SCHEMA_PATH = Path(__file__).with_name("multi_user_schema.sql")
 TABLES = (
@@ -139,6 +139,56 @@ def _validate_target(con: sqlite3.Connection, owner_id: str) -> None:
     _check_integrity(con)
 
 
+def _upgrade_account_copy(con: sqlite3.Connection, owner_id: str, version: int) -> dict:
+    """Rebuild the offline copy with revised constraints, preserving every field."""
+    tables = ('users', 'post_processing_cache', *TABLES)
+    actual = {r[0] for r in con.execute("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'")}
+    if actual != set(tables):
+        raise ValueError('Unexpected account tables; review the migration first')
+    expected_triggers = {'immutable_completed_post_result', 'completed_capture_requires_published_cache_insert',
+                         'completed_capture_requires_published_cache_update', 'pin_completed_capture_baseline'}
+    if {r[0] for r in con.execute("SELECT name FROM sqlite_master WHERE type IN ('trigger', 'view')")} != expected_triggers:
+        raise ValueError('Unexpected account triggers/views; review the migration first')
+    expected_indexes = {'idx_captures_owner_source', 'idx_mentions_owner_capture',
+                        'idx_mentions_owner_recommendation', 'idx_recommendations_owner_location',
+                        'idx_ingest_runs_owner_updated', 'idx_ingest_events_owner_run',
+                        'idx_post_processing_due'}
+    # Version 1 also had the obsolete recommendation/capture uniqueness index.
+    actual_indexes = {r[0] for r in con.execute("SELECT name FROM sqlite_master WHERE type = 'index' AND sql IS NOT NULL")}
+    allowed_indexes = expected_indexes | ({'idx_mentions_active_recommendation_capture'} if version == 1 else set())
+    if not actual_indexes.issubset(allowed_indexes):
+        raise ValueError('Unexpected account indexes; review the migration first')
+    foreign_keys = con.execute('PRAGMA foreign_keys').fetchone()[0]
+    con.execute('PRAGMA foreign_keys = OFF')
+    try:
+        con.execute('BEGIN IMMEDIATE')
+        layout = {table: _columns(con, table) for table in tables}
+        before = _snapshot(con, layout)
+        records = {table: list(con.execute(f'SELECT * FROM {_quote(table)}')) for table in tables}
+        sequences = list(con.execute('SELECT name, seq FROM sqlite_sequence'))
+        for table in reversed(tables):
+            con.execute(f'DROP TABLE {_quote(table)}')
+        _execute_schema(con)
+        for table in tables:
+            fields = ', '.join(map(_quote, layout[table]))
+            placeholders = ', '.join('?' for _ in layout[table])
+            con.executemany(f'INSERT INTO {_quote(table)} ({fields}) VALUES ({placeholders})', records[table])
+        con.execute('DELETE FROM sqlite_sequence')
+        con.executemany('INSERT INTO sqlite_sequence (name, seq) VALUES (?, ?)', sequences)
+        if _snapshot(con, layout) != before:
+            raise ValueError('Account upgrade changed existing data')
+        con.execute(f'PRAGMA user_version = {SCHEMA_VERSION}')
+        _validate_target(con, owner_id)
+        con.commit()
+        return {'schema_version': SCHEMA_VERSION, 'already_migrated': False,
+                'upgraded_from': version, 'original_data_preserved': True}
+    except BaseException:
+        con.rollback()
+        raise
+    finally:
+        con.execute(f'PRAGMA foreign_keys = {foreign_keys}')
+
+
 def migrate_copy(con: sqlite3.Connection, *, owner_id: str, owner_name: str) -> dict[str, Any]:
     """Migrate an offline connection transactionally; call prepare_copy for safe file handling.
 
@@ -155,18 +205,8 @@ def migrate_copy(con: sqlite3.Connection, *, owner_id: str, owner_name: str) -> 
     if version == SCHEMA_VERSION and app_id == APPLICATION_ID:
         _validate_target(con, owner_id)
         return {"schema_version": version, "already_migrated": True}
-    if version == 1 and app_id == APPLICATION_ID:
-        try:
-            con.execute("BEGIN IMMEDIATE")
-            con.execute("DROP INDEX idx_mentions_active_recommendation_capture")
-            con.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
-            _validate_target(con, owner_id)
-            con.commit()
-            return {"schema_version": SCHEMA_VERSION, "already_migrated": False,
-                    "upgraded_from": 1, "original_data_preserved": True}
-        except BaseException:
-            con.rollback()
-            raise
+    if version in {1, 2} and app_id == APPLICATION_ID:
+        return _upgrade_account_copy(con, owner_id, version)
     if version != 0 or app_id != 0:
         raise ValueError("Unrecognized database version; refusing to migrate")
 

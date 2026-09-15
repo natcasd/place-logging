@@ -77,7 +77,7 @@ class CaptureStore(AccountStore):
                     raise AccountConflict('Request key was already used for different or legacy input')
                 return self._accepted(con, previous)
             captures = con.execute('''
-                SELECT * FROM captures WHERE user_id = ? AND source_platform = ? AND source_post_id = ?
+                SELECT * FROM captures WHERE user_id = ? AND source_platform = ? AND source_post_id = ? ORDER BY id
             ''', (self.user_id, platform, post_id)).fetchall()
             if any(row['materialization_state'] == 'legacy_unverified' for row in captures):
                 raise AccountConflict('This saved post requires legacy reconciliation before re-sharing')
@@ -190,6 +190,61 @@ class CaptureStore(AccountStore):
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ''', (*values, self.user_id, capture_id, output.key, ordinal))
 
+    def _materialize_capture(self, con, capture, run, public_cache_id, private_result):
+        complete = capture['materialization_state'] == 'complete'
+        if capture['input_kind'] == 'public_post' and capture['private_result_json'] is not None:
+            if private_result is not None or public_cache_id is not None:
+                raise AccountConflict('Historical captures use their private pinned result')
+            baseline = validate_result(capture['private_result_json'])
+        elif capture['input_kind'] == 'public_post':
+            if private_result is not None:
+                raise AccountConflict('Public captures cannot use private results')
+            cache_id = capture['post_cache_id'] or public_cache_id
+            cache = con.execute('''
+                SELECT * FROM post_processing_cache WHERE id = ? AND platform = ? AND post_id = ?
+                    AND status = 'completed'
+            ''', (cache_id, capture['source_platform'], capture['source_post_id'])).fetchone()
+            if cache is None:
+                raise AccountConflict('A matching published post result is required')
+            baseline = validate_result(cache['result_json'])
+        elif capture['input_kind'] == 'direct':
+            if public_cache_id is not None:
+                raise AccountConflict('Direct captures cannot use public results')
+            value = capture['private_result_json'] if complete else private_result
+            if value is None:
+                raise AccountConflict('A private original result is required')
+            baseline = validate_result(value)
+        else:
+            raise AccountConflict('Legacy input requires explicit reconciliation')
+        rows = con.execute('SELECT * FROM recommendation_mentions WHERE user_id = ? AND item_id = ?',
+                           (self.user_id, capture['id'])).fetchall()
+        existing = {row['output_key']: row for row in rows}
+        keys = {output.key for output in baseline.mentions}
+        if (complete and set(existing) != keys) or (not complete and existing):
+            raise AccountConflict('Capture output identities require reconciliation')
+        for ordinal, output in enumerate(baseline.mentions):
+            row = existing.get(output.key)
+            if row is not None:
+                if row['ordinal'] != ordinal:
+                    raise AccountConflict('Capture output ordering does not match its pinned result')
+                if row['removed_at'] is None:
+                    continue  # Active descriptions, location edits, and all other fields survive.
+                if run['intent'] != 'reshare' or run['accepted_sequence'] <= row['last_user_change_sequence']:
+                    continue
+            self._write_mention(con, capture['id'], ordinal, output, run['accepted_sequence'],
+                                row['id'] if row is not None else None)
+        if not complete:
+            if capture['input_kind'] == 'public_post':
+                con.execute('''
+                    UPDATE captures SET post_cache_id = ?, materialization_state = 'complete'
+                    WHERE user_id = ? AND id = ?
+                ''', (cache['id'], self.user_id, capture['id']))
+            else:
+                con.execute('''
+                    UPDATE captures SET private_result_json = ?, materialization_state = 'complete'
+                    WHERE user_id = ? AND id = ?
+                ''', (baseline.model_dump_json(), self.user_id, capture['id']))
+
     def materialize(self, ingest_id: int, *, public_cache_id: int | None = None,
                     private_result: dict | None = None) -> dict[str, Any]:
         with self._transaction(write=True) as con:
@@ -201,56 +256,19 @@ class CaptureStore(AccountStore):
                 return self._accepted(con, run)
             if run['status'] not in {'queued', 'processing', 'retry_scheduled'}:
                 raise AccountConflict('This request is not eligible to save a result')
-            complete = capture['materialization_state'] == 'complete'
-            if capture['input_kind'] == 'public_post':
-                if private_result is not None:
-                    raise AccountConflict('Public captures cannot use private results')
-                cache_id = capture['post_cache_id'] or public_cache_id
-                cache = con.execute('''
-                    SELECT * FROM post_processing_cache WHERE id = ? AND platform = ? AND post_id = ?
-                        AND status = 'completed'
-                ''', (cache_id, capture['source_platform'], capture['source_post_id'])).fetchone()
-                if cache is None:
-                    raise AccountConflict('A matching published post result is required')
-                baseline = validate_result(cache['result_json'])
-            elif capture['input_kind'] == 'direct':
-                if public_cache_id is not None:
-                    raise AccountConflict('Direct captures cannot use public results')
-                value = capture['private_result_json'] if complete else private_result
-                if value is None:
-                    raise AccountConflict('A private original result is required')
-                baseline = validate_result(value)
-            else:
-                raise AccountConflict('Legacy input requires explicit reconciliation')
-            rows = con.execute('SELECT * FROM recommendation_mentions WHERE user_id = ? AND item_id = ?',
-                               (self.user_id, capture['id'])).fetchall()
-            existing = {row['output_key']: row for row in rows}
-            keys = {output.key for output in baseline.mentions}
-            if (complete and set(existing) != keys) or (not complete and existing):
-                raise AccountConflict('Capture output identities require reconciliation')
-            for ordinal, output in enumerate(baseline.mentions):
-                row = existing.get(output.key)
-                if row is not None:
-                    if row['ordinal'] != ordinal:
-                        raise AccountConflict('Capture output ordering does not match its pinned result')
-                    if row['removed_at'] is None:
-                        continue  # Active descriptions, location edits, and all other fields survive.
-                    if run['intent'] != 'reshare' or run['accepted_sequence'] <= row['last_user_change_sequence']:
-                        continue
-                self._write_mention(con, capture['id'], ordinal, output, run['accepted_sequence'],
-                                    row['id'] if row is not None else None)
-            if not complete:
-                if capture['input_kind'] == 'public_post':
-                    con.execute('''
-                        UPDATE captures SET post_cache_id = ?, materialization_state = 'complete'
-                        WHERE user_id = ? AND id = ?
-                    ''', (cache['id'], self.user_id, capture['id']))
-                else:
-                    con.execute('''
-                        UPDATE captures SET private_result_json = ?, materialization_state = 'complete'
-                        WHERE user_id = ? AND id = ?
-                    ''', (baseline.model_dump_json(), self.user_id, capture['id']))
-            outcomes = self._outcomes(con, capture['id'])
+            captures = [capture]
+            if capture['input_kind'] == 'public_post' and capture['private_result_json'] is not None:
+                # Preserve historical duplicate captures and their IDs. One new
+                # share restores the matching source group without merging rows.
+                captures = con.execute('''
+                    SELECT * FROM captures WHERE user_id = ? AND source_platform = ? AND source_post_id = ?
+                        AND capture_channel = 'legacy' AND private_result_json IS NOT NULL
+                    ORDER BY id
+                ''', (self.user_id, capture['source_platform'], capture['source_post_id'])).fetchall()
+            for saved_capture in captures:
+                self._materialize_capture(con, saved_capture, run, public_cache_id, private_result)
+            outcomes = [outcome for saved_capture in captures
+                        for outcome in self._outcomes(con, saved_capture['id'])]
             final_status = 'partial' if any(r['resolution_status'] in {'needs_review', 'unresolved'} for r in outcomes) else 'completed'
             con.execute('''
                 UPDATE ingest_runs SET status = ?, stage = 'completed', result_json = NULL,
