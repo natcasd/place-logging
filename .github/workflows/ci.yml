@@ -32,6 +32,8 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - name: Select Xcode 26.6
         run: sudo xcode-select --switch /Applications/Xcode_26.6.app
+      - name: Test account transport and response contracts
+        run: swift test --package-path ios
       - name: Build app and share extension without signing
         run: >-
           xcodebuild

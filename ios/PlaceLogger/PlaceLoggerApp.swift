@@ -1,15 +1,36 @@
 import SwiftUI
 import UIKit
 import UserNotifications
+import GoogleSignIn
 
 @main
 struct PlaceLoggerApp: App {
   @UIApplicationDelegateAdaptor(PlaceLoggerAppDelegate.self) private var appDelegate
   @StateObject private var router = PlaceLoggerRouter.shared
+  @StateObject private var session = AccountSession.shared
+  @Environment(\.scenePhase) private var scenePhase
+
+  init() { AccountSession.shared.configure() }
 
   var body: some Scene {
     WindowGroup {
-      PlacesView(router: router)
+      Group {
+        if let snapshot = session.snapshot {
+          PlacesView(router: router, account: snapshot)
+            .id(snapshot.generation)
+        } else {
+          SignInView(session: session)
+        }
+      }
+        .onOpenURL { url in GIDSignIn.sharedInstance.handle(url) }
+        .onChange(of: scenePhase) { _, phase in
+          if phase == .active { session.reloadSharedSession() }
+        }
+        .onChange(of: session.snapshot) { _, _ in
+          router.pendingDestination = nil
+          UNUserNotificationCenter.current().removeAllPendingNotificationRequests()
+          UNUserNotificationCenter.current().removeAllDeliveredNotifications()
+        }
         .task {
           _ = try? await UNUserNotificationCenter.current().requestAuthorization(
             options: [.alert, .sound]
@@ -58,6 +79,11 @@ final class PlaceLoggerAppDelegate: NSObject, UIApplicationDelegate,
     didReceive response: UNNotificationResponse
   ) async {
     let userInfo = response.notification.request.content.userInfo
+    let notificationUserID = userInfo["account_uid"] as? String
+    let notificationGeneration = userInfo["account_generation"] as? String
+    let current = await MainActor.run { try? AccountSession.shared.requireSnapshot() }
+    guard let current, current.userID == notificationUserID,
+          current.generation.uuidString == notificationGeneration else { return }
     let entryID = Self.intValue(userInfo["entry_id"])
     let ingestID = Self.intValue(userInfo["ingest_id"])
     let itemID = Self.intValue(userInfo["item_id"])
@@ -74,6 +100,7 @@ final class PlaceLoggerAppDelegate: NSObject, UIApplicationDelegate,
     }
     guard let destination else { return }
     await MainActor.run {
+      guard AccountSession.shared.snapshot == current else { return }
       PlaceLoggerRouter.shared.pendingDestination = destination
     }
   }

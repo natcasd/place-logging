@@ -11,7 +11,11 @@ enum APIConfig {
     return url
   }
 
-  static var token: String {
-    (Bundle.main.object(forInfoDictionaryKey: "APIToken") as? String) ?? ""
+  static var firebaseProjectID: String {
+    (Bundle.main.object(forInfoDictionaryKey: "FirebaseProjectID") as? String) ?? ""
+  }
+
+  static var keychainGroup: String {
+    (Bundle.main.object(forInfoDictionaryKey: "FirebaseKeychainGroup") as? String) ?? ""
   }
 }

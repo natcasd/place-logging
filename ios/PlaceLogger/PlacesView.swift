@@ -9,7 +9,11 @@ final class PlacesModel: ObservableObject {
   @Published var isLoading = false
   @Published var errorMessage: String?
 
-  private let api = PlaceLoggerAPI()
+  private let api: PlaceLoggerAPI
+
+  init(account: AccountSessionSnapshot) {
+    api = PlaceLoggerAPI(account: account, authorizer: AccountSession.shared)
+  }
 
   func load() async {
     guard !isLoading else { return }
@@ -18,8 +22,10 @@ final class PlacesModel: ObservableObject {
     do {
       async let loadedEntries = api.fetchEntries()
       async let loadedActivity = api.fetchActivity()
-      places = try await loadedEntries
-      activity = try await loadedActivity
+      let loaded = try await (loadedEntries, loadedActivity)
+      try Task.checkCancellation()
+      places = loaded.0
+      activity = loaded.1
       errorMessage = nil
     } catch {
       errorMessage = error.localizedDescription
@@ -42,20 +48,26 @@ final class PlacesModel: ObservableObject {
     activity = try await api.fetchActivity()
   }
 
-  func deleteActivityEntry(id: Int) async throws {
-    try await api.deleteEntry(id: id)
-    places.removeAll { $0.id == id }
-    activity = try await api.fetchActivity()
+  func deleteActivityMention(_ result: SavedEntryOutcome) async throws {
+    guard let mentionID = result.sourceConnectionID else { throw PlaceLoggerError.invalidResponse }
+    try await api.deleteMention(id: mentionID)
+    async let entries = api.fetchEntries()
+    async let runs = api.fetchActivity()
+    let loaded = try await (entries, runs)
+    places = loaded.0
+    activity = loaded.1
   }
 
   func confirmActivityLocation(
     ingestID: Int,
     entryID: Int,
+    mentionID: Int?,
     candidateID: String
   ) async throws {
     try await api.confirmActivityLocation(
       ingestID: ingestID,
       entryID: entryID,
+      mentionID: mentionID,
       candidateID: candidateID
     )
     async let loadedEntries = api.fetchEntries()
@@ -80,13 +92,18 @@ final class PlacesModel: ObservableObject {
 
 struct PlacesView: View {
   @ObservedObject var router: PlaceLoggerRouter
-  @StateObject private var model = PlacesModel()
+  @StateObject private var model: PlacesModel
   @Environment(\.scenePhase) private var scenePhase
   @State private var savedPath: [PlacesNavigation] = []
   @State private var activityPath: [PlacesNavigation] = []
   @State private var selectedTab: PlacesTab = .aroundMe
   @State private var requestedMapEntryID: Int?
   @State private var aroundMeFilterType: String?
+
+  init(router: PlaceLoggerRouter, account: AccountSessionSnapshot) {
+    self.router = router
+    _model = StateObject(wrappedValue: PlacesModel(account: account))
+  }
 
   var body: some View {
     Group {
@@ -146,13 +163,27 @@ struct PlacesView: View {
             Label("Activity", systemImage: "clock.arrow.circlepath")
           }
           .tag(PlacesTab.activity)
+
+          AccountSettingsView()
+            .tabItem { Label("Account", systemImage: "person.crop.circle") }
+            .tag(PlacesTab.account)
         }
       }
     }
     .task { await model.load() }
+    .task(id: scenePhase) {
+      guard scenePhase == .active else { return }
+      while !Task.isCancelled {
+        do { try await Task.sleep(for: .seconds(5)) } catch { return }
+        if model.activity.contains(where: { ["queued", "processing", "retry_scheduled"].contains($0.status) }) {
+          await model.load()
+        }
+      }
+    }
     .task(id: router.pendingDestination) {
       guard let destination = router.pendingDestination else { return }
       await model.ensureLoaded()
+      guard !Task.isCancelled else { return }
       switch destination {
       case .mapEntry(let entryID):
         if let entry = model.places.first(where: { $0.id == entryID }),
@@ -207,13 +238,14 @@ struct PlacesView: View {
           deleteActivity: {
             try await model.deleteFailedActivity(ingestID: ingestID)
           },
-          deleteEntry: { entryID in
-            try await model.deleteActivityEntry(id: entryID)
+          deleteEntry: { result in
+            try await model.deleteActivityMention(result)
           },
-          confirmLocation: { entryID, candidateID in
+          confirmLocation: { result, candidateID in
             try await model.confirmActivityLocation(
               ingestID: ingestID,
-              entryID: entryID,
+              entryID: result.entryID,
+              mentionID: result.sourceConnectionID,
               candidateID: candidateID
             )
           }
@@ -249,6 +281,7 @@ private enum PlacesTab: Hashable {
   case saved
   case aroundMe
   case activity
+  case account
 }
 
 private enum PlacesNavigation: Hashable {
@@ -580,7 +613,7 @@ private struct ActivitySourceIcon: View {
 
   private var brandAssetName: String? {
     let platform = activity.sourcePlatform.lowercased()
-    let host = activity.sourceURL.host?.lowercased() ?? ""
+    let host = activity.sourceURL?.host?.lowercased() ?? ""
     if platform.contains("instagram") || host.contains("instagram") {
       return "InstagramBrandIcon"
     }
@@ -592,14 +625,14 @@ private struct ActivitySourceIcon: View {
 
   private var fallbackSystemImage: String {
     let platform = activity.sourcePlatform.lowercased()
-    let host = activity.sourceURL.host?.lowercased() ?? ""
+    let host = activity.sourceURL?.host?.lowercased() ?? ""
     if platform.contains("tiktok") || host.contains("tiktok") { return "music.note" }
     return "link"
   }
 
   private var fallbackColor: Color {
     let platform = activity.sourcePlatform.lowercased()
-    let host = activity.sourceURL.host?.lowercased() ?? ""
+    let host = activity.sourceURL?.host?.lowercased() ?? ""
     return platform.contains("tiktok") || host.contains("tiktok") ? .black : .blue
   }
 
@@ -627,8 +660,8 @@ private struct ActivityDetail: View {
   let activity: IngestActivity
   let retry: () async throws -> Void
   let deleteActivity: () async throws -> Void
-  let deleteEntry: (Int) async throws -> Void
-  let confirmLocation: (Int, String) async throws -> Void
+  let deleteEntry: (SavedEntryOutcome) async throws -> Void
+  let confirmLocation: (SavedEntryOutcome, String) async throws -> Void
   @State private var pendingDeletion: SavedEntryOutcome?
   @State private var deletingEntryID: Int?
   @State private var isRetrying = false
@@ -679,7 +712,7 @@ private struct ActivityDetail: View {
                   mediaReferenceText: nil
                 )
 
-                if activity.status == "processing" {
+                if activity.status == "processing" || activity.status == "queued" {
                   ActivityStatePanel(
                     title: activity.statusText,
                     message: activity.events.last?.message,
@@ -754,11 +787,11 @@ private struct ActivityDetail: View {
                         }
                       },
                       confirmLocation: { candidateID in
-                        try await confirmLocation(result.entryID, candidateID)
+                        try await confirmLocation(result, candidateID)
                       }
                     )
                   }
-                } else if !["processing", "failed", "retry_scheduled"].contains(activity.status) {
+                } else if !["queued", "processing", "failed", "retry_scheduled"].contains(activity.status) {
                   ContentUnavailableView(
                     "No Recommendations Kept",
                     systemImage: "tray",
@@ -847,7 +880,7 @@ private struct ActivityDetail: View {
     deletingEntryID = result.entryID
     defer { deletingEntryID = nil }
     do {
-      try await deleteEntry(result.entryID)
+      try await deleteEntry(result)
     } catch {
       actionError = error.localizedDescription
     }
@@ -1192,10 +1225,7 @@ private struct ActivityRecommendationCard: View {
 }
 
 private func activityDeleteMessage(_ result: SavedEntryOutcome) -> String {
-  let references = result.sourceCount == 1
-    ? "its saved reference"
-    : "its \(result.sourceCount) saved references"
-  return "This removes \(result.name) and \(references). Original source posts stay saved."
+  "This removes \(result.name) from this post’s saved recommendations. Other saved sources for it stay in your library."
 }
 
 private func compactActivityLocation(_ formattedAddress: String) -> String {
@@ -1989,7 +2019,7 @@ private struct MovieLinkButton: View {
 }
 
 private struct SourceMetadataCard: View {
-  let sourceURL: URL
+  let sourceURL: URL?
   let sourcePlatform: String
   let creator: String?
   let primaryText: String?
@@ -2012,7 +2042,7 @@ private struct SourceMetadataCard: View {
 
   private var brandAssetName: String? {
     let platform = sourcePlatform.lowercased()
-    let host = sourceURL.host?.lowercased() ?? ""
+    let host = sourceURL?.host?.lowercased() ?? ""
     if platform.contains("instagram") || host.contains("instagram") {
       return "InstagramBrandIcon"
     }
@@ -2023,7 +2053,7 @@ private struct SourceMetadataCard: View {
   }
 
   private var fallbackSystemImage: String {
-    let host = sourceURL.host?.lowercased() ?? ""
+    let host = sourceURL?.host?.lowercased() ?? ""
     if host.contains("instagram") { return "camera" }
     if host.contains("youtube.com") || host.contains("youtu.be") {
       return "play.rectangle.fill"
@@ -2034,13 +2064,11 @@ private struct SourceMetadataCard: View {
 
   private var fallbackColor: Color {
     let platform = sourcePlatform.lowercased()
-    let host = sourceURL.host?.lowercased() ?? ""
+    let host = sourceURL?.host?.lowercased() ?? ""
     return platform.contains("tiktok") || host.contains("tiktok") ? .black : .blue
   }
 
-  var body: some View {
-    VStack(alignment: .leading, spacing: 10) {
-      Link(destination: sourceURL) {
+  private var sourceHeader: some View {
         HStack(spacing: 10) {
           if let brandAssetName {
             Image(brandAssetName)
@@ -2067,16 +2095,21 @@ private struct SourceMetadataCard: View {
             .foregroundStyle(.blue)
         }
         .contentShape(Rectangle())
-      }
-      .buttonStyle(.plain)
+  }
 
-      if let mediaReferenceText {
+  var body: some View {
+    VStack(alignment: .leading, spacing: 10) {
+      if let sourceURL {
+        Link(destination: sourceURL) { sourceHeader }.buttonStyle(.plain)
+      } else {
+        Label("Your recommendation", systemImage: "text.bubble")
+          .font(.headline)
+      }
+      if let mediaReferenceText, let sourceURL {
         Link(destination: sourceURL) {
           Label(mediaReferenceText, systemImage: "play.rectangle")
-            .font(.caption)
-            .foregroundStyle(.secondary)
-        }
-        .buttonStyle(.plain)
+            .font(.caption).foregroundStyle(.secondary)
+        }.buttonStyle(.plain)
       }
 
       if let detailText, !detailText.isEmpty {

@@ -1,4 +1,4 @@
-PLACE_LOGGER_API_TOKEN =
+GOOGLE_REVERSED_CLIENT_ID =
 #include? "Secrets.xcconfig"
 
 CODE_SIGN_IDENTITY[sdk=iphonesimulator*] =

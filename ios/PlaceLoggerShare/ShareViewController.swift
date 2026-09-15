@@ -104,6 +104,7 @@ private struct ShareStatusView: View {
   let cancel: (Error) -> Void
 
   @State private var state: Phase = .starting
+  @State private var requestKey = UUID().uuidString
 
   enum Phase {
     case starting
@@ -124,7 +125,7 @@ private struct ShareStatusView: View {
         Text(url.host() ?? url.absoluteString)
           .font(.caption)
           .foregroundStyle(.secondary)
-        Text("You can close this and keep scrolling. Jot will notify you when it’s done.")
+        Text("Once accepted, Jot keeps processing your post. Check Activity for the result.")
           .font(.caption)
           .multilineTextAlignment(.center)
           .foregroundStyle(.secondary)
@@ -145,23 +146,19 @@ private struct ShareStatusView: View {
       do {
         let url = try await loadURL()
         state = .saving(url)
-        let result = try await PlaceLoggerAPI().ingest(sourceURL: url)
+        let account = try AccountSession.shared.requireSnapshot()
+        let result = try await PlaceLoggerAPI(account: account, authorizer: AccountSession.shared)
+          .ingest(sourceURL: url, requestKey: requestKey)
         await LocalNotification.send(
-          title: result.notificationTitle,
-          body: result.notificationBody,
+          title: "Post accepted",
+          body: "Open Activity in Jot to check your save.",
           ingestID: result.ingestID,
           itemID: result.itemID,
-          entry: result.savedEntries.count == 1 ? result.savedEntries.first : nil
+          entry: nil,
+          account: account
         )
         complete()
       } catch {
-        await LocalNotification.send(
-          title: "Couldn't save place",
-          body: error.localizedDescription,
-          ingestID: nil,
-          itemID: nil,
-          entry: nil
-        )
         state = .failed(error.localizedDescription)
       }
     }
@@ -174,9 +171,11 @@ private enum LocalNotification {
     body: String,
     ingestID: Int?,
     itemID: Int?,
-    entry: SavedEntryOutcome?
+    entry: SavedEntryOutcome?,
+    account: AccountSessionSnapshot
   ) async {
     let center = UNUserNotificationCenter.current()
+    guard (try? await AccountSession.shared.validate(account)) != nil else { return }
     let settings = await center.notificationSettings()
     guard settings.authorizationStatus == .authorized
       || settings.authorizationStatus == .provisional
@@ -188,7 +187,8 @@ private enum LocalNotification {
     content.title = title
     content.body = body
     content.sound = .default
-    var userInfo: [String: Any] = [:]
+    var userInfo: [String: Any] = ["account_uid": account.userID,
+                                  "account_generation": account.generation.uuidString]
     if let ingestID { userInfo["ingest_id"] = ingestID }
     if let itemID { userInfo["item_id"] = itemID }
     if let entry {
@@ -202,6 +202,7 @@ private enum LocalNotification {
       content: content,
       trigger: UNTimeIntervalNotificationTrigger(timeInterval: 1, repeats: false)
     )
+    guard (try? await AccountSession.shared.validate(account)) != nil else { return }
     try? await center.add(request)
   }
 }
