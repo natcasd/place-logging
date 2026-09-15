@@ -1,0 +1,380 @@
+{
+  "reference_commit": "2508f1d97f072957ff055a9a149cbe5782817c4f",
+  "reference_date": "2026-09-15",
+  "contract_sha256": "b5d3678cbf299d72fe49f443d7de7e23ce1d6836d9e5688c6bc60322347c7fbd",
+  "note": "Provider-reported usage from completed read-only baseline calls. Synthetic labels are test expectations; media labels reflect historical saved results, not independently verified truth. Unavailable cases are excluded.",
+  "cases": [
+    {
+      "id": "food-led-bar",
+      "suite": "text",
+      "reference": "synthetic_labeled",
+      "prompt_chars": 11492,
+      "usage": [
+        {
+          "operation": "text contract baseline",
+          "model": "gemini-3.1-flash-lite",
+          "input_tokens": 2554,
+          "output_tokens": 209,
+          "thought_tokens": null,
+          "cached_tokens": null,
+          "total_tokens": 2763
+        }
+      ],
+      "score": {
+        "passed": true,
+        "missing": [],
+        "unexpected": [],
+        "wrong_type": [],
+        "wrong_fields": []
+      },
+      "predicted": [
+        {
+          "name": "Spring Bar",
+          "type": "Restaurant"
+        }
+      ]
+    },
+    {
+      "id": "drink-led-bar",
+      "suite": "text",
+      "reference": "synthetic_labeled",
+      "prompt_chars": 11492,
+      "usage": [
+        {
+          "operation": "text contract baseline",
+          "model": "gemini-3.1-flash-lite",
+          "input_tokens": 2545,
+          "output_tokens": 196,
+          "thought_tokens": null,
+          "cached_tokens": null,
+          "total_tokens": 2741
+        }
+      ],
+      "score": {
+        "passed": true,
+        "missing": [],
+        "unexpected": [],
+        "wrong_type": [],
+        "wrong_fields": []
+      },
+      "predicted": [
+        {
+          "name": "The Campbell",
+          "type": "Cocktail Bar"
+        }
+      ]
+    },
+    {
+      "id": "coffee-led-cafe",
+      "suite": "text",
+      "reference": "synthetic_labeled",
+      "prompt_chars": 11492,
+      "usage": [
+        {
+          "operation": "text contract baseline",
+          "model": "gemini-3.1-flash-lite",
+          "input_tokens": 2543,
+          "output_tokens": 170,
+          "thought_tokens": null,
+          "cached_tokens": null,
+          "total_tokens": 2713
+        }
+      ],
+      "score": {
+        "passed": true,
+        "missing": [],
+        "unexpected": [],
+        "wrong_type": [],
+        "wrong_fields": []
+      },
+      "predicted": [
+        {
+          "name": "Little Ember Café",
+          "type": "Café"
+        }
+      ]
+    },
+    {
+      "id": "dessert-led-shop-current-taxonomy",
+      "suite": "text",
+      "reference": "synthetic_labeled",
+      "prompt_chars": 11492,
+      "usage": [
+        {
+          "operation": "text contract baseline",
+          "model": "gemini-3.1-flash-lite",
+          "input_tokens": 2545,
+          "output_tokens": 202,
+          "thought_tokens": null,
+          "cached_tokens": null,
+          "total_tokens": 2747
+        }
+      ],
+      "score": {
+        "passed": true,
+        "missing": [],
+        "unexpected": [],
+        "wrong_type": [],
+        "wrong_fields": []
+      },
+      "predicted": [
+        {
+          "name": "Alain Ducasse Chocolate & Glace",
+          "type": "Bakery"
+        }
+      ]
+    },
+    {
+      "id": "exhibit-not-host-museum",
+      "suite": "text",
+      "reference": "synthetic_labeled",
+      "prompt_chars": 11492,
+      "usage": [
+        {
+          "operation": "text contract baseline",
+          "model": "gemini-3.1-flash-lite",
+          "input_tokens": 2551,
+          "output_tokens": 208,
+          "thought_tokens": null,
+          "cached_tokens": null,
+          "total_tokens": 2759
+        }
+      ],
+      "score": {
+        "passed": false,
+        "missing": [
+          "Giacometti in the Temple of Dendur"
+        ],
+        "unexpected": [
+          {
+            "name": "Giacometti",
+            "type": "Exhibit"
+          }
+        ],
+        "wrong_type": [],
+        "wrong_fields": []
+      },
+      "predicted": [
+        {
+          "name": "Giacometti",
+          "type": "Exhibit"
+        }
+      ]
+    },
+    {
+      "id": "creator-not-unnamed-movie",
+      "suite": "text",
+      "reference": "synthetic_labeled",
+      "prompt_chars": 11492,
+      "usage": [
+        {
+          "operation": "text contract baseline",
+          "model": "gemini-3.1-flash-lite",
+          "input_tokens": 2543,
+          "output_tokens": 196,
+          "thought_tokens": null,
+          "cached_tokens": null,
+          "total_tokens": 2739
+        }
+      ],
+      "score": {
+        "passed": true,
+        "missing": [],
+        "unexpected": [],
+        "wrong_type": [],
+        "wrong_fields": []
+      },
+      "predicted": [
+        {
+          "name": "Éric Rohmer",
+          "type": "Unknown"
+        }
+      ]
+    },
+    {
+      "id": "list-not-supplier",
+      "suite": "text",
+      "reference": "synthetic_labeled",
+      "prompt_chars": 11492,
+      "usage": [
+        {
+          "operation": "text contract baseline",
+          "model": "gemini-3.1-flash-lite",
+          "input_tokens": 2552,
+          "output_tokens": 227,
+          "thought_tokens": null,
+          "cached_tokens": null,
+          "total_tokens": 2779
+        }
+      ],
+      "score": {
+        "passed": true,
+        "missing": [],
+        "unexpected": [],
+        "wrong_type": [],
+        "wrong_fields": []
+      },
+      "predicted": [
+        {
+          "name": "S&P Lunch",
+          "type": "Restaurant"
+        },
+        {
+          "name": "Keepers",
+          "type": "Restaurant"
+        }
+      ]
+    },
+    {
+      "id": "no-distinct-entry",
+      "suite": "text",
+      "reference": "synthetic_labeled",
+      "prompt_chars": 11492,
+      "usage": [
+        {
+          "operation": "text contract baseline",
+          "model": "gemini-3.1-flash-lite",
+          "input_tokens": 2543,
+          "output_tokens": 65,
+          "thought_tokens": null,
+          "cached_tokens": null,
+          "total_tokens": 2608
+        }
+      ],
+      "score": {
+        "passed": true,
+        "missing": [],
+        "unexpected": [],
+        "wrong_type": [],
+        "wrong_fields": []
+      },
+      "predicted": []
+    },
+    {
+      "id": "ordinary-hours-not-temporary",
+      "suite": "text",
+      "reference": "synthetic_labeled",
+      "prompt_chars": 11492,
+      "usage": [
+        {
+          "operation": "text contract baseline",
+          "model": "gemini-3.1-flash-lite",
+          "input_tokens": 2556,
+          "output_tokens": 203,
+          "thought_tokens": null,
+          "cached_tokens": null,
+          "total_tokens": 2759
+        }
+      ],
+      "score": {
+        "passed": true,
+        "missing": [],
+        "unexpected": [],
+        "wrong_type": [],
+        "wrong_fields": []
+      },
+      "predicted": [
+        {
+          "name": "The Audley Public House",
+          "type": "Pub"
+        }
+      ]
+    },
+    {
+      "id": "youtube-sandwich-source",
+      "suite": "media",
+      "reference": "historical_saved_label",
+      "prompt_chars": 11554,
+      "usage": [
+        {
+          "operation": "YouTube extraction",
+          "model": "gemini-3.1-flash-lite",
+          "input_tokens": 8540,
+          "output_tokens": 553,
+          "thought_tokens": 0,
+          "cached_tokens": 0,
+          "total_tokens": 9093
+        }
+      ],
+      "score": {
+        "passed": true,
+        "missing": [],
+        "unexpected": [],
+        "wrong_type": [],
+        "wrong_fields": []
+      },
+      "predicted": [
+        {
+          "name": "Mission Sandwich Social",
+          "type": "Restaurant"
+        }
+      ]
+    },
+    {
+      "id": "tiktok-bakery-source",
+      "suite": "media",
+      "reference": "historical_saved_label",
+      "prompt_chars": 12001,
+      "usage": [
+        {
+          "operation": "Instagram extraction",
+          "model": "gemini-3.1-flash-lite",
+          "input_tokens": 3355,
+          "output_tokens": 232,
+          "thought_tokens": null,
+          "cached_tokens": null,
+          "total_tokens": 3587
+        }
+      ],
+      "score": {
+        "passed": true,
+        "missing": [],
+        "unexpected": [],
+        "wrong_type": [],
+        "wrong_fields": []
+      },
+      "predicted": [
+        {
+          "name": "Madison Fare",
+          "type": "Bakery"
+        }
+      ]
+    },
+    {
+      "id": "tiebreaker-aligned-venue",
+      "suite": "tiebreaker",
+      "reference": "synthetic_labeled",
+      "prompt_chars": 1470,
+      "usage": [
+        {
+          "operation": "place tiebreaker",
+          "model": "gemini-3.1-flash-lite",
+          "input_tokens": 372,
+          "output_tokens": 49,
+          "thought_tokens": null,
+          "cached_tokens": null,
+          "total_tokens": 421
+        }
+      ],
+      "score": {
+        "passed": true,
+        "missing": [],
+        "unexpected": [],
+        "wrong_type": [],
+        "wrong_fields": []
+      },
+      "predicted": {
+        "pick": 0,
+        "confidence": "high"
+      }
+    }
+  ],
+  "summary": {
+    "selected": 12,
+    "completed": 12,
+    "passed": 11,
+    "input_tokens": 35199,
+    "output_tokens": 2510,
+    "total_tokens": 37709
+  }
+}

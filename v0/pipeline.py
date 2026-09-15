@@ -36,6 +36,7 @@ log = logging.getLogger(__name__)
 GEMINI_MAX_ATTEMPTS = 3
 GEMINI_BACKOFF_SECONDS = 3.0
 RetryProgress = Callable[[str, str, float, int, int], None]
+GeminiUsageSink = Callable[[dict[str, Any]], None]
 
 
 # ---------- Gemini client (lazy) ----------
@@ -63,15 +64,38 @@ def _gemini_status_code(exc: Exception) -> int | None:
     return None
 
 
+def _gemini_usage_counts(response: Any) -> dict[str, int | None]:
+    """Normalize usage from Generate Content and Interactions responses."""
+    usage = getattr(response, "usage_metadata", None) or getattr(response, "usage", None)
+
+    def value(*names: str) -> int | None:
+        for name in names:
+            raw = usage.get(name) if isinstance(usage, dict) else getattr(usage, name, None)
+            if isinstance(raw, int) and not isinstance(raw, bool):
+                return raw
+        return None
+
+    return {
+        "input_tokens": value("prompt_token_count", "total_input_tokens", "input_tokens"),
+        "output_tokens": value("candidates_token_count", "total_output_tokens", "output_tokens"),
+        "thought_tokens": value("thoughts_token_count", "total_thought_tokens", "thoughts_tokens"),
+        "cached_tokens": value("cached_content_token_count", "total_cached_tokens", "cached_tokens"),
+        "total_tokens": value("total_token_count", "total_tokens"),
+    }
+
+
 def _call_gemini_with_retry(
     operation: Callable[[], Any],
     operation_name: str,
     on_retry: RetryProgress | None = None,
+    *,
+    model_name: str | None = None,
+    usage_sink: GeminiUsageSink | None = None,
 ) -> Any:
     """Retry temporary Gemini failures and honor provider Retry-After guidance."""
     for attempt in range(1, GEMINI_MAX_ATTEMPTS + 1):
         try:
-            return operation()
+            response = operation()
         except Exception as exc:
             status_code = _gemini_status_code(exc)
             decision = classify_failure(
@@ -105,6 +129,20 @@ def _call_gemini_with_retry(
                     GEMINI_MAX_ATTEMPTS,
                 )
             time.sleep(delay)
+            continue
+        try:
+            usage = {
+                "operation": operation_name,
+                "model": model_name,
+                **_gemini_usage_counts(response),
+            }
+            if usage_sink is not None:
+                usage_sink(usage)
+            if usage["total_tokens"] is not None or usage["input_tokens"] is not None:
+                log.info("Gemini usage %s", json.dumps(usage, sort_keys=True))
+        except Exception:
+            log.exception("Gemini usage observation failed (non-fatal)")
+        return response
     raise AssertionError("unreachable")
 
 
@@ -777,6 +815,36 @@ MAX_INLINE_VIDEO_BYTES = 70 * 1024 * 1024
 MAX_INLINE_MEDIA_BYTES = MAX_INLINE_VIDEO_BYTES
 
 
+_GEMINI_EVIDENCE_FIELDS = (
+    "source_platform",
+    "caption_or_description",
+    "creator_display_name",
+    "source_account_handle",
+    "native_location",
+    "native_location_tag",
+    "hashtags",
+    "upload_date",
+    "duration_seconds",
+    "media_count",
+    "media_types",
+    "tagged_accounts_by_media",
+)
+
+
+def _gemini_evidence_metadata(metadata: dict[str, Any]) -> dict[str, Any]:
+    """Keep persistence metadata intact but send only extraction evidence."""
+    evidence = {
+        field: metadata[field]
+        for field in _GEMINI_EVIDENCE_FIELDS
+        if field in metadata and metadata[field] not in (None, "", [], {})
+    }
+    if "creator_display_name" not in evidence and metadata.get("uploader"):
+        evidence["creator_display_name"] = metadata["uploader"]
+    if "native_location" in evidence:
+        evidence.pop("native_location_tag", None)
+    return evidence
+
+
 def _extraction_prompt(
     metadata: dict[str, Any],
 ) -> str:
@@ -784,7 +852,7 @@ def _extraction_prompt(
         EXTRACTOR_PROMPT
         + "\n\nSource metadata (supporting evidence, but trust the video itself "
           "for on_screen_text / visual_landmarks):\n"
-        + json.dumps(metadata, indent=2, ensure_ascii=False)
+        + json.dumps(_gemini_evidence_metadata(metadata), ensure_ascii=False)
     )
 
 
@@ -881,14 +949,17 @@ def extract_bundle(
     media_paths: Path | list[Path],
     metadata: dict[str, Any],
     on_retry: RetryProgress | None = None,
+    *,
+    usage_sink: GeminiUsageSink | None = None,
 ) -> dict[str, Any]:
-    """Analyze downloaded Instagram media and return source content plus entries."""
+    """Analyze downloaded Instagram or TikTok media and return entries."""
     client = _client()
     paths = [media_paths] if isinstance(media_paths, Path) else media_paths
     media_size = sum(path.stat().st_size for path in paths)
     if media_size > MAX_INLINE_MEDIA_BYTES:
+        platform = "TikTok video" if metadata.get("source_platform") == "tiktok" else "Instagram post"
         raise ValueError(
-            "This Instagram post is too large to process safely "
+            f"This {platform} is too large to process safely "
             f"({media_size / (1024 * 1024):.1f} MiB; "
             f"limit {MAX_INLINE_MEDIA_BYTES / (1024 * 1024):.0f} MiB)"
         )
@@ -904,6 +975,7 @@ def extract_bundle(
     prompt = _extraction_prompt(metadata)
 
     model = os.environ.get("GEMINI_MODEL", "gemini-3.1-flash-lite")
+    platform = "TikTok" if metadata.get("source_platform") == "tiktok" else "Instagram"
     response = _call_gemini_with_retry(
         lambda: client.models.generate_content(
             model=model,
@@ -913,12 +985,14 @@ def extract_bundle(
                 response_schema=EXTRACTION_RESPONSE_SCHEMA,
             ),
         ),
-        "Instagram extraction",
+        f"{platform} extraction",
         on_retry,
+        model_name=model,
+        usage_sink=usage_sink,
     )
 
     parsed = json.loads(response.text)
-    extracted = parsed.get("entries", parsed.get("places", []))
+    extracted = parsed.get("entries", [])
     return {
         "source_content": parsed.get("source_content") or {},
         "entries": _normalize_extracted_entries(extracted, metadata),
@@ -928,6 +1002,8 @@ def extract_bundle(
 def extract_youtube_bundle(
     source_url: str,
     on_retry: RetryProgress | None = None,
+    *,
+    usage_sink: GeminiUsageSink | None = None,
 ) -> dict[str, Any]:
     """Analyze a public YouTube URL and return source content plus entries."""
     metadata = {"source_platform": "youtube", "webpage_url": source_url}
@@ -950,9 +1026,11 @@ def extract_youtube_bundle(
         ),
         "YouTube extraction",
         on_retry,
+        model_name=model,
+        usage_sink=usage_sink,
     )
     parsed = json.loads(response.output_text)
-    extracted = parsed.get("entries", parsed.get("places", []))
+    extracted = parsed.get("entries", [])
     return {
         "source_content": parsed.get("source_content") or {},
         "entries": _normalize_extracted_entries(extracted, metadata),
@@ -1132,14 +1210,10 @@ def _matches_exact_native_location(
     )
 
 
-def _llm_tiebreaker(
+def _tiebreaker_prompt(
     place: dict[str, Any],
     candidates: list[dict[str, Any]],
-) -> dict[str, Any]:
-    """Ask Gemini to pick the best candidate when Places returns multiple.
-
-    Returns { "pick": int | null, "confidence": str, "reasoning": str }.
-    """
+) -> str:
     summaries = []
     for i, c in enumerate(candidates):
         display = (c.get("displayName") or {}).get("text", "?")
@@ -1148,10 +1222,21 @@ def _llm_tiebreaker(
         types_str = ", ".join(place_types[:4])
         summaries.append(f"{i}. {display} — {addr} — types: {types_str}")
 
-    prompt = f"""You are disambiguating a place that was extracted from a video.
+    evidence = {
+        field: place[field]
+        for field in (
+            "extracted_name",
+            "type_name",
+            "description",
+            "location_query",
+            "location_hints",
+        )
+        if field in place and place[field] not in (None, "", {})
+    }
+    return f"""You are disambiguating a place that was extracted from a video.
 
 The extractor identified this place:
-{json.dumps(place, indent=2, ensure_ascii=False)}
+{json.dumps(evidence, ensure_ascii=False)}
 
 Google Places API returned these candidates:
 {chr(10).join(summaries)}
@@ -1161,7 +1246,6 @@ Pick the best match by index. Consider:
 - Neighborhood / city / region match vs location_hints
 - Type alignment between type_name and the candidate's Google place types
 - Details in the source-grounded description that distinguish the venue
-- Legacy tags or dishes when they are available on an older saved place
 
 Return JSON of this shape:
 {{ "pick": <int|null>, "confidence": "high"|"medium"|"low", "reasoning": "<one sentence>" }}
@@ -1170,6 +1254,19 @@ Return JSON of this shape:
 - medium: one candidate is more plausible but meaningful ambiguity remains
 - low (or pick=null): none of the candidates clearly match; flag for manual review
 """
+
+
+def _llm_tiebreaker(
+    place: dict[str, Any],
+    candidates: list[dict[str, Any]],
+    *,
+    usage_sink: GeminiUsageSink | None = None,
+) -> dict[str, Any]:
+    """Ask Gemini to pick the best candidate when Places returns multiple.
+
+    Returns { "pick": int | null, "confidence": str, "reasoning": str }.
+    """
+    prompt = _tiebreaker_prompt(place, candidates)
 
     log.info(
         "[tiebreaker] %d candidates for %r — asking LLM",
@@ -1184,6 +1281,8 @@ Return JSON of this shape:
             config=types.GenerateContentConfig(response_mime_type="application/json"),
         ),
         "place tiebreaker",
+        model_name=model,
+        usage_sink=usage_sink,
     )
     decision = json.loads(resp.text)
     log.info(

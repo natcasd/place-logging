@@ -50,6 +50,9 @@ optionally resolves physical locations through Google Places.
   provider-aware retries. Retry-After instructions are honored. Failures that
   outlive the request are kept as durable Activity records and retried by the
   server after restarts without creating failed or duplicate Captures.
+- Successful Gemini calls log provider-reported input, output, thought, and
+  total token counts by operation, without logging the prompt, response text,
+  API key, or source URL. Missing provider usage is left unknown, not zero.
 - Activity distinguishes analysis, media-download, save, and general processing
   failures. The iOS Activity detail presents the failure and lets the user retry
   the same logical ingest immediately or delete the failure and cancel its
@@ -139,6 +142,38 @@ import question before sharing it with another person.
 sqlite3 data/places.db 'select id, source_url, created_at from captures order by id desc limit 5;'
 sqlite3 data/places.db 'select id, name, entry_type, location_id from recommendations order by id desc limit 10;'
 ```
+
+## Gemini contract baseline
+
+`gemini_contract_baseline.py` runs extraction and place-disambiguation cases
+without calling `save_ingest()` or changing SQLite. Text cases are synthetic,
+hand-labeled edge cases. Media cases replay public, previously saved URLs; their
+expected labels are historical comparison points, not independently verified
+ground truth. Media downloads use a temporary directory and are deleted after
+the run. The report keeps names, types, pass/fail details, and token usage, but
+not generated transcripts or descriptions. Keep new reports outside the
+repository. The checked-in
+`tests/fixtures/gemini_contract_baseline_reference_20260915.json` contains
+only the 12 completed reference cases from the original contract. It preserves
+one known exhibit-name defect; failed downloads and provider 5xx cases are not
+silently treated as passing or failing model output.
+
+```bash
+python gemini_contract_baseline.py --suite text \
+  --output /tmp/gemini-text-baseline.json
+python gemini_contract_baseline.py --suite tiebreaker \
+  --output /tmp/gemini-tiebreaker-baseline.json
+python gemini_contract_baseline.py --suite media \
+  --output /tmp/gemini-media-baseline.json
+```
+
+Use `--ids case-a,case-b` to retry provider failures without rerunning the
+whole suite. `--merge-reports` fills only cases that previously failed before
+producing one report. After a contract change, use `--compare-to` with the
+checked-in reference report. Compare only cases completed in both runs;
+provider 5xx and unavailable media are not classification failures. Review
+predicted entries and field mismatches manually before accepting a prompt or
+schema change.
 
 ## Duplicate-source backfill
 
