@@ -1,7 +1,7 @@
 """Opt-in account API factory. Production still starts app:app.
 
 A trusted session verifier is mandatory. It maps a validated session to an
-internal user ID; Apple/Google/email identities must be linked by the identity
+internal user ID; Apple/Google identities must be linked by the identity
 provider/session layer, never by an unverified email or client-supplied owner.
 No development tokens, identity headers, or legacy shared-token fallback exist
 in this module. Saves enter a durable queue drained by an explicit worker.
@@ -36,6 +36,10 @@ from app import (
 
 class InvalidSession(Exception):
     """A verifier raises this for invalid, expired, or revoked credentials."""
+
+
+class SessionServiceUnavailable(Exception):
+    """Temporary verifier failure; clients should retain their sign-in state."""
 
 
 @dataclass(frozen=True)
@@ -148,6 +152,11 @@ def create_account_app(*, db_path: Path, verify_session: SessionVerifier,
     async def not_found(_request, _error):
         return JSONResponse(status_code=404, content={'detail': 'Not found'})
 
+    @application.exception_handler(SessionServiceUnavailable)
+    async def session_unavailable(_request, _error):
+        return JSONResponse(status_code=503, content={'detail': 'Sign-in verification is temporarily unavailable. Try again.'},
+                            headers={'Retry-After': '5'})
+
     @application.exception_handler(AccountConflict)
     async def conflict(_request, error):
         return JSONResponse(status_code=409, content={'detail': str(error)})
@@ -161,6 +170,12 @@ def create_account_app(*, db_path: Path, verify_session: SessionVerifier,
         return JSONResponse(status_code=503, content={'detail': 'Could not resolve this share link. Try again.'})
 
     router = APIRouter(prefix='/api/v1', dependencies=[Depends(scoped_store)])
+
+    @router.get('/account')
+    def current_account(account: AccountStore = Depends(scoped_store)):
+        with account._transaction() as con:
+            row = con.execute('SELECT id, display_name FROM users WHERE id = ?', (account.user_id,)).fetchone()
+            return dict(row)
 
     @router.get('/entries', response_model=AccountEntries)
     def entries(limit: int = Query(default=200, ge=1, le=1000), account: AccountStore = Depends(scoped_store)):

@@ -6,7 +6,13 @@ CREATE TABLE users (
   display_name TEXT NOT NULL CHECK (length(trim(display_name)) > 0),
   status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'disabled')),
   mutation_sequence INTEGER NOT NULL DEFAULT 0 CHECK (mutation_sequence >= 0),
-  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  firebase_project_id TEXT,
+  firebase_uid TEXT,
+  UNIQUE(firebase_project_id, firebase_uid),
+  CHECK ((firebase_project_id IS NULL AND firebase_uid IS NULL) OR
+    (firebase_project_id IS NOT NULL AND length(trim(firebase_project_id)) > 0
+      AND firebase_uid IS NOT NULL AND length(firebase_uid) BETWEEN 1 AND 128))
 );
 
 CREATE TABLE post_processing_cache (

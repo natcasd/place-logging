@@ -26,7 +26,7 @@ enrichment and ingest history remain supporting tables.
   are persisted for later workers to enforce.
 
 See `multi_user_schema.sql` for columns, constraints, and indexes. The schema
-uses `PRAGMA application_id = 0x4A4F544D` and `user_version = 3`.
+uses `PRAGMA application_id = 0x4A4F544D` and `user_version = 4`.
 
 ## Rehearse against a database copy
 
@@ -146,8 +146,9 @@ Foreign-key and integrity checks passed.
 Account-scoped reads/mutations, durable ingestion, shared processing, ordered
 restoration, and conservative legacy reconciliation are implemented. Remaining:
 
-1. Firebase identity verification and explicit binding of Nathan's verified UID
-   to his existing internal account. Never assign it to the first registrant.
+1. Complete Firebase cloud/provider configuration and perform the implemented
+   [verified owner binding](FIREBASE_AUTH.md) using Nathan's real device sign-in.
+   The service refuses startup while an existing library remains unbound.
 2. iOS/extension sessions, account-scoped local state, and async ingest handling.
 3. Account deletion, provider-data retention/refresh, and operational limits.
 4. End-to-end isolation and recovery tests, then a separately rehearsed cutover

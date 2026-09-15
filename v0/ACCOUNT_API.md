@@ -126,3 +126,10 @@ acceptance remains durable and a separate trusted worker must drain the queue.
 Orderly shutdown stops claims and waits for in-flight processing/cleanup. Forced
 termination leaves a recoverable lease. Docker still starts the legacy service;
 no production database, deploy configuration, or phone build changes here.
+
+## Firebase integration
+
+The [Firebase verifier and explicit service entrypoint](FIREBASE_AUTH.md) verify
+Apple/Google ID tokens and resolve the account on the server. `GET /api/v1/account`
+returns its internal ID and display name. Cloud/provider setup, verified binding
+of the existing library, and mobile integration remain required before release.
