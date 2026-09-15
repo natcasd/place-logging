@@ -1488,6 +1488,10 @@ def _saved_entry_outcomes(
             ORDER BY ts.ordinal, ts.id""",
         (item_id,),
     ).fetchall()
+    return _outcomes_payload(rows)
+
+
+def _outcomes_payload(rows: list[sqlite3.Row]) -> list[dict[str, Any]]:
     return [
         {
             "entry_id": row["entry_id"],
@@ -1650,42 +1654,48 @@ def list_ingest_runs(db_path: Path, limit: int = 200) -> list[dict[str, Any]]:
 
         activity = []
         for row in rows:
-            metadata = _decode_json_object(row["raw_payload_json"])
-            source_content = metadata.get("source_content") or {}
             current_results = (
                 _saved_entry_outcomes(con, row["item_id"])
                 if row["item_id"] is not None
                 else _decode_json_list(row["result_json"])
             )
-            activity.append(
-                {
-                    "id": row["id"],
-                    "item_id": row["item_id"],
-                    "source_url": row["source_url"],
-                    "source_platform": row["source_platform"],
-                    "creator": metadata.get("uploader"),
-                    "caption": metadata.get("caption_or_description"),
-                    "summary": source_content.get("summary"),
-                    "status": row["status"],
-                    "stage": row["stage"],
-                    "error_type": row["error_type"],
-                    "error_message": row["error_message"],
-                    "failure_kind": row["failure_kind"],
-                    "retryable": bool(row["retryable"]),
-                    "attempt_count": row["attempt_count"],
-                    "max_attempts": row["max_attempts"],
-                    "next_retry_at": row["next_retry_at"],
-                    "last_retry_at": row["last_retry_at"],
-                    "started_at": row["started_at"],
-                    "updated_at": row["updated_at"],
-                    "completed_at": row["completed_at"],
-                    "results": current_results,
-                    "events": events_by_run.get(row["id"], []),
-                }
-            )
+            activity.append(_activity_payload(row, current_results, events_by_run.get(row["id"], [])))
         return activity
     finally:
         con.close()
+
+
+def _activity_payload(
+    row: sqlite3.Row,
+    current_results: list[dict[str, Any]],
+    events: list[dict[str, Any]],
+) -> dict[str, Any]:
+    metadata = _decode_json_object(row["raw_payload_json"])
+    source_content = metadata.get("source_content") or {}
+    return {
+        "id": row["id"],
+        "item_id": row["item_id"],
+        "source_url": row["source_url"],
+        "source_platform": row["source_platform"],
+        "creator": metadata.get("uploader"),
+        "caption": metadata.get("caption_or_description"),
+        "summary": source_content.get("summary"),
+        "status": row["status"],
+        "stage": row["stage"],
+        "error_type": row["error_type"],
+        "error_message": row["error_message"],
+        "failure_kind": row["failure_kind"],
+        "retryable": bool(row["retryable"]),
+        "attempt_count": row["attempt_count"],
+        "max_attempts": row["max_attempts"],
+        "next_retry_at": row["next_retry_at"],
+        "last_retry_at": row["last_retry_at"],
+        "started_at": row["started_at"],
+        "updated_at": row["updated_at"],
+        "completed_at": row["completed_at"],
+        "results": current_results,
+        "events": events,
+    }
 
 
 def list_entries(db_path: Path, limit: int = 200) -> list[dict[str, Any]]:
@@ -1735,65 +1745,71 @@ def list_entries(db_path: Path, limit: int = 200) -> list[dict[str, Any]]:
                ORDER BY i.created_at DESC, ts.id DESC""",
             entry_ids,
         ).fetchall()
-        by_id: dict[int, dict[str, Any]] = {}
-        for row in rows:
-            metadata = _decode_json_object(row["raw_payload_json"])
-            source = {
-                "id": row["source_connection_id"],
-                "item_id": row["item_id"],
-                "ordinal": row["ordinal"],
-                "name": row["source_name"],
-                "type": row["source_type"],
-                "source_url": row["source_url"],
-                "source_platform": metadata.get("source_platform") or "other",
-                "creator": metadata.get("uploader"),
-                "description": row["description"] or row["why_its_cool"] or "",
-                "dishes": _decode_json_list(row["dishes_json"]),
-                "why_its_cool": row["why_its_cool"] or "",
-                "tags": _decode_json_list(row["tags_json"]),
-                "timestamp_seconds": row["timestamp_seconds"],
-                "slide_index": row["slide_index"],
-                "resolution_status": row["resolution_status"],
-                "location_query": row["location_query"],
-                "saved_at": row["created_at"],
-            }
-            entry = by_id.get(row["id"])
-            if entry is None:
-                entry = {
-                    "id": row["id"],
-                    "location_id": row["location_id"],
-                    "item_id": row["item_id"],
-                    "ordinal": row["ordinal"],
-                    "name": row["name"],
-                    "google_place_id": row["google_place_id"],
-                    "latitude": row["lat"],
-                    "longitude": row["lng"],
-                    "formatted_address": row["formatted_address"],
-                    "google_maps_url": row["google_maps_url"],
-                    "location_name": row["location_name"],
-                    "dishes": source["dishes"],
-                    "why_its_cool": source["why_its_cool"],
-                    "tags": source["tags"],
-                    "timestamp_seconds": source["timestamp_seconds"],
-                    "slide_index": source["slide_index"],
-                    "resolution_status": source["resolution_status"],
-                    "type": row["entry_type"],
-                    "description": source["description"],
-                    "starts_at": row["starts_at"],
-                    "ends_at": row["ends_at"],
-                    "recurrence_text": row["recurrence_text"],
-                    "location_query": source["location_query"],
-                    "movie_enrichment": _movie_enrichment_payload(row),
-                    "source_url": source["source_url"],
-                    "saved_at": source["saved_at"],
-                    "sources": [],
-                }
-                by_id[row["id"]] = entry
-            entry["sources"].append(source)
-
-        return [by_id[entry_id] for entry_id in entry_ids]
+        return _entries_payload(rows, entry_ids)
     finally:
         con.close()
+
+
+def _entries_payload(
+    rows: list[sqlite3.Row], entry_ids: list[int],
+) -> list[dict[str, Any]]:
+    by_id: dict[int, dict[str, Any]] = {}
+    for row in rows:
+        metadata = _decode_json_object(row["raw_payload_json"])
+        source = {
+            "id": row["source_connection_id"],
+            "item_id": row["item_id"],
+            "ordinal": row["ordinal"],
+            "name": row["source_name"],
+            "type": row["source_type"],
+            "source_url": row["source_url"],
+            "source_platform": metadata.get("source_platform") or "other",
+            "creator": metadata.get("uploader"),
+            "description": row["description"] or row["why_its_cool"] or "",
+            "dishes": _decode_json_list(row["dishes_json"]),
+            "why_its_cool": row["why_its_cool"] or "",
+            "tags": _decode_json_list(row["tags_json"]),
+            "timestamp_seconds": row["timestamp_seconds"],
+            "slide_index": row["slide_index"],
+            "resolution_status": row["resolution_status"],
+            "location_query": row["location_query"],
+            "saved_at": row["created_at"],
+        }
+        entry = by_id.get(row["id"])
+        if entry is None:
+            entry = {
+                "id": row["id"],
+                "location_id": row["location_id"],
+                "item_id": row["item_id"],
+                "ordinal": row["ordinal"],
+                "name": row["name"],
+                "google_place_id": row["google_place_id"],
+                "latitude": row["lat"],
+                "longitude": row["lng"],
+                "formatted_address": row["formatted_address"],
+                "google_maps_url": row["google_maps_url"],
+                "location_name": row["location_name"],
+                "dishes": source["dishes"],
+                "why_its_cool": source["why_its_cool"],
+                "tags": source["tags"],
+                "timestamp_seconds": source["timestamp_seconds"],
+                "slide_index": source["slide_index"],
+                "resolution_status": source["resolution_status"],
+                "type": row["entry_type"],
+                "description": source["description"],
+                "starts_at": row["starts_at"],
+                "ends_at": row["ends_at"],
+                "recurrence_text": row["recurrence_text"],
+                "location_query": source["location_query"],
+                "movie_enrichment": _movie_enrichment_payload(row),
+                "source_url": source["source_url"],
+                "saved_at": source["saved_at"],
+                "sources": [],
+            }
+            by_id[row["id"]] = entry
+        entry["sources"].append(source)
+
+    return [by_id[entry_id] for entry_id in entry_ids]
 
 
 def _movie_enrichment_payload(row: sqlite3.Row) -> dict[str, Any] | None:
@@ -1915,29 +1931,33 @@ def list_sources(db_path: Path, limit: int = 200) -> list[dict[str, Any]]:
                LIMIT ?""",
             (limit,),
         ).fetchall()
-        sources = []
-        for row in rows:
-            metadata = _decode_json_object(row["raw_payload_json"])
-            sources.append(
-                {
-                    "id": row["id"],
-                    "source_url": row["source_url"],
-                    "source_platform": metadata.get("source_platform") or "other",
-                    "creator": metadata.get("uploader"),
-                    "caption": metadata.get("caption_or_description"),
-                    "summary": (metadata.get("source_content") or {}).get("summary"),
-                    "media_count": metadata.get("media_count") or 0,
-                    # Kept for released clients; source media is no longer
-                    # retained after extraction, including legacy records.
-                    "media_preserved": False,
-                    "entry_count": row["entry_count"],
-                    "needs_review": row["entry_count"] == 0,
-                    "saved_at": row["created_at"],
-                }
-            )
-        return sources
+        return _sources_payload(rows)
     finally:
         con.close()
+
+
+def _sources_payload(rows: list[sqlite3.Row]) -> list[dict[str, Any]]:
+    sources = []
+    for row in rows:
+        metadata = _decode_json_object(row["raw_payload_json"])
+        sources.append(
+            {
+                "id": row["id"],
+                "source_url": row["source_url"],
+                "source_platform": metadata.get("source_platform") or "other",
+                "creator": metadata.get("uploader"),
+                "caption": metadata.get("caption_or_description"),
+                "summary": (metadata.get("source_content") or {}).get("summary"),
+                "media_count": metadata.get("media_count") or 0,
+                # Kept for released clients; source media is no longer
+                # retained after extraction, including legacy records.
+                "media_preserved": False,
+                "entry_count": row["entry_count"],
+                "needs_review": row["entry_count"] == 0,
+                "saved_at": row["created_at"],
+            }
+        )
+    return sources
 
 
 def _decode_json_object(value: Any) -> dict[str, Any]:
