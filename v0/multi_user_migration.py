@@ -18,7 +18,7 @@ from urllib.parse import parse_qs, urlsplit
 from source_identity import canonical_source_url
 
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 APPLICATION_ID = 0x4A4F544D  # JOTM; distinguishes this from unrelated user_version values.
 SCHEMA_PATH = Path(__file__).with_name("multi_user_schema.sql")
 TABLES = (
@@ -155,6 +155,18 @@ def migrate_copy(con: sqlite3.Connection, *, owner_id: str, owner_name: str) -> 
     if version == SCHEMA_VERSION and app_id == APPLICATION_ID:
         _validate_target(con, owner_id)
         return {"schema_version": version, "already_migrated": True}
+    if version == 1 and app_id == APPLICATION_ID:
+        try:
+            con.execute("BEGIN IMMEDIATE")
+            con.execute("DROP INDEX idx_mentions_active_recommendation_capture")
+            con.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
+            _validate_target(con, owner_id)
+            con.commit()
+            return {"schema_version": SCHEMA_VERSION, "already_migrated": False,
+                    "upgraded_from": 1, "original_data_preserved": True}
+        except BaseException:
+            con.rollback()
+            raise
     if version != 0 or app_id != 0:
         raise ValueError("Unrecognized database version; refusing to migrate")
 

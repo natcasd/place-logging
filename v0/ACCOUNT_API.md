@@ -39,7 +39,7 @@ nonexistent resource IDs both produce the same 404 response.
 | `GET /api/v1/activity` | Own runs/events, with results reconstructed from current owned mentions. |
 | `DELETE /api/v1/entries/{id}` | Remove all active mentions in the user's recommendation. |
 | `DELETE /api/v1/entries` | All-or-nothing ownership check for the entire batch. |
-| `DELETE /api/v1/activity/{id}` | Remove an owned failed/scheduled run and its events, preserving captures and other submissions. |
+| `DELETE /api/v1/activity/{id}` | Hide an owned failed/scheduled run, retain its cancellation identity, and remove its events. |
 | `POST /api/v1/activity/{run}/entries/{entry}/location` | Confirm a stored candidate and group recommendations only within the owner. |
 | `POST /api/v1/ingests`, `/shortcut/ingests` | Authenticate, then return 501 until account ingest is implemented. |
 | `POST /api/v1/activity/{id}/retry` | Authenticate and check ownership, then return 501. |
@@ -50,9 +50,9 @@ worker or legacy service attached to this factory.
 
 Map deletion detaches and hides removed mentions while retaining their stable
 output identities and mutation sequence. It preserves captures, public cache
-results, and shared locations. The following save/restoration stage must honor
-these markers; this stage alone does not implement re-share restoration or
-mention-specific deletion. A location confirmation also advances the user's
+results, and shared locations. The [private capture stage](PRIVATE_CAPTURES.md) honors
+these markers and implements re-share
+restoration and mention-specific deletion. A location confirmation also advances the user's
 mutation sequence and records the edited mention. Private review can reuse a
 shared place but cannot overwrite an existing shared place's metadata.
 
@@ -88,7 +88,10 @@ change does not migrate a database, start a new Fly app, change secrets, install
 a phone build, or enable automatic deployment. Keep production on its current
 release until the remaining stages and the cutover rehearsal are complete.
 
-Next: private result materialization, individual mention deletion, deliberate
-re-share restoration and retry ordering, then shared processing/legacy
-reconciliation. Real session verification, provider account linking, and client
+Next: shared processing and legacy reconciliation. Real session verification, provider account linking, and client
 login remain required before enabling this API for users.
+
+The private capture stage adds `DELETE /api/v1/mentions/{id}` and optional
+`mention_id` in location confirmation. Cancelled Activity retains its request
+key privately to prevent replay. Shared workers and production login remain
+subsequent stages.

@@ -70,7 +70,7 @@ class AccountStore:
         ).fetchone()[0]
 
     def _run(self, con: sqlite3.Connection, ingest_id: int) -> sqlite3.Row:
-        row = con.execute('SELECT * FROM ingest_runs WHERE user_id = ? AND id = ?',
+        row = con.execute("SELECT * FROM ingest_runs WHERE user_id = ? AND id = ? AND status != 'cancelled'",
                           (self.user_id, ingest_id)).fetchone()
         if row is None:
             raise RecordNotFound()
@@ -89,6 +89,7 @@ class AccountStore:
                 FROM recommendations t
                 JOIN recommendation_mentions ts ON ts.entry_id = t.id AND ts.user_id = t.user_id
                 JOIN captures i ON i.id = ts.item_id AND i.user_id = ts.user_id
+                LEFT JOIN post_processing_cache pc ON pc.id = i.post_cache_id
                 WHERE t.user_id = ? AND ts.removed_at IS NULL
                 GROUP BY t.id ORDER BY latest_saved_at DESC, t.id DESC LIMIT ?
             ''', (self.user_id, limit)).fetchall()
@@ -108,12 +109,16 @@ class AccountStore:
                     ts.id AS source_connection_id, ts.item_id, ts.ordinal, ts.source_name,
                     ts.source_type, ts.description, ts.dishes_json, ts.why_its_cool, ts.tags_json,
                     ts.timestamp_seconds, ts.slide_index, ts.resolution_status, ts.location_query,
-                    i.source_url, i.raw_payload_json, i.created_at
+                    i.source_url, COALESCE(i.raw_payload_json, json_set(COALESCE(
+                        json_extract(pc.result_json, '$.metadata'),
+                        json_extract(i.private_result_json, '$.metadata'), '{{}}'),
+                        '$.source_platform', COALESCE(i.source_platform, 'other'))) AS raw_payload_json, i.created_at
                 FROM recommendations t
                 LEFT JOIN locations l ON l.id = t.location_id
                 LEFT JOIN movie_enrichments me ON me.entry_id = t.id AND me.user_id = t.user_id
                 JOIN recommendation_mentions ts ON ts.entry_id = t.id AND ts.user_id = t.user_id
                 JOIN captures i ON i.id = ts.item_id AND i.user_id = ts.user_id
+                LEFT JOIN post_processing_cache pc ON pc.id = i.post_cache_id
                 WHERE t.user_id = ? AND t.id IN ({placeholders}) AND ts.removed_at IS NULL
                 ORDER BY i.created_at DESC, ts.id DESC
             ''', [self.user_id, *entry_ids]).fetchall()
@@ -124,9 +129,13 @@ class AccountStore:
             raise ValueError('limit must be between 1 and 500')
         with self._transaction() as con:
             rows = con.execute('''
-                SELECT i.id, i.source_url, i.raw_payload_json, i.created_at,
+                SELECT i.id, i.source_url, COALESCE(i.raw_payload_json, json_set(COALESCE(
+                        json_extract(pc.result_json, '$.metadata'),
+                        json_extract(i.private_result_json, '$.metadata'), '{}'),
+                        '$.source_platform', COALESCE(i.source_platform, 'other'))) AS raw_payload_json, i.created_at,
                     COUNT(DISTINCT ts.entry_id) AS entry_count
                 FROM captures i
+                LEFT JOIN post_processing_cache pc ON pc.id = i.post_cache_id
                 LEFT JOIN recommendation_mentions ts ON ts.item_id = i.id
                     AND ts.user_id = i.user_id AND ts.removed_at IS NULL
                 WHERE i.user_id = ? GROUP BY i.id
@@ -144,7 +153,7 @@ class AccountStore:
                 (SELECT MIN(m.id) FROM recommendation_mentions m
                  WHERE m.user_id = ts.user_id AND m.entry_id = t.id AND m.removed_at IS NULL)
                     AS first_source_id,
-                (SELECT COUNT(*) FROM recommendation_mentions m
+                (SELECT COUNT(DISTINCT m.item_id) FROM recommendation_mentions m
                  WHERE m.user_id = ts.user_id AND m.entry_id = t.id
                     AND m.removed_at IS NULL AND m.id <= ts.id) AS source_count
             FROM recommendation_mentions ts
@@ -161,9 +170,14 @@ class AccountStore:
             raise ValueError('limit must be between 1 and 500')
         with self._transaction() as con:
             rows = con.execute('''
-                SELECT r.*, i.raw_payload_json FROM ingest_runs r
+                SELECT r.*, COALESCE(i.raw_payload_json, json_set(COALESCE(
+                        json_extract(pc.result_json, '$.metadata'),
+                        json_extract(i.private_result_json, '$.metadata'), '{}'),
+                        '$.source_platform', COALESCE(i.source_platform, 'other'))) AS raw_payload_json FROM ingest_runs r
                 LEFT JOIN captures i ON i.id = r.item_id AND i.user_id = r.user_id
-                WHERE r.user_id = ? ORDER BY r.updated_at DESC, r.id DESC LIMIT ?
+                LEFT JOIN post_processing_cache pc ON pc.id = i.post_cache_id
+                WHERE r.user_id = ? AND r.status != 'cancelled'
+                ORDER BY r.updated_at DESC, r.id DESC LIMIT ?
             ''', (self.user_id, limit)).fetchall()
             activity = []
             for row in rows:
@@ -189,9 +203,9 @@ class AccountStore:
             ''', (self.user_id, item_id)).fetchall()
             for run in runs:
                 con.execute('''
-                    UPDATE ingest_runs SET status = ?, result_json = ?, updated_at = CURRENT_TIMESTAMP
+                    UPDATE ingest_runs SET status = ?, result_json = NULL, updated_at = CURRENT_TIMESTAMP
                     WHERE user_id = ? AND id = ?
-                ''', (run_status, json.dumps(outcomes), self.user_id, run['id']))
+                ''', (run_status, self.user_id, run['id']))
                 con.execute('''
                     INSERT INTO ingest_events (user_id, ingest_run_id, stage, status, message)
                     VALUES (?, ?, 'reviewing', 'completed', ?)
@@ -214,15 +228,41 @@ class AccountStore:
                 WHERE user_id = ? AND entry_id IN ({placeholders}) AND removed_at IS NULL
             ''', [self.user_id, *ids])]
             sequence = self._sequence(con)
-            con.execute(f'''
-                UPDATE recommendation_mentions SET removed_at = CURRENT_TIMESTAMP,
-                    entry_id = NULL, last_user_change_sequence = ?
+            mention_ids = [row[0] for row in con.execute(f'''
+                SELECT id FROM recommendation_mentions
                 WHERE user_id = ? AND entry_id IN ({placeholders}) AND removed_at IS NULL
-            ''', [sequence, self.user_id, *ids])
+            ''', [self.user_id, *ids])]
+            self._remove_mentions(con, mention_ids, sequence)
             con.execute(f'DELETE FROM recommendations WHERE user_id = ? AND id IN ({placeholders})',
                         [self.user_id, *ids])
             self._refresh_activity(con, item_ids, 'Deleted recommendation')
             return {'deleted_entries': len(ids), 'deleted_sources': 0}
+
+    def _remove_mentions(self, con: sqlite3.Connection, ids: list[int], sequence: int) -> None:
+        for mention_id in ids:
+            con.execute('''
+                UPDATE recommendation_mentions SET entry_id = NULL, removed_at = CURRENT_TIMESTAMP,
+                    last_user_change_sequence = ?, source_name = '', source_type = '', description = '',
+                    dishes_json = NULL, why_its_cool = NULL, tags_json = NULL, timestamp_seconds = NULL,
+                    slide_index = NULL, resolution_status = 'removed', resolution_candidates_json = NULL,
+                    location_query = NULL WHERE user_id = ? AND id = ? AND removed_at IS NULL
+            ''', (sequence, self.user_id, mention_id))
+
+    def delete_mention(self, mention_id: int) -> dict[str, int]:
+        with self._transaction(write=True) as con:
+            row = con.execute('''
+                SELECT entry_id, item_id FROM recommendation_mentions
+                WHERE user_id = ? AND id = ? AND removed_at IS NULL
+            ''', (self.user_id, mention_id)).fetchone()
+            if row is None:
+                raise RecordNotFound()
+            self._remove_mentions(con, [mention_id], self._sequence(con))
+            deleted = con.execute('''
+                DELETE FROM recommendations WHERE user_id = ? AND id = ? AND NOT EXISTS
+                (SELECT 1 FROM recommendation_mentions WHERE user_id = ? AND entry_id = ? AND removed_at IS NULL)
+            ''', (self.user_id, row['entry_id'], self.user_id, row['entry_id'])).rowcount
+            self._refresh_activity(con, [row['item_id']], 'Deleted mention')
+            return {'mention_id': mention_id, 'deleted_entries': deleted}
 
     def delete_failed_activity(self, ingest_id: int) -> None:
         with self._transaction(write=True) as con:
@@ -235,22 +275,33 @@ class AccountStore:
             ''', (self.user_id, run['item_id'])).fetchone():
                 raise AccountConflict('Activity with saved recommendations cannot be deleted here')
             self._sequence(con)
-            con.execute('DELETE FROM ingest_runs WHERE user_id = ? AND id = ?',
+            con.execute('''
+                UPDATE ingest_runs SET status = 'cancelled', stage = 'cancelled', result_json = NULL,
+                    error_type = NULL, error_message = NULL, failure_kind = NULL, retryable = 0,
+                    next_retry_at = NULL, updated_at = CURRENT_TIMESTAMP, completed_at = CURRENT_TIMESTAMP
+                WHERE user_id = ? AND id = ?
+            ''', (self.user_id, ingest_id))
+            con.execute('DELETE FROM ingest_events WHERE user_id = ? AND ingest_run_id = ?',
                         (self.user_id, ingest_id))
             # A Capture may have other submission histories and removed mentions.
             # Deleting one failed Activity must not cascade through those records.
 
-    def confirm_activity_location(self, ingest_id: int, entry_id: int, candidate_id: str) -> dict[str, Any]:
+    def confirm_activity_location(self, ingest_id: int, entry_id: int, candidate_id: str,
+                                  *, mention_id: int | None = None) -> dict[str, Any]:
         with self._transaction(write=True) as con:
-            row = con.execute('''
+            rows = con.execute('''
                 SELECT ts.*, t.starts_at, t.ends_at, t.recurrence_text
                 FROM ingest_runs r
                 JOIN recommendation_mentions ts ON ts.item_id = r.item_id AND ts.user_id = r.user_id
                 JOIN recommendations t ON t.id = ts.entry_id AND t.user_id = ts.user_id
                 WHERE r.user_id = ? AND r.id = ? AND t.id = ? AND ts.removed_at IS NULL
-            ''', (self.user_id, ingest_id, entry_id)).fetchone()
-            if row is None:
+                    AND r.status != 'cancelled' AND (? IS NULL OR ts.id = ?)
+            ''', (self.user_id, ingest_id, entry_id, mention_id, mention_id)).fetchall()
+            if not rows:
                 raise RecordNotFound()
+            if len(rows) > 1:
+                raise AccountConflict('Select the specific mention to confirm')
+            row = rows[0]
             if row['resolution_status'] != 'needs_review':
                 raise AccountConflict('This recommendation no longer needs location review')
             candidate = next((value for value in _decode_json_list(row['resolution_candidates_json'])
@@ -266,12 +317,6 @@ class AccountStore:
             existing = con.execute('''
                 SELECT id FROM recommendations WHERE user_id = ? AND identity_key = ? AND id != ?
             ''', (self.user_id, key, entry_id)).fetchone()
-            target_id = existing['id'] if existing else entry_id
-            if existing and con.execute('''
-                SELECT 1 FROM recommendation_mentions WHERE user_id = ? AND entry_id = ?
-                    AND item_id = ? AND removed_at IS NULL
-            ''', (self.user_id, target_id, row['item_id'])).fetchone():
-                raise AccountConflict('That location is already attached to another recommendation from this post')
             # Private review cannot overwrite public place metadata used by others.
             con.execute('''
                 INSERT INTO locations (google_place_id, display_name, lat, lng, formatted_address, google_maps_url)
@@ -281,7 +326,19 @@ class AccountStore:
                   candidate.get('googleMapsUri')))
             location_id = con.execute('SELECT id FROM locations WHERE google_place_id = ?', (candidate_id,)).fetchone()[0]
             sequence = self._sequence(con)
-            if existing:
+            siblings = con.execute('''
+                SELECT 1 FROM recommendation_mentions WHERE user_id = ? AND entry_id = ?
+                    AND id != ? AND removed_at IS NULL LIMIT 1
+            ''', (self.user_id, entry_id, row['id'])).fetchone()
+            target_id = existing['id'] if existing else entry_id
+            if not existing and siblings:
+                target_id = con.execute('''
+                    INSERT INTO recommendations (user_id, name, normalized_name, entry_type, type_key,
+                        identity_key, location_id, starts_at, ends_at, recurrence_text)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ''', (self.user_id, row['source_name'], normalized, row['source_type'], kind, key,
+                      location_id, row['starts_at'], row['ends_at'], row['recurrence_text'])).lastrowid
+            if target_id != entry_id:
                 con.execute('''
                     UPDATE recommendation_mentions SET entry_id = ? WHERE user_id = ? AND id = ?
                 ''', (target_id, self.user_id, row['id']))
