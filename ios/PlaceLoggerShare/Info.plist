@@ -4,8 +4,6 @@
 <dict>
 	<key>APIBaseURL</key>
 	<string>https://place-logging.fly.dev</string>
-	<key>APIToken</key>
-	<string>$(PLACE_LOGGER_API_TOKEN)</string>
 	<key>CFBundleDevelopmentRegion</key>
 	<string>$(DEVELOPMENT_LANGUAGE)</string>
 	<key>CFBundleDisplayName</key>
@@ -24,6 +22,10 @@
 	<string>1.0</string>
 	<key>CFBundleVersion</key>
 	<string>1</string>
+	<key>FirebaseKeychainGroup</key>
+	<string>$(AppIdentifierPrefix)com.natcasd.placelogger.auth</string>
+	<key>FirebaseProjectID</key>
+	<string>place-logging-7b73af</string>
 	<key>NSExtension</key>
 	<dict>
 		<key>NSExtensionAttributes</key>

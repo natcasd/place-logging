@@ -16,6 +16,13 @@ settings:
     SWIFT_VERSION: "6.0"
     MARKETING_VERSION: "0.1.0"
     CURRENT_PROJECT_VERSION: "1"
+packages:
+  Firebase:
+    url: https://github.com/firebase/firebase-ios-sdk.git
+    from: 12.19.2
+  GoogleSignIn:
+    url: https://github.com/google/GoogleSignIn-iOS.git
+    from: 10.0.0
 targets:
   PlaceLogger:
     type: application
@@ -23,21 +30,42 @@ targets:
     sources:
       - path: PlaceLogger
       - path: Shared
+      - path: Firebase
+        type: folder
+        buildPhase: resources
     info:
       path: PlaceLogger/Info.plist
       properties:
         CFBundleDisplayName: Jot
         UILaunchScreen: {}
         APIBaseURL: https://place-logging.fly.dev
-        APIToken: $(PLACE_LOGGER_API_TOKEN)
+        FirebaseProjectID: place-logging-7b73af
+        FirebaseKeychainGroup: $(AppIdentifierPrefix)com.natcasd.placelogger.auth
+        CFBundleURLTypes:
+          - CFBundleURLSchemes:
+              - $(GOOGLE_REVERSED_CLIENT_ID)
         NSLocationWhenInUseUsageDescription: Jot uses your location to open the saved-place map near you and recenter it when requested.
+    entitlements:
+      path: PlaceLogger/PlaceLogger.entitlements
+      properties:
+        keychain-access-groups:
+          - $(AppIdentifierPrefix)com.natcasd.placelogger.auth
+        com.apple.developer.applesignin:
+          - Default
     settings:
       base:
+        OTHER_LDFLAGS: $(inherited) -ObjC
         PRODUCT_BUNDLE_IDENTIFIER: com.natcasd.placelogger
         PRODUCT_NAME: PlaceLogger
         GENERATE_INFOPLIST_FILE: false
         CODE_SIGN_STYLE: Automatic
     dependencies:
+      - package: Firebase
+        product: FirebaseAuth
+      - package: GoogleSignIn
+        product: GoogleSignIn
+      - package: GoogleSignIn
+        product: GoogleSignInSwift
       - target: PlaceLoggerShare
         embed: true
   PlaceLoggerShare:
@@ -46,12 +74,16 @@ targets:
     sources:
       - path: PlaceLoggerShare
       - path: Shared
+      - path: Firebase
+        type: folder
+        buildPhase: resources
     info:
       path: PlaceLoggerShare/Info.plist
       properties:
         CFBundleDisplayName: Save to Jot
         APIBaseURL: https://place-logging.fly.dev
-        APIToken: $(PLACE_LOGGER_API_TOKEN)
+        FirebaseProjectID: place-logging-7b73af
+        FirebaseKeychainGroup: $(AppIdentifierPrefix)com.natcasd.placelogger.auth
         NSExtension:
           NSExtensionPointIdentifier: com.apple.share-services
           NSExtensionPrincipalClass: $(PRODUCT_MODULE_NAME).ShareViewController
@@ -62,8 +94,17 @@ targets:
               NSExtensionActivationSupportsText: true
               NSExtensionActivationSupportsImageWithMaxCount: 1
               NSExtensionActivationSupportsMovieWithMaxCount: 1
+    entitlements:
+      path: PlaceLoggerShare/PlaceLoggerShare.entitlements
+      properties:
+        keychain-access-groups:
+          - $(AppIdentifierPrefix)com.natcasd.placelogger.auth
+    dependencies:
+      - package: Firebase
+        product: FirebaseAuth
     settings:
       base:
+        OTHER_LDFLAGS: $(inherited) -ObjC
         PRODUCT_BUNDLE_IDENTIFIER: com.natcasd.placelogger.share
         PRODUCT_NAME: PlaceLoggerShare
         GENERATE_INFOPLIST_FILE: false

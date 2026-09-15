@@ -118,7 +118,7 @@ struct MovieEnrichment: Decodable, Sendable {
 struct SavedEntrySource: Decodable, Identifiable, Sendable {
   let id: Int
   let itemID: Int
-  let sourceURL: URL
+  let sourceURL: URL?
   let sourcePlatform: String
   let creator: String?
   let description: String
@@ -155,7 +155,8 @@ struct SavedEntrySource: Decodable, Identifiable, Sendable {
     slideIndex == nil ? "play.rectangle" : "rectangle.stack"
   }
 
-  var linkedSourceURL: URL {
+  var linkedSourceURL: URL? {
+    guard let sourceURL else { return nil }
     guard var components = URLComponents(url: sourceURL, resolvingAgainstBaseURL: false) else {
       return sourceURL
     }
@@ -176,7 +177,8 @@ struct SavedEntrySource: Decodable, Identifiable, Sendable {
 
   var sourceLinkText: String {
     if let creator, !creator.isEmpty { return creator }
-    let host = sourceURL.host?.lowercased() ?? ""
+    if sourceURL == nil { return "Your recommendation" }
+    let host = sourceURL?.host?.lowercased() ?? ""
     if host.contains("instagram") { return "Instagram Post" }
     if isYouTubeSource { return "Watch on YouTube" }
     if host.contains("tiktok") { return "Open in TikTok" }
@@ -184,7 +186,7 @@ struct SavedEntrySource: Decodable, Identifiable, Sendable {
   }
 
   var sourceSystemImage: String {
-    let host = sourceURL.host?.lowercased() ?? ""
+    let host = sourceURL?.host?.lowercased() ?? ""
     if host.contains("instagram") { return "camera" }
     if isYouTubeSource { return "play.rectangle.fill" }
     if host.contains("tiktok") { return "music.note" }
@@ -192,7 +194,7 @@ struct SavedEntrySource: Decodable, Identifiable, Sendable {
   }
 
   private var isYouTubeSource: Bool {
-    let host = sourceURL.host?.lowercased() ?? ""
+    let host = sourceURL?.host?.lowercased() ?? ""
     return host.contains("youtube.com") || host.contains("youtu.be")
   }
 
@@ -219,6 +221,7 @@ struct IngestResponse: Decodable, Sendable {
   let nextRetryAt: String?
 
   var notificationTitle: String {
+    if status == "queued" || status == "processing" { return "Post accepted" }
     if status == "retry_scheduled" { return "Retry scheduled" }
     if status == "failed" { return failureTitle }
     if alreadyLogged == true { return "Already logged" }
@@ -231,6 +234,7 @@ struct IngestResponse: Decodable, Sendable {
   }
 
   var notificationBody: String {
+    if status == "queued" || status == "processing" { return "Jot is processing your post. Open Activity to see its progress." }
     if status == "retry_scheduled" {
       return errorMessage ?? "Jot will retry this save automatically."
     }
@@ -347,7 +351,7 @@ struct SavedEntryOutcome: Decodable, Identifiable, Sendable, Hashable {
   let isNew: Bool
   let sourceCount: Int
 
-  var id: Int { entryID }
+  var id: Int { sourceConnectionID ?? entryID }
   var hasLocation: Bool { locationID != nil && latitude != nil && longitude != nil }
 
   var mediaReferenceText: String? {
@@ -420,7 +424,7 @@ struct SavedEntryOutcome: Decodable, Identifiable, Sendable, Hashable {
 struct IngestActivity: Decodable, Identifiable, Sendable {
   let id: Int
   let itemID: Int?
-  let sourceURL: URL
+  let sourceURL: URL?
   let sourcePlatform: String
   let creator: String?
   let caption: String?
@@ -442,6 +446,7 @@ struct IngestActivity: Decodable, Identifiable, Sendable {
 
   var statusText: String {
     switch status {
+    case "queued": return "Waiting to process"
     case "processing":
       let verb = (attemptCount ?? 1) > 1 ? "Retrying" : "Processing"
       return "\(verb) · \(stage.replacingOccurrences(of: "_", with: " ").capitalized)"
@@ -482,15 +487,24 @@ struct APIErrorEnvelope: Decodable {
 }
 
 enum PlaceLoggerError: LocalizedError {
-  case missingToken
+  case signInRequired
+  case signInUnavailable
+  case sessionChanged
+  case sessionUnavailable
   case invalidResponse
   case server(status: Int, detail: String?)
   case noSharedURL
 
   var errorDescription: String? {
     switch self {
-    case .missingToken:
-      "The app's API token is not configured."
+    case .signInRequired:
+      "Open Jot and sign in before saving."
+    case .signInUnavailable:
+      "Sign-in is unavailable in this build. Please update Jot."
+    case .sessionChanged:
+      "Your account changed. Please try again."
+    case .sessionUnavailable:
+      "Your secure session is unavailable. Unlock your phone and try again."
     case .invalidResponse:
       "Jot returned an invalid response."
     case .server(let status, let detail):

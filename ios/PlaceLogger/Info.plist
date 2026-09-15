@@ -4,8 +4,6 @@
 <dict>
 	<key>APIBaseURL</key>
 	<string>https://place-logging.fly.dev</string>
-	<key>APIToken</key>
-	<string>$(PLACE_LOGGER_API_TOKEN)</string>
 	<key>CFBundleDevelopmentRegion</key>
 	<string>$(DEVELOPMENT_LANGUAGE)</string>
 	<key>CFBundleDisplayName</key>
@@ -22,8 +20,21 @@
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
 	<string>1.0</string>
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>$(GOOGLE_REVERSED_CLIENT_ID)</string>
+			</array>
+		</dict>
+	</array>
 	<key>CFBundleVersion</key>
 	<string>1</string>
+	<key>FirebaseKeychainGroup</key>
+	<string>$(AppIdentifierPrefix)com.natcasd.placelogger.auth</string>
+	<key>FirebaseProjectID</key>
+	<string>place-logging-7b73af</string>
 	<key>NSLocationWhenInUseUsageDescription</key>
 	<string>Jot uses your location to open the saved-place map near you and recenter it when requested.</string>
 	<key>UILaunchScreen</key>
