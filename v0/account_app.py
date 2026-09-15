@@ -4,25 +4,33 @@ A trusted session verifier is mandatory. It maps a validated session to an
 internal user ID; Apple/Google/email identities must be linked by the identity
 provider/session layer, never by an unverified email or client-supplied owner.
 No development tokens, identity headers, or legacy shared-token fallback exist
-in this module. Ingest processing is deliberately unavailable until PRs 3/4.
+in this module. Saves enter a durable queue drained by an explicit worker.
 """
 from __future__ import annotations
 
+import asyncio
+import base64
+import binascii
+from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from pathlib import Path
+from threading import Event, Thread
 from typing import Protocol
 
 from fastapi import APIRouter, Depends, FastAPI, HTTPException, Query
-from pydantic import Field
+from pydantic import BaseModel, Field
 from fastapi.responses import JSONResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from account_store import AccountConflict, AccountStore, AccountUnavailable, RecordNotFound
+from account_ingest import SourceResolutionUnavailable, resolve_public_url
+from capture_store import CaptureStore
+from post_processing_worker import PostProcessingWorker
 from app import (
     ActivityResponse, ConfirmActivityLocationRequest, ConfirmActivityLocationResponse,
     DeleteActivityResponse, DeleteEntriesRequest, DeleteEntriesResponse, DeleteEntryResponse,
     EntriesResponse, IngestRequest, ShortcutIngestRequest, SourcesResponse,
-    SavedEntry, SavedEntrySource, SavedSource, IngestActivity,
+    SavedEntry, SavedEntrySource, SavedSource, IngestActivity, SavedEntryOutcome,
 )
 
 
@@ -76,10 +84,47 @@ class ConfirmMentionLocationRequest(ConfirmActivityLocationRequest):
     mention_id: int | None = Field(default=None, ge=1)
 
 
-def create_account_app(*, db_path: Path, verify_session: SessionVerifier) -> FastAPI:
+class AccountIngestRequest(IngestRequest):
+    request_key: str = Field(min_length=1, max_length=128, pattern=r'^[A-Za-z0-9_.:-]+$')
+
+
+class AccountShortcutRequest(ShortcutIngestRequest):
+    request_key: str = Field(min_length=1, max_length=128, pattern=r'^[A-Za-z0-9_.:-]+$')
+
+
+class AcceptedIngest(BaseModel):
+    ingest_id: int
+    item_id: int
+    status: str
+    accepted_sequence: int
+    saved_entries: list[SavedEntryOutcome] = Field(default_factory=list)
+
+
+def create_account_app(*, db_path: Path, verify_session: SessionVerifier,
+                       worker: PostProcessingWorker | None = None) -> FastAPI:
     if not callable(verify_session):
         raise ValueError('A session verifier is required')
-    application = FastAPI(title='Jot account API', version='1.0.0')
+    if worker is not None and worker.store.db_path.resolve() != db_path.resolve():
+        raise ValueError('Worker and account API must use the same database')
+
+    @asynccontextmanager
+    async def lifespan(application):
+        stop = Event()
+        thread = None
+        if worker is not None:
+            worker.store.active_tokens()  # Validate the explicit schema before starting.
+            thread = Thread(target=worker.run, args=(stop,), name='jot-public-worker', daemon=True)
+            thread.start()
+        try:
+            yield
+        finally:
+            stop.set()
+            if thread is not None:
+                # Drain in-flight work with its lease renewal and cleanup intact.
+                # A forced process termination recovers through durable leases.
+                await asyncio.to_thread(thread.join)
+
+    application = FastAPI(title='Jot account API', version='1.0.0', lifespan=lifespan)
     bearer = HTTPBearer(auto_error=False)
 
     def scoped_store(credentials: HTTPAuthorizationCredentials | None = Depends(bearer)) -> AccountStore:
@@ -110,6 +155,10 @@ def create_account_app(*, db_path: Path, verify_session: SessionVerifier) -> Fas
     @application.get('/healthz')
     def healthz():
         return {'status': 'ok'}
+
+    @application.exception_handler(SourceResolutionUnavailable)
+    async def resolution_unavailable(_request, _error):
+        return JSONResponse(status_code=503, content={'detail': 'Could not resolve this share link. Try again.'})
 
     router = APIRouter(prefix='/api/v1', dependencies=[Depends(scoped_store)])
 
@@ -149,18 +198,28 @@ def create_account_app(*, db_path: Path, verify_session: SessionVerifier) -> Fas
         return {'entry': account.confirm_activity_location(ingest_id, entry_id, payload.candidate_id,
                                                           mention_id=payload.mention_id)}
 
-    @router.post('/ingests', status_code=501)
-    def ingest(_payload: IngestRequest):
-        raise HTTPException(501, 'Account ingest processing is not enabled yet')
+    def accept(url: str, key: str, account: AccountStore, channel: str):
+        try:
+            resolved = resolve_public_url(url)
+            return CaptureStore(db_path, account.user_id).accept_public(resolved, key, channel=channel)
+        except ValueError:
+            raise HTTPException(422, 'A supported public post URL is required') from None
 
-    @router.post('/shortcut/ingests', status_code=501)
-    def shortcut_ingest(_payload: ShortcutIngestRequest):
-        raise HTTPException(501, 'Account ingest processing is not enabled yet')
+    @router.post('/ingests', status_code=202, response_model=AcceptedIngest)
+    def ingest(payload: AccountIngestRequest, account: AccountStore = Depends(scoped_store)):
+        return accept(payload.source_url, payload.request_key, account, 'share_extension')
 
-    @router.post('/activity/{ingest_id}/retry', status_code=501)
+    @router.post('/shortcut/ingests', status_code=202, response_model=AcceptedIngest)
+    def shortcut_ingest(payload: AccountShortcutRequest, account: AccountStore = Depends(scoped_store)):
+        try:
+            url = base64.b64decode(payload.source_url_base64, validate=True).decode('utf-8')
+        except (ValueError, binascii.Error, UnicodeError):
+            raise HTTPException(422, 'source_url_base64 must encode a UTF-8 URL') from None
+        return accept(url, payload.request_key, account, 'shortcut')
+
+    @router.post('/activity/{ingest_id}/retry', status_code=202, response_model=AcceptedIngest)
     def retry(ingest_id: int, account: AccountStore = Depends(scoped_store)):
-        account.require_run(ingest_id)
-        raise HTTPException(501, 'Account ingest processing is not enabled yet')
+        return CaptureStore(db_path, account.user_id).retry_public(ingest_id)
 
     application.include_router(router)
     return application
