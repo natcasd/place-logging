@@ -140,23 +140,6 @@ sqlite3 data/places.db 'select id, source_url, created_at from captures order by
 sqlite3 data/places.db 'select id, name, entry_type, location_id from recommendations order by id desc limit 10;'
 ```
 
-## Type-catalog regression evaluation
-
-Before planning any Bar/Store split backfill, run the new catalog against a
-small stratified sample and the checked-in edge-case fixtures. This command is
-read-only and cannot update SQLite. Its JSON output shows every current versus
-proposed type and scores the fixture set.
-
-```bash
-python evaluate_entry_type_migration.py \
-  --db-path data/places.db \
-  --per-type 5 \
-  --output data/type-catalog-evaluation.json
-```
-
-Review that report before implementing or applying a separate migration plan.
-The intended first pass is roughly 40–60 saved entries, not the full corpus.
-
 ## Duplicate-source backfill
 
 `backfill_duplicate_sources.py` groups Instagram and YouTube share-URL variants
