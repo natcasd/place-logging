@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Protocol
 
 from fastapi import APIRouter, Depends, FastAPI, HTTPException, Query
+from pydantic import Field
 from fastapi.responses import JSONResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
@@ -69,6 +70,10 @@ class AccountActivityItem(IngestActivity):
 
 class AccountActivity(ActivityResponse):
     activity: list[AccountActivityItem]
+
+
+class ConfirmMentionLocationRequest(ConfirmActivityLocationRequest):
+    mention_id: int | None = Field(default=None, ge=1)
 
 
 def create_account_app(*, db_path: Path, verify_session: SessionVerifier) -> FastAPI:
@@ -134,10 +139,15 @@ def create_account_app(*, db_path: Path, verify_session: SessionVerifier) -> Fas
         account.delete_failed_activity(ingest_id)
         return {'ingest_id': ingest_id}
 
+    @router.delete('/mentions/{mention_id}')
+    def delete_mention(mention_id: int, account: AccountStore = Depends(scoped_store)):
+        return account.delete_mention(mention_id)
+
     @router.post('/activity/{ingest_id}/entries/{entry_id}/location', response_model=ConfirmActivityLocationResponse)
-    def confirm_location(ingest_id: int, entry_id: int, payload: ConfirmActivityLocationRequest,
+    def confirm_location(ingest_id: int, entry_id: int, payload: ConfirmMentionLocationRequest,
                          account: AccountStore = Depends(scoped_store)):
-        return {'entry': account.confirm_activity_location(ingest_id, entry_id, payload.candidate_id)}
+        return {'entry': account.confirm_activity_location(ingest_id, entry_id, payload.candidate_id,
+                                                          mention_id=payload.mention_id)}
 
     @router.post('/ingests', status_code=501)
     def ingest(_payload: IngestRequest):

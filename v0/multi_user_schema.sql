@@ -196,8 +196,8 @@ CREATE TABLE recommendation_mentions (
     OR (removed_at IS NOT NULL AND entry_id IS NULL))
 );
 
-CREATE UNIQUE INDEX idx_mentions_active_recommendation_capture
-  ON recommendation_mentions(entry_id, item_id) WHERE removed_at IS NULL;
+-- Multiple original outputs from one capture can group into one recommendation.
+-- Their lifecycle identity remains (item_id, output_key), including removals.
 CREATE INDEX idx_mentions_owner_capture ON recommendation_mentions(user_id, item_id);
 CREATE INDEX idx_mentions_owner_recommendation ON recommendation_mentions(user_id, entry_id)
   WHERE removed_at IS NULL;

@@ -26,7 +26,7 @@ enrichment and ingest history remain supporting tables.
   are persisted for later workers to enforce.
 
 See `multi_user_schema.sql` for columns, constraints, and indexes. The schema
-uses `PRAGMA application_id = 0x4A4F544D` and `user_version = 1`.
+uses `PRAGMA application_id = 0x4A4F544D` and `user_version = 2`.
 
 ## Rehearse against a database copy
 
@@ -135,3 +135,7 @@ Do not claim the app supports a second account until these dependent stages
 are implemented. Temporary-file cleanup and provider costs remain independent
 of the schema migration. This command copies database records, not downloaded
 media files; existing legacy JSON remains private pending baseline validation.
+
+Version 2 removes the old recommendation/capture uniqueness restriction; see
+[private capture behavior](PRIVATE_CAPTURES.md). The same offline command accepts
+a version-1 source and publishes an upgraded copy without modifying it.
