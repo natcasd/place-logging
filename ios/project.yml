@@ -41,6 +41,8 @@ targets:
         APIBaseURL: https://place-logging.fly.dev
         FirebaseProjectID: jot-app-20260915
         FirebaseKeychainGroup: $(AppIdentifierPrefix)com.natcasd.placelogger.auth
+        UIAppFonts:
+          - GoogleSans-Medium.ttf
         CFBundleURLTypes:
           - CFBundleURLSchemes:
               - $(GOOGLE_REVERSED_CLIENT_ID)

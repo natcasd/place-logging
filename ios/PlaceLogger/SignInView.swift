@@ -148,19 +148,91 @@ struct SignInView: View {
   @ObservedObject var session: AccountSession
 
   var body: some View {
-    VStack(spacing: 24) {
-      Text("Jot").font(.system(size: 48, weight: .bold, design: .rounded))
-      Text("Your discoveries, saved for you.").font(.title3).foregroundStyle(.secondary)
-      if let error = session.configurationError {
-        Text(error).multilineTextAlignment(.center)
-      } else {
-        SignInButtons(linking: false)
-        Text("New here? Continuing creates your account.")
-          .font(.footnote).foregroundStyle(.secondary)
+    GeometryReader { geometry in
+      ScrollView {
+        VStack(spacing: 0) {
+          Spacer(minLength: 40)
+
+          VStack(spacing: 24) {
+            HStack(spacing: 15) {
+              Image("JotWordmarkLogo")
+                .resizable()
+                .scaledToFit()
+                .frame(width: 88, height: 88)
+                .frame(width: 54, height: 68)
+                .clipped()
+                .accessibilityHidden(true)
+              Text("jot")
+                .font(.system(size: 68, weight: .bold, design: .rounded))
+                .tracking(-3)
+            }
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel("Jot")
+
+            Text("Your discoveries, saved for you.")
+              .font(.body)
+              .foregroundStyle(.secondary)
+              .multilineTextAlignment(.center)
+          }
+
+          Spacer(minLength: 64)
+
+          VStack(spacing: 16) {
+            if let error = session.configurationError {
+              Text(error).multilineTextAlignment(.center)
+            } else {
+              Text("Sign in or create an account")
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+              SignInButtons(linking: false)
+            }
+          }
+          .padding(.bottom, 48)
+        }
+        .frame(maxWidth: 420)
+        .frame(minHeight: geometry.size.height)
+        .padding(.horizontal, 28)
+        .frame(maxWidth: .infinity)
       }
     }
-    .padding(32)
-    .frame(maxWidth: 420)
+    .background(Color(uiColor: .systemBackground))
+  }
+}
+
+private struct ContinueWithGoogleButton: View {
+  let action: () -> Void
+  @Environment(\.colorScheme) private var colorScheme
+
+  var body: some View {
+    Button(action: action) {
+      HStack(spacing: 12) {
+        Image("GoogleSignInMark")
+          .resizable()
+          .scaledToFit()
+          .frame(width: 20, height: 20)
+          .accessibilityHidden(true)
+        Text("Continue with Google")
+          .font(.custom("GoogleSans-Medium", size: 16, relativeTo: .body))
+          .fixedSize(horizontal: false, vertical: true)
+      }
+      .foregroundStyle(colorScheme == .dark
+        ? Color(red: 227 / 255, green: 227 / 255, blue: 227 / 255)
+        : Color(red: 31 / 255, green: 31 / 255, blue: 31 / 255))
+      .padding(.horizontal, 16)
+      .padding(.vertical, 15)
+      .frame(maxWidth: .infinity, minHeight: 54)
+      .background(colorScheme == .dark
+        ? Color(red: 19 / 255, green: 19 / 255, blue: 20 / 255)
+        : Color(red: 242 / 255, green: 242 / 255, blue: 242 / 255), in: Capsule())
+      .overlay {
+        if colorScheme == .dark {
+          Capsule().strokeBorder(Color(red: 142 / 255, green: 145 / 255, blue: 143 / 255), lineWidth: 1)
+        }
+      }
+      .contentShape(Capsule())
+    }
+    .buttonStyle(.plain)
   }
 }
 
@@ -169,6 +241,7 @@ private struct SignInButtons: View {
   var deleting: AccountSessionSnapshot? = nil
   var onBusyChange: (Bool) -> Void = { _ in }
   @StateObject private var model = SignInModel()
+  @Environment(\.colorScheme) private var colorScheme
 
   private var hasApple: Bool {
     Auth.auth().currentUser?.providerData.contains(where: { $0.providerID == "apple.com" }) == true
@@ -180,12 +253,19 @@ private struct SignInButtons: View {
         SignInWithAppleButton(.continue, onRequest: { model.prepareApple($0, linking: linking, deleting: deleting) }) { result in
           Task { await model.completeApple(result, linking: linking, deleting: deleting) }
         }
-        .signInWithAppleButtonStyle(.black)
-        .frame(height: 50)
+        .signInWithAppleButtonStyle(deleting == nil && colorScheme == .dark ? .white : .black)
+        .frame(height: deleting == nil ? 54 : 50)
+        .clipShape(RoundedRectangle(cornerRadius: deleting == nil ? 27 : 8))
       }
       if deleting == nil || !hasApple {
-        GoogleSignInButton {
-          Task { await model.google(linking: linking, deleting: deleting) }
+        if deleting == nil {
+          ContinueWithGoogleButton {
+            Task { await model.google(linking: linking) }
+          }
+        } else {
+          GoogleSignInButton {
+            Task { await model.google(linking: linking, deleting: deleting) }
+          }
         }
       }
       if model.isBusy { ProgressView() }
