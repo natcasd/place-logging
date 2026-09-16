@@ -206,31 +206,82 @@ struct AccountSettingsView: View {
   @State private var showDeletion = false
   @State private var deletionAccount: AccountSessionSnapshot?
 
+  private var email: String? {
+    guard let email = Auth.auth().currentUser?.email?.trimmingCharacters(in: .whitespacesAndNewlines),
+          !email.isEmpty else { return nil }
+    return email
+  }
+
+  private var signInDescription: String {
+    let providers = Auth.auth().currentUser?.providerData.map(\.providerID) ?? []
+    if providers.contains("apple.com") && providers.contains("google.com") {
+      return "Connected with Apple and Google"
+    }
+    if providers.contains("apple.com") { return "Signed in with Apple" }
+    if providers.contains("google.com") { return "Signed in with Google" }
+    return "Signed in"
+  }
+
   var body: some View {
     NavigationStack {
-      Form {
-        Section("Sign-in methods") {
-          Text("Connect Apple and Google to open this same library with either one.")
-            .font(.footnote).foregroundStyle(.secondary)
-          SignInButtons(linking: true)
-        }
-        Section {
-          Button("Sign Out") {
-            do {
-              try AccountSession.shared.signOut()
-              GIDSignIn.sharedInstance.signOut()
-            } catch { errorMessage = error.localizedDescription }
+      ScrollView {
+        HStack(spacing: 12) {
+          ZStack {
+            Circle().fill(Color.primary.opacity(0.07))
+            if let initial = email?.first {
+              Text(String(initial).uppercased()).font(.title2.weight(.medium))
+            } else {
+              Image(systemName: "person.fill").font(.title2)
+            }
           }
-          Button("Delete Account", role: .destructive) {
-            do {
-              deletionAccount = try AccountSession.shared.requireSnapshot()
-              showDeletion = true
-            } catch { errorMessage = error.localizedDescription }
+          .frame(width: 48, height: 48)
+          .accessibilityHidden(true)
+
+          VStack(alignment: .leading, spacing: 5) {
+            Text(email ?? "Your account").font(.body)
+            Text(signInDescription).font(.footnote).foregroundStyle(.secondary)
           }
-          if let errorMessage { Text(errorMessage).foregroundStyle(.red) }
+          .frame(maxWidth: .infinity, alignment: .leading)
+          .accessibilityElement(children: .combine)
+
+          Menu {
+            Button {
+              do {
+                try AccountSession.shared.signOut()
+                GIDSignIn.sharedInstance.signOut()
+              } catch { errorMessage = error.localizedDescription }
+            } label: {
+              Label("Sign out", systemImage: "rectangle.portrait.and.arrow.right")
+            }
+            Button(role: .destructive) {
+              do {
+                deletionAccount = try AccountSession.shared.requireSnapshot()
+                showDeletion = true
+              } catch { errorMessage = error.localizedDescription }
+            } label: {
+              Label("Delete account", systemImage: "trash")
+            }
+          } label: {
+            Image(systemName: "ellipsis")
+              .font(.title3)
+              .frame(width: 44, height: 44)
+              .contentShape(Rectangle())
+          }
+          .tint(.primary)
+          .accessibilityLabel("Account options")
         }
+        .padding(.horizontal, 20)
+        .padding(.top, 24)
       }
+      .background(Color(uiColor: .systemGroupedBackground))
       .navigationTitle("Account")
+      .alert("Couldn’t update account", isPresented: Binding(
+        get: { errorMessage != nil }, set: { if !$0 { errorMessage = nil } }
+      )) {
+        Button("OK", role: .cancel) { errorMessage = nil }
+      } message: {
+        Text(errorMessage ?? "Please try again.")
+      }
       .sheet(isPresented: $showDeletion) {
         if let deletionAccount { DeleteAccountView(account: deletionAccount) }
       }
@@ -239,30 +290,54 @@ struct AccountSettingsView: View {
 }
 
 private struct DeleteAccountView: View {
+  private enum Step { case warning, confirmation, verification }
+
   let account: AccountSessionSnapshot
   @Environment(\.dismiss) private var dismiss
-  @State private var confirmed = false
+  @State private var step: Step = .warning
+  @State private var confirmationText = ""
   @State private var isBusy = false
+  @FocusState private var confirmationFocused: Bool
 
   var body: some View {
     NavigationStack {
-      VStack(spacing: 24) {
-        Text("Delete your account?").font(.title2.bold())
-        Text("This permanently removes your Jot account and saved library. You can’t undo it.")
-          .multilineTextAlignment(.center)
-        if confirmed {
-          Text("Confirm with your sign-in account to finish deleting.")
-            .font(.subheadline).foregroundStyle(.secondary)
-          SignInButtons(linking: false, deleting: account, onBusyChange: { isBusy = $0 })
-        } else {
-          Button("Delete My Account", role: .destructive) { confirmed = true }
+      ScrollView {
+        VStack(spacing: 24) {
+          switch step {
+          case .warning:
+            Text("Delete your account?").font(.title2.bold())
+            Text("This permanently removes your Jot account and saved library.")
+            Button("Continue", role: .destructive) { step = .confirmation }
+              .buttonStyle(.bordered).tint(.red)
+          case .confirmation:
+            Text("This can’t be undone.").font(.title2.bold())
+            Text("Type DELETE to confirm you want to permanently delete your account and saved library.")
+            TextField("DELETE", text: $confirmationText)
+              .textFieldStyle(.roundedBorder)
+              .textInputAutocapitalization(.characters)
+              .autocorrectionDisabled()
+              .focused($confirmationFocused)
+              .accessibilityLabel("Type DELETE to confirm account deletion")
+            Button("Delete account", role: .destructive) {
+              guard confirmationText == "DELETE" else { return }
+              confirmationFocused = false
+              step = .verification
+            }
             .buttonStyle(.borderedProminent).tint(.red)
+            .disabled(confirmationText != "DELETE")
+          case .verification:
+            Text("Verify it’s you").font(.title2.bold())
+            Text("Confirm with your sign-in account to finish permanently deleting your account and saved library.")
+              .foregroundStyle(.secondary)
+            SignInButtons(linking: false, deleting: account, onBusyChange: { isBusy = $0 })
+          }
         }
-        Spacer()
+        .multilineTextAlignment(.center)
+        .padding(32)
       }
-      .padding(32)
       .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() }.disabled(isBusy) } }
+      .onChange(of: step) { _, step in confirmationFocused = step == .confirmation }
     }
-    .interactiveDismissDisabled(confirmed)
+    .interactiveDismissDisabled(isBusy)
   }
 }
