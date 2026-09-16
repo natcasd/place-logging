@@ -15,6 +15,7 @@ from threading import Event
 from firebase_admin import auth, exceptions
 from google.auth.exceptions import GoogleAuthError
 
+from account_recovery import DeletionJournal
 from account_store import AccountUnavailable
 from firebase_identity import FirebaseTokenVerifier, IdentityStore
 
@@ -22,9 +23,10 @@ log = logging.getLogger(__name__)
 
 
 class AccountDeletion:
-    def __init__(self, accounts: IdentityStore, tokens: FirebaseTokenVerifier):
+    def __init__(self, accounts: IdentityStore, tokens: FirebaseTokenVerifier, journal: DeletionJournal | None = None):
         self.accounts = accounts
         self.tokens = tokens
+        self.journal = journal
         self.db_path: Path = accounts.db_path
 
     def request(self, token: str) -> None:
@@ -45,9 +47,16 @@ class AccountDeletion:
                 con.execute("UPDATE users SET status = 'deleting' WHERE id = ?", (row['id'],))
             elif row['status'] != 'deleting':
                 raise AccountUnavailable()
+            if self.journal is not None:
+                # Journal commits first: no accepted deletion can be lost by
+                # restoring an older application DB. A crash can leave intent
+                # without the status change; the worker reapplies it on restart.
+                self.journal.record(identity.project_id, identity.uid)
 
     def drain_once(self) -> dict[str, int]:
         with self.accounts.transaction() as con:
+            if self.journal is not None:
+                self.journal.apply(con, self.tokens.project_id)
             pending = con.execute('''SELECT id, firebase_uid FROM users
                 WHERE status = 'deleting' AND firebase_project_id = ?
                 ORDER BY created_at, id LIMIT 100''', (self.tokens.project_id,)).fetchall()

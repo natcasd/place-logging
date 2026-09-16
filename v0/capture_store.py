@@ -8,9 +8,11 @@ from __future__ import annotations
 import json
 import re
 import sqlite3
+from dataclasses import dataclass, field
 from typing import Any
 from urllib.parse import urlsplit
 
+from account_operations import CaptureLimits
 from account_store import AccountConflict, AccountStore, RecordNotFound
 from capture_result import DirectContext, OriginalMention, validate_result
 from multi_user_migration import public_identity
@@ -18,7 +20,10 @@ from source_identity import canonical_source_url
 from store import _identity_key
 
 
+@dataclass(frozen=True)
 class CaptureStore(AccountStore):
+    limits: CaptureLimits = field(default_factory=CaptureLimits)
+
     def _request_key(self, key: str) -> None:
         if not isinstance(key, str) or not re.fullmatch(r'[A-Za-z0-9_.:-]{1,128}', key):
             raise ValueError('A stable request key of 1 to 128 characters is required')
@@ -36,6 +41,7 @@ class CaptureStore(AccountStore):
                 'saved_entries': self._outcomes(con, run['item_id']) if run['status'] != 'cancelled' else []}
 
     def _new_run(self, con: sqlite3.Connection, capture_id: int, key: str, intent: str) -> dict[str, Any]:
+        self.limits.check(con, self.user_id)
         capture = self._capture(con, capture_id)
         sequence = self._sequence(con)
         run_id = con.execute('''
@@ -106,6 +112,7 @@ class CaptureStore(AccountStore):
                 return self._accepted(con, run)
             if run['status'] not in {'failed', 'retry_scheduled'}:
                 raise AccountConflict('Only failed or scheduled saves can be retried')
+            self.limits.check(con, self.user_id, retry_id=ingest_id)
             con.execute('''
                 UPDATE ingest_runs SET status = 'queued', stage = 'accepted', error_type = NULL,
                     error_message = NULL, failure_kind = NULL, retryable = 0,

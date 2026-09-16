@@ -22,6 +22,7 @@ from pydantic import BaseModel, Field
 from fastapi.responses import JSONResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
+from account_operations import CaptureLimits, SaveLimitExceeded, SavesPaused, monitor_queue
 from account_store import AccountConflict, AccountStore, AccountUnavailable, RecordNotFound
 from account_ingest import SourceResolutionUnavailable, resolve_public_url
 from capture_store import CaptureStore
@@ -118,7 +119,9 @@ class AcceptedIngest(BaseModel):
 
 def create_account_app(*, db_path: Path, verify_session: SessionVerifier,
                        worker: PostProcessingWorker | None = None,
-                       deletion: AccountDeletionHandler | None = None) -> FastAPI:
+                       deletion: AccountDeletionHandler | None = None,
+                       limits: CaptureLimits | None = None, monitor: bool = False) -> FastAPI:
+    limits = limits or CaptureLimits()
     if not callable(verify_session):
         raise ValueError('A session verifier is required')
     if worker is not None and worker.store.db_path.resolve() != db_path.resolve():
@@ -133,6 +136,10 @@ def create_account_app(*, db_path: Path, verify_session: SessionVerifier,
         if worker is not None:
             worker.store.active_tokens()  # Validate the explicit schema before starting.
             thread = Thread(target=worker.run, args=(stop,), name='jot-public-worker', daemon=True)
+            thread.start()
+            threads.append(thread)
+        if monitor and worker is not None:
+            thread = Thread(target=monitor_queue, args=(worker.store, stop), name='jot-queue-metrics', daemon=True)
             thread.start()
             threads.append(thread)
         if deletion is not None:
@@ -187,6 +194,16 @@ def create_account_app(*, db_path: Path, verify_session: SessionVerifier,
     @application.exception_handler(AccountConflict)
     async def conflict(_request, error):
         return JSONResponse(status_code=409, content={'detail': str(error)})
+
+    @application.exception_handler(SaveLimitExceeded)
+    async def limit_exceeded(_request, _error):
+        return JSONResponse(status_code=429, content={'detail': 'Save limit reached. Please try again later.'},
+                            headers={'Retry-After': '3600'})
+
+    @application.exception_handler(SavesPaused)
+    async def saves_paused(_request, _error):
+        return JSONResponse(status_code=503, content={'detail': 'New saves are temporarily paused. Please try again later.'},
+                            headers={'Retry-After': '60'})
 
     @application.get('/healthz')
     def healthz():
@@ -254,7 +271,7 @@ def create_account_app(*, db_path: Path, verify_session: SessionVerifier,
     def accept(url: str, key: str, account: AccountStore, channel: str):
         try:
             resolved = resolve_public_url(url)
-            return CaptureStore(db_path, account.user_id).accept_public(resolved, key, channel=channel)
+            return CaptureStore(db_path, account.user_id, limits).accept_public(resolved, key, channel=channel)
         except ValueError:
             raise HTTPException(422, 'A supported public post URL is required') from None
 
@@ -272,7 +289,7 @@ def create_account_app(*, db_path: Path, verify_session: SessionVerifier,
 
     @router.post('/activity/{ingest_id}/retry', status_code=202, response_model=AcceptedIngest)
     def retry(ingest_id: int, account: AccountStore = Depends(scoped_store)):
-        return CaptureStore(db_path, account.user_id).retry_public(ingest_id)
+        return CaptureStore(db_path, account.user_id, limits).retry_public(ingest_id)
 
     application.include_router(router)
     return application

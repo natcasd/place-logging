@@ -108,7 +108,9 @@ verified just before deletion cannot recreate the deleted account afterward.
 
 These are deletions from live application storage. Retained backups need an
 explicit expiry policy and a restore procedure that reapplies later deletions
-before serving data. Operational backup/restore handling remains required before release; do not claim
+before serving data. The production factory now requires the deletion journal and reapplies it before
+serving restored data. See [operations and recovery](ACCOUNT_OPERATIONS.md) for
+copy/restore commands and remaining off-host backup/retention setup. Do not claim
 backups are instantly erased. The native Account screen now requires an explicit
 destructive confirmation followed by reauthentication. Apple-linked accounts use
 Apple and revoke their Apple authorization before submitting the backend request.
@@ -151,3 +153,6 @@ Official references:
 - [Add Firebase to an existing project](https://firebase.google.com/docs/projects/api/workflow_set-up-and-manage-project)
 - [Native Apple sign-in](https://firebase.google.com/docs/auth/ios/apple)
 - [Google sign-in on iOS](https://firebase.google.com/docs/auth/ios/google-signin)
+
+Deployment environment, usage limits, pause control, logging and release order are
+documented in [ACCOUNT_OPERATIONS.md](ACCOUNT_OPERATIONS.md).

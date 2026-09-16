@@ -50,6 +50,7 @@ class PostProcessingStore:
     max_attempts: int = 4
     max_active: int = 1
     now: Callable[[], datetime] = utc_now
+    pause_file: Path | None = None
 
     def __post_init__(self):
         if (not self.processing_version.strip() or self.lease_seconds < 3
@@ -103,6 +104,8 @@ class PostProcessingStore:
         return job
 
     def claim(self) -> PostLease | None:
+        if self.pause_file is not None and self.pause_file.exists():
+            return None
         with self._transaction(write=True) as con:
             now = timestamp(self.now())
             # Jobs are derived from durable private requests, so acceptance and
