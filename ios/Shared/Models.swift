@@ -220,6 +220,10 @@ struct IngestResponse: Decodable, Sendable {
   let errorMessage: String?
   let nextRetryAt: String?
 
+  var hasNotificationOutcome: Bool {
+    ["completed", "partial", "failed", "retry_scheduled"].contains(status ?? "")
+  }
+
   var notificationTitle: String {
     if status == "queued" || status == "processing" { return "Post accepted" }
     if status == "retry_scheduled" { return "Retry scheduled" }
@@ -494,12 +498,9 @@ enum PlaceLoggerError: LocalizedError {
   case invalidResponse
   case server(status: Int, detail: String?)
   case noSharedURL
-  case notificationHandoffUnavailable
 
   var errorDescription: String? {
     switch self {
-    case .notificationHandoffUnavailable:
-      "Your post was accepted, but result notifications couldn't be started. Open Activity in Jot to check this save."
     case .signInRequired:
       "Open Jot and sign in before saving."
     case .signInUnavailable:

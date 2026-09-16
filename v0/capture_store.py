@@ -12,6 +12,7 @@ from typing import Any
 from urllib.parse import urlsplit
 
 from account_store import AccountConflict, AccountStore, RecordNotFound
+from account_ingest import resolve_public_url
 from capture_result import DirectContext, OriginalMention, validate_result
 from multi_user_migration import public_identity
 from source_identity import canonical_source_url
@@ -108,8 +109,24 @@ class CaptureStore(AccountStore):
 
     def retry_public(self, ingest_id: int) -> dict[str, Any]:
         """Retry the same operation without granting new restoration intent."""
+        with self._transaction() as con:
+            before = self._run(con, ingest_id)
+        resolved_source = None
+        if (before['intent'] == 'legacy' and before['status'] in {'failed', 'retry_scheduled'}
+                and public_identity(before['source_url']) is None):
+            # Historical TikTok failures may predate redirect resolution. Resolve
+            # outside the write lock, after checking ownership, then recheck below.
+            try:
+                resolved_source = resolve_public_url(before['source_url'] or '')
+            except ValueError:
+                raise AccountConflict('Share the original public post again to retry this old link') from None
         with self._transaction(write=True) as con:
             run = self._run(con, ingest_id)
+            if run['intent'] == 'legacy' and run['status'] in {'failed', 'retry_scheduled'}:
+                if run['source_url'] != before['source_url']:
+                    raise AccountConflict('This saved source changed; try again')
+                self._prepare_legacy_retry(con, run, resolved_source=resolved_source)
+                run = self._run(con, ingest_id)
             capture = self._capture(con, run['item_id']) if run['item_id'] is not None else None
             if (capture is None or capture['input_kind'] != 'public_post'
                     or capture['materialization_state'] == 'legacy_unverified'
@@ -129,6 +146,39 @@ class CaptureStore(AccountStore):
                            VALUES (?, ?, 'accepted', 'queued', 'Retry accepted')''',
                         (self.user_id, ingest_id))
             return self._accepted(con, self._run(con, ingest_id))
+
+    def _prepare_legacy_retry(self, con: sqlite3.Connection, run: sqlite3.Row,
+                              *, resolved_source: str | None = None) -> None:
+        """Adopt a historical failure only when its owner explicitly retries it.
+
+        This is capture intent, never re-share intent: existing removals and edits
+        still win. Keep the original Activity ID and do not publish legacy data.
+        """
+        source_url = resolved_source or run['source_url']
+        identity = public_identity(source_url)
+        if identity is None:
+            raise AccountConflict('Share the original public post again to retry this old link')
+        platform, post_id = identity
+        captures = con.execute('''SELECT * FROM captures WHERE user_id = ?
+            AND source_platform = ? AND source_post_id = ? ORDER BY id''',
+            (self.user_id, platform, post_id)).fetchall()
+        if any(c['materialization_state'] == 'legacy_unverified' for c in captures):
+            raise AccountConflict('This saved post requires reconciliation before retrying')
+        if run['item_id'] is not None:
+            capture = self._capture(con, run['item_id'])
+            if capture['id'] not in {c['id'] for c in captures}:
+                raise AccountConflict('Historical save does not match its source')
+            capture_id = capture['id']
+        elif captures:
+            capture_id = captures[0]['id']
+        else:
+            capture_id = con.execute('''INSERT INTO captures (user_id, vertical, source_url,
+                input_kind, capture_channel, source_platform, source_post_id)
+                VALUES (?, 'recommendation', ?, 'public_post', 'legacy_retry', ?, ?)''',
+                (self.user_id, canonical_source_url(source_url), platform, post_id)).lastrowid
+        con.execute('''UPDATE ingest_runs SET item_id = ?, source_platform = ?, intent = 'capture',
+            accepted_sequence = ? WHERE user_id = ? AND id = ?''',
+            (capture_id, platform, self._sequence(con), self.user_id, run['id']))
 
     def accept_direct(self, text: str, request_key: str, *, channel: str = 'typed',
                       context: dict | None = None) -> dict[str, Any]:

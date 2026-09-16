@@ -98,6 +98,33 @@ class AccountIngestTests(unittest.TestCase):
             con.execute("UPDATE users SET status='deleting' WHERE id='a'")
         self.assertEqual(self.client.get(path, headers={'Authorization': 'Bearer a'}).status_code, 401)
 
+    def test_share_request_waits_for_actual_result_without_duplicate_acceptance(self):
+        accepted = self.accept()
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            pending = pool.submit(self.post, '/ingests?wait_seconds=2',
+                                  source_url='https://youtu.be/post', request_key='first')
+            PostProcessingWorker(self.queue, self.root, lambda *_: BASELINE).run_once()
+            result = pending.result(timeout=5)
+        self.assertEqual(result.status_code, 200, result.text)
+        self.assertEqual(result.json()['ingest_id'], accepted['ingest_id'])
+        self.assertEqual(result.json()['status'], 'completed')
+        self.assertEqual(result.json()['saved_entries'][0]['name'], 'Cafe')
+        self.assertEqual(len(self.a.activity()), 1)
+
+    def test_waiting_share_reports_processing_error_and_preserves_queued_work_on_timeout(self):
+        result = self.post('/ingests?wait_seconds=1', source_url='https://youtu.be/post', request_key='first')
+        self.assertEqual(result.status_code, 202)
+        self.assertEqual(result.json()['status'], 'queued')
+        lease = self.queue.claim()
+        self.queue.fail(lease, ValueError('bad result'), stage='saving')
+        failure = self.post('/ingests?wait_seconds=1', source_url='https://youtu.be/post', request_key='first')
+        self.assertEqual(failure.status_code, 200)
+        self.assertEqual(failure.json()['status'], 'failed')
+        self.assertEqual(failure.json()['failure_kind'], 'save_failed')
+        self.assertTrue(failure.json()['error_message'])
+        self.assertEqual(len(self.a.activity()), 1)
+        self.assertEqual(self.post('/ingests?wait_seconds=151', source_url='https://youtu.be/post', request_key='other').status_code, 422)
+
     def test_acceptance_is_durable_and_processing_occurs_outside_request(self):
         with patch('ingest_service.IngestService.ingest', side_effect=AssertionError('legacy called')):
             accepted = self.accept()
@@ -110,6 +137,58 @@ class AccountIngestTests(unittest.TestCase):
         worker.run_once()
         self.assertEqual(len(self.a.entries()), 1)
         self.assertEqual(self.b.entries(), [])
+
+    def legacy_failure(self):
+        with sqlite3.connect(self.db) as con:
+            return con.execute('''INSERT INTO ingest_runs (user_id, source_url, source_platform,
+                status, stage, idempotency_key, intent, failure_kind, retryable)
+                VALUES ('a', 'https://youtu.be/post', 'youtube', 'failed', 'extracting',
+                    'legacy-failure', 'legacy', 'analysis_failed', 1)''').lastrowid
+
+    def test_legacy_failure_retries_same_activity_without_exposing_other_accounts(self):
+        ingest_id = self.legacy_failure()
+        self.assertEqual(self.post(f'/activity/{ingest_id}/retry', user='b').status_code, 404)
+        response = self.post(f'/activity/{ingest_id}/retry')
+        self.assertEqual(response.status_code, 202, response.text)
+        self.assertEqual(response.json()['ingest_id'], ingest_id)
+        PostProcessingWorker(self.queue, self.root, lambda *_: BASELINE).run_once()
+        self.assertEqual(self.a.activity()[0]['status'], 'completed')
+        self.assertEqual(len(self.a.entries()), 1)
+        self.assertEqual(self.b.entries(), [])
+        self.assertEqual(len(self.a.activity()), 1)
+
+    def test_legacy_retry_does_not_restore_removed_mentions(self):
+        self.accept()
+        worker = PostProcessingWorker(self.queue, self.root, lambda *_: BASELINE)
+        worker.run_once()
+        self.a.delete_entries([self.a.entries()[0]['id']])
+        ingest_id = self.legacy_failure()
+        self.assertEqual(self.post(f'/activity/{ingest_id}/retry').status_code, 202)
+        worker.run_once()
+        self.assertEqual(self.a.entries(), [])
+        self.assertEqual(len(self.a.sources()), 1)
+
+    def test_legacy_retry_is_durable_and_duplicate_retry_reuses_capture(self):
+        ingest_id = self.legacy_failure()
+        first = self.post(f'/activity/{ingest_id}/retry').json()
+        second = self.post(f'/activity/{ingest_id}/retry').json()
+        self.assertEqual(first, second)
+        self.assertEqual(len(self.a.sources()), 1)
+        self.assertEqual(len(self.a.activity()), 1)
+
+    def test_legacy_short_link_resolution_checks_owner_and_preserves_failure_on_outage(self):
+        ingest_id = self.legacy_failure()
+        with sqlite3.connect(self.db) as con:
+            con.execute("UPDATE ingest_runs SET source_url = 'https://www.tiktok.com/t/short/' WHERE id = ?", (ingest_id,))
+        with patch('capture_store.resolve_public_url', side_effect=SourceResolutionUnavailable()) as resolve:
+            self.assertEqual(self.post(f'/activity/{ingest_id}/retry', user='b').status_code, 404)
+            resolve.assert_not_called()
+            self.assertEqual(self.post(f'/activity/{ingest_id}/retry').status_code, 503)
+        self.assertEqual(self.a.activity()[0]['status'], 'failed')
+        self.assertEqual(self.a.sources(), [])
+        with patch('capture_store.resolve_public_url', return_value='https://www.tiktok.com/@creator/video/123456'):
+            self.assertEqual(self.post(f'/activity/{ingest_id}/retry').status_code, 202)
+        self.assertEqual(self.a.sources()[0]['source_url'], 'https://www.tiktok.com/@_/video/123456')
 
     def test_replay_returns_same_operation_and_new_share_restores_only_deliberately(self):
         first = self.accept()

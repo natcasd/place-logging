@@ -1,8 +1,9 @@
 # Account-scoped backend foundation
 
 The account API provides isolated library access and durable public-post
-acceptance against the migrated schema. Firebase/client integration, historical
-reconciliation, and release verification remain before production cutover.
+acceptance against the migrated schema. The Firebase account service is live as
+of the September 16 cutover. See [the implementation audit](MULTI_USER_AUDIT.md)
+for verified behavior and outstanding device checks.
 
 ## Boundary
 
@@ -14,9 +15,8 @@ credentials must raise `InvalidSession`. There is no default verifier, public
 development-token map, `X-User-ID` shortcut, or shared-token fallback.
 
 The chosen login methods are Apple and Google through standard Firebase
-Authentication on Blaze. The provider adapter remains to be integrated. It must validate credentials
-with its maintained SDK and enforce issuer/audience/expiry/revocation as
-applicable. Linking login methods to an existing account requires verified
+Authentication on Blaze. The provider adapter validates credentials with the
+Firebase Admin SDK and checks issuer, audience, expiry, and revocation. Linking login methods to an existing account requires verified
 control; matching an unverified email must never merge accounts. Provider
 identities and the stable internal owner ID are separate concepts. The tests
 use a fake verifier only to exercise the account boundary; they do not implement
@@ -83,18 +83,10 @@ tests. Account-scoped reads against the earlier local production snapshot match
 the original responses exactly: 598 recommendations, 432 sources, and 448
 Activity records. Generated entry types and compilation checks also pass.
 
-`Dockerfile` still starts `app:app`, the existing single-user service. This
-change does not migrate a database, start a new Fly app, change secrets, install
-a phone build, or enable automatic deployment. Keep production on its current
-release until the remaining stages and the cutover rehearsal are complete.
-
-Next: shared processing and legacy reconciliation. Real session verification, provider account linking, and client
-login remain required before enabling this API for users.
-
-The private capture stage adds `DELETE /api/v1/mentions/{id}` and optional
-`mention_id` in location confirmation. Cancelled Activity retains its request
-key privately to prevent replay. Shared workers and production login remain
-subsequent stages.
+Fly's process command overrides the Docker default with `firebase_service:create_app`.
+The explicit cutover is complete; never rerun the original migration over live data.
+The API supports `DELETE /api/v1/mentions/{id}` and optional `mention_id` in location
+confirmation. Cancelled Activity retains its request key privately to prevent replay.
 
 ## Durable HTTP acceptance
 
@@ -113,23 +105,29 @@ The 202 response contains `ingest_id`, `item_id`, `status`, `accepted_sequence`,
 and current `saved_entries`. It means the operation is durably recorded, not
 that extraction has completed. Replays return the existing operation, including
 a cancelled status for a removed failure. Clients refresh the owned Activity
-endpoint for completion; the legacy synchronous extraction envelope is unchanged.
+endpoint for completion. The native share extension opts into `wait_seconds=150`
+on the POST, holding its ordinary request for a real result (200) or returning
+pending acceptance at the deadline (202). Acceptance remains durable if the
+connection ends. `GET /api/v1/ingests/{id}` reads only the owner's existing result;
+an optional wait of up to 25 seconds does not resubmit the post.
 
 Manual retry uses the existing Activity ID and original intent/sequence. Repeated
 requests while queued or processing return that operation. A retry of a failed
 attempt can start a fresh bounded attempt cycle; it never acquires new restoration
-rights. Reconciliation is still required for legacy captures.
+rights. A historical failed run can be adopted on explicit retry after source
+resolution and capture reconciliation; it keeps its Activity ID and uses capture
+intent, so retry cannot restore deleted mentions.
 
 The optional worker is injected as
 `create_account_app(db_path=..., verify_session=..., worker=...)`. Without one,
 acceptance remains durable and a separate trusted worker must drain the queue.
 Orderly shutdown stops claims and waits for in-flight processing/cleanup. Forced
-termination leaves a recoverable lease. Docker still starts the legacy service;
-no production database, deploy configuration, or phone build changes here.
+termination leaves a recoverable lease. Fly starts this worker through the
+Firebase service entrypoint.
 
 ## Firebase integration
 
 The [Firebase verifier and explicit service entrypoint](FIREBASE_AUTH.md) verify
 Apple/Google ID tokens and resolve the account on the server. `GET /api/v1/account`
-returns its internal ID and display name. Cloud/provider setup, verified binding
-of the existing library, and mobile integration remain required before release.
+returns its internal ID and display name. Google sign-in, existing-library binding,
+and deployment are complete. Apple provider setup and device checks remain.

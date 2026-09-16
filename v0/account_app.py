@@ -1,4 +1,4 @@
-"""Opt-in account API factory. Production still starts app:app.
+"""Account API factory used by the production firebase_service entrypoint.
 
 A trusted session verifier is mandatory. It maps a validated session to an
 internal user ID; Apple/Google identities must be linked by the identity
@@ -265,9 +265,31 @@ def create_account_app(*, db_path: Path, verify_session: SessionVerifier,
         except ValueError:
             raise HTTPException(422, 'A supported public post URL is required') from None
 
-    @router.post('/ingests', status_code=202, response_model=AcceptedIngest)
-    def ingest(payload: AccountIngestRequest, account: AccountStore = Depends(scoped_store)):
-        return accept(payload.source_url, payload.request_key, account, 'share_extension')
+    async def wait_for_result(account: AccountStore, ingest_id: int, seconds: int, *, stop_on_retry: bool = False):
+        deadline = asyncio.get_running_loop().time() + seconds
+        captures = CaptureStore(db_path, account.user_id)
+        while True:
+            result = await asyncio.to_thread(captures.result, ingest_id)
+            remaining = deadline - asyncio.get_running_loop().time()
+            if (result['status'] in {'completed', 'partial', 'failed'} or remaining <= 0
+                    or (stop_on_retry and result['status'] == 'retry_scheduled')):
+                return result
+            await asyncio.sleep(min(0.5, remaining))
+
+    @router.post('/ingests', status_code=202, response_model=SaveResult)
+    async def ingest(payload: AccountIngestRequest, response: Response,
+                     wait_seconds: int = Query(default=0, ge=0, le=150),
+                     account: AccountStore = Depends(scoped_store)):
+        accepted = await asyncio.to_thread(accept, payload.source_url, payload.request_key, account, 'share_extension')
+        response.headers['Cache-Control'] = 'no-store'
+        if wait_seconds == 0:
+            return accepted
+        # The extension's ordinary request waits for the real result, as before.
+        # Acceptance is already durable: disconnecting cannot cancel the worker.
+        result = await wait_for_result(account, accepted['ingest_id'], wait_seconds, stop_on_retry=True)
+        if result['status'] in {'completed', 'partial', 'failed', 'retry_scheduled'}:
+            response.status_code = 200
+        return result
 
     @router.get('/ingests/{ingest_id}', response_model=SaveResult)
     async def ingest_result(ingest_id: int, response: Response, wait_seconds: int = Query(default=0, ge=0, le=25),
@@ -275,14 +297,7 @@ def create_account_app(*, db_path: Path, verify_session: SessionVerifier,
         # Short read transactions let the durable worker keep making progress.
         # Each read rechecks account state and ownership, including during deletion.
         response.headers['Cache-Control'] = 'no-store'
-        deadline = asyncio.get_running_loop().time() + wait_seconds
-        captures = CaptureStore(db_path, account.user_id)
-        while True:
-            result = await asyncio.to_thread(captures.result, ingest_id)
-            remaining = deadline - asyncio.get_running_loop().time()
-            if result['status'] in {'completed', 'partial', 'failed'} or remaining <= 0:
-                return result
-            await asyncio.sleep(min(0.5, remaining))
+        return await wait_for_result(account, ingest_id, wait_seconds)
 
     @router.post('/shortcut/ingests', status_code=202, response_model=AcceptedIngest)
     def shortcut_ingest(payload: AccountShortcutRequest, account: AccountStore = Depends(scoped_store)):

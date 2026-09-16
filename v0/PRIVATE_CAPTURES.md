@@ -63,7 +63,7 @@ counts count distinct captures. No tables or columns are added.
 Version 2 removed that index. Version 3 adds the historical private-baseline
 exception without adding tables or columns. The offline migration rebuilds
 version-1/version-2 copies, verifies every original field, and advances the version. The source file remains unchanged. There is no automatic startup
-migration; the live database is still single-user.
+migration. Production cut over explicitly to schema 5 on September 16.
 
 When a capture has several mentions in one recommendation, location confirmation
 accepts an optional `mention_id` alongside `candidate_id`. An ambiguous request

@@ -4,18 +4,14 @@ import XCTest
 
 final class ResponseContractTests: XCTestCase {
   func testSaveNotificationsWaitForThisOperationsActualOutcome() throws {
-    let account = AccountSessionSnapshot(projectID: "jot", userID: "a", generation: UUID())
-    let context = SaveNotificationContext(account: account, ingestID: 42, startedAt: Date())
-    for status in ["queued", "processing", "retry_scheduled"] {
+    for status in ["queued", "processing"] {
       let result = try JSONDecoder().decode(IngestResponse.self, from: Data("{\"ingest_id\":42,\"status\":\"\(status)\",\"saved_entries\":[]}".utf8))
-      XCTAssertFalse(context.accepts(result))
+      XCTAssertFalse(result.hasNotificationOutcome)
     }
     let result = try JSONDecoder().decode(IngestResponse.self, from: Data(#"{"ingest_id":42,"item_id":7,"status":"completed","saved_entries":[{"entry_id":8,"name":"Cafe","type":"Restaurant","resolution_status":"resolved","is_new":true,"source_count":1}]}"#.utf8))
-    XCTAssertTrue(context.accepts(result))
+    XCTAssertTrue(result.hasNotificationOutcome)
     XCTAssertEqual(result.notificationTitle, "Logged Restaurant · Cafe")
-    XCTAssertFalse(SaveNotificationContext(account: account, ingestID: 43, startedAt: Date()).accepts(result))
-    let decoded = try JSONDecoder().decode(SaveNotificationContext.self, from: JSONEncoder().encode(context))
-    XCTAssertEqual(decoded.account, account)
+
   }
 
   func testFailureNotificationUsesTheActualProcessingError() throws {

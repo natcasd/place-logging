@@ -8,9 +8,11 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import patch
+from unittest.mock import Mock
 
 import requests
 import store
+from account_movie_enrichment import AccountMovieEnricher
 from capture_store import CaptureStore
 from multi_user_migration import prepare_copy
 from post_processing_store import LeaseLost, PostProcessingStore
@@ -70,6 +72,79 @@ class PostProcessingTests(unittest.TestCase):
         self.assertEqual(len(self.b.entries()), 1)
         self.assertNotEqual(self.a.entries()[0]['id'], self.b.entries()[0]['id'])
         self.assertEqual(list(worker.workdir.iterdir()), [])
+
+    def seed_movie(self, account=None):
+        account = account or self.a
+        accepted = self.accept(account)
+        baseline = {'mentions': [{'key': 'movie', 'extracted': {
+            'extracted_name': 'Arrival', 'type_name': 'Movie', 'description': 'A linguist'},
+            'status': 'not_applicable'}]}
+        PostProcessingWorker(self.queue, self.root, lambda *_: baseline).run_once()
+        return account.entries()[0]['id']
+
+    def test_movie_enrichment_restores_links_and_stays_private(self):
+        a_id = self.seed_movie()
+        b_id = self.seed_movie(self.b)
+        provider = Mock(name='provider')
+        provider.lookup.return_value = {'provider': 'wikidata', 'provider_id': 'Q123',
+            'resolved_title': 'Arrival', 'release_year': 2016, 'match_status': 'matched',
+            'letterboxd_url': 'https://letterboxd.com/imdb/tt2543164/'}
+        enrichment = AccountMovieEnricher(self.queue, provider)
+        self.assertTrue(enrichment.run_once())
+        self.assertTrue(enrichment.run_once())
+        self.assertFalse(enrichment.run_once())
+        self.assertEqual(provider.lookup.call_count, 2)
+        rows = self.connection().execute('SELECT entry_id, user_id FROM movie_enrichments').fetchall()
+        self.assertEqual({tuple(r) for r in rows}, {(a_id, 'a'), (b_id, 'b')})
+        self.assertEqual(self.a.entries()[0]['movie_enrichment']['release_year'], 2016)
+        self.assertNotIn('letterboxd', self.rows('post_processing_cache')[0]['result_json'])
+
+    def test_movie_lookup_failure_preserves_saved_recommendation(self):
+        entry_id = self.seed_movie()
+        provider = Mock()
+        provider.name = 'wikidata'
+        provider.lookup.side_effect = RuntimeError('private provider response')
+        enrichment = AccountMovieEnricher(self.queue, provider)
+        self.assertTrue(enrichment.run_once())
+        self.assertFalse(enrichment.run_once())
+        self.assertEqual(self.a.entries()[0]['id'], entry_id)
+        self.assertEqual(self.a.entries()[0]['movie_enrichment']['match_status'], 'error')
+        self.assertNotIn('private provider response', '\n'.join(self.connection().iterdump()))
+
+    def test_movie_enrichment_does_not_backfill_untouched_historical_library(self):
+        # A pending historical capture is sufficient to check selection; no
+        # baseline mutation or migration of the original library is needed.
+        accepted = self.a.accept_public('https://youtu.be/old-film', 'old-film')
+        with self.connection() as con:
+            con.execute("UPDATE captures SET capture_channel = 'legacy' WHERE id = ?", (accepted['item_id'],))
+        baseline = {'mentions': [{'key': 'film', 'extracted': {
+            'extracted_name': 'Arrival', 'type_name': 'Movie'}, 'status': 'not_applicable'}]}
+        PostProcessingWorker(self.queue, self.root, lambda *_: baseline).run_once()
+        provider = Mock()
+        self.assertFalse(AccountMovieEnricher(self.queue, provider).run_once())
+        provider.lookup.assert_not_called()
+
+    def test_movie_lookup_cannot_recreate_deleted_recommendation(self):
+        entry_id = self.seed_movie()
+        provider = Mock()
+        def lookup(*_):
+            self.a.delete_entries([entry_id])
+            return {'provider': 'wikidata', 'match_status': 'unmatched'}
+        provider.lookup.side_effect = lookup
+        self.assertTrue(AccountMovieEnricher(self.queue, provider).run_once())
+        self.assertEqual(self.a.entries(), [])
+        self.assertEqual(self.connection().execute('SELECT COUNT(*) FROM movie_enrichments').fetchone()[0], 0)
+
+    def test_movie_lookup_cannot_recreate_deleted_account(self):
+        self.seed_movie()
+        provider = Mock()
+        def lookup(*_):
+            with self.connection() as con:
+                con.execute("DELETE FROM users WHERE id = 'a'")
+            return {'provider': 'wikidata', 'match_status': 'unmatched'}
+        provider.lookup.side_effect = lookup
+        self.assertTrue(AccountMovieEnricher(self.queue, provider).run_once())
+        self.assertEqual(self.connection().execute('SELECT COUNT(*) FROM movie_enrichments').fetchone()[0], 0)
 
     def test_concurrent_claims_have_one_winner_and_global_capacity(self):
         self.accept(); self.accept(self.b, post='other')

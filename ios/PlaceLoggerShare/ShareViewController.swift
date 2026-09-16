@@ -1,5 +1,6 @@
 import SwiftUI
 import UniformTypeIdentifiers
+import UserNotifications
 
 final class ShareViewController: UIViewController {
   override func viewDidLoad() {
@@ -108,7 +109,7 @@ private struct ShareStatusView: View {
   enum Phase {
     case starting
     case saving(URL)
-    case failed(String, accepted: Bool)
+    case failed(String)
   }
 
   var body: some View {
@@ -124,15 +125,15 @@ private struct ShareStatusView: View {
         Text(url.host() ?? url.absoluteString)
           .font(.caption)
           .foregroundStyle(.secondary)
-        Text("You can close this and keep scrolling. Jot will notify you when it’s done.")
+        Text("Processing your post. You can return to scrolling; results will appear in Activity.")
           .font(.caption)
           .multilineTextAlignment(.center)
           .foregroundStyle(.secondary)
-      case .failed(let message, let accepted):
+      case .failed(let message):
         Image(systemName: "exclamationmark.triangle.fill")
           .font(.largeTitle)
           .foregroundStyle(.orange)
-        Text(accepted ? "Save accepted" : "Couldn’t Save")
+        Text("Couldn’t confirm save")
           .font(.headline)
         Text(message)
           .multilineTextAlignment(.center)
@@ -143,7 +144,6 @@ private struct ShareStatusView: View {
     .padding(28)
     .task {
       var account: AccountSessionSnapshot?
-      var accepted = false
       do {
         let url = try await loadURL()
         state = .saving(url)
@@ -151,16 +151,48 @@ private struct ShareStatusView: View {
         account = current
         let result = try await PlaceLoggerAPI(account: current, authorizer: AccountSession.shared)
           .ingest(sourceURL: url, requestKey: requestKey)
-        accepted = true
-        try await SaveCompletionNotifications.follow(result, account: current)
+        if result.hasNotificationOutcome {
+          await LocalNotification.send(title: result.notificationTitle, body: result.notificationBody,
+            ingestID: result.ingestID, itemID: result.itemID,
+            entry: result.savedEntries.count == 1 ? result.savedEntries.first : nil, account: current)
+        }
         complete()
       } catch {
-        if !accepted, let account {
-          await SaveCompletionNotifications.send(title: "Couldn't confirm your save",
-                                                  body: error.localizedDescription, account: account)
+        if let account {
+          await LocalNotification.send(title: "Couldn't confirm your save",
+                                       body: error.localizedDescription, account: account)
         }
-        state = .failed(error.localizedDescription, accepted: accepted)
+        state = .failed(error.localizedDescription)
       }
+    }
+  }
+}
+
+@MainActor
+private enum LocalNotification {
+  static func send(title: String, body: String, ingestID: Int? = nil, itemID: Int? = nil,
+                   entry: SavedEntryOutcome? = nil, account: AccountSessionSnapshot) async {
+    let center = UNUserNotificationCenter.current()
+    guard (try? await AccountSession.shared.validate(account)) != nil else { return }
+    let settings = await center.notificationSettings()
+    guard settings.authorizationStatus == .authorized || settings.authorizationStatus == .provisional else { return }
+    let content = UNMutableNotificationContent()
+    content.title = title
+    content.body = body
+    content.sound = .default
+    var info: [String: Any] = ["account_uid": account.userID, "account_generation": account.generation.uuidString]
+    if let ingestID { info["ingest_id"] = ingestID }
+    if let itemID { info["item_id"] = itemID }
+    if let entry { info["entry_id"] = entry.entryID; info["has_location"] = entry.hasLocation }
+    content.userInfo = info
+    let identifier = "jot.save.\(account.generation).\(ingestID.map(String.init) ?? UUID().uuidString)"
+    let request = UNNotificationRequest(identifier: identifier, content: content,
+                                         trigger: UNTimeIntervalNotificationTrigger(timeInterval: 1, repeats: false))
+    guard (try? await AccountSession.shared.validate(account)) != nil else { return }
+    try? await center.add(request)
+    if (try? await AccountSession.shared.validate(account)) == nil {
+      center.removePendingNotificationRequests(withIdentifiers: [identifier])
+      center.removeDeliveredNotifications(withIdentifiers: [identifier])
     }
   }
 }

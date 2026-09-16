@@ -50,19 +50,17 @@ Use the same processing version when restarting workers. A deliberate algorithm
 version change must drain/reconcile unfinished older jobs before retiring their
 worker; completed captures remain pinned regardless of the current version.
 
-## Remaining integration and release requirements
+## Integration status
 
-- HTTP acceptance, Shortcuts URL handling, manual retry, and optional worker
-  lifespan are implemented. Configure the final Firebase-authenticated service
-  entrypoint before release.
-- Run the offline historical-capture reconciliation during release preparation.
-  Reconciled historical requests are delivered from their private pinned result,
-  without creating public jobs; unreconciled captures still return a conflict.
-- Complete client sessions, account deletion, operational limits, and cutover
-  rehearsal. Firebase Authentication on Blaze with Apple/Google is selected; integration remains.
-- Complete the existing Google Places retention/refresh and map-display review
-  before release. Keeping place payloads out of the immutable result does not
-  by itself establish a compliant lifetime for the mutable location lookup.
+HTTP acceptance, authenticated service startup, offline historical reconciliation,
+Google client sessions, and the production cutover are complete. Historical
+private results remain separate from the shared cache. Optional movie enrichment
+runs in the existing worker, writes account-owned rows, and does not backfill
+untouched historical captures. Apple login/push and real-device release checks
+remain outstanding; see [the implementation audit](MULTI_USER_AUDIT.md).
+
+The existing Google Places/Apple Maps display and retention question remains
+tracked separately in issue #131; this work does not change the map provider.
 
 Validation uses temporary SQLite databases and injected processors, without
 calling paid APIs. Worker tests cover concurrent claims, takeover fencing,

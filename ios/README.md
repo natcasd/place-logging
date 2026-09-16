@@ -2,75 +2,54 @@
 
 The native client has two targets:
 
-- `PlaceLogger`: Apple/Google sign-in, a private saved library, map, Activity,
-  and account settings with verified provider linking and sign-out.
-- `PlaceLoggerShare`: uses the same secure Keychain session to queue a social
-  URL and start a background result download, then closes. Processing continues
-  on the server while the user returns to the source app.
+- `PlaceLogger`: Apple/Google sign-in, a private saved library, Apple Maps,
+  Activity, and account settings with provider linking and sign-out.
+- `PlaceLoggerShare`: submits a social URL using the shared Keychain session,
+  waits for the actual result through an ordinary HTTP request, posts the local
+  result notification, and completes the share request.
 
-The app reads account-scoped `/api/v1/entries` and `/api/v1/activity`. It refreshes
-pending Activity while foregrounded. Share notifications report the actual saved
-results or processing failure. They do not fire merely because a post was accepted.
-The extension uses a background `URLSession` download; iOS can hand its completion
-to the containing app after the extension exits. Both targets require the
-`group.com.natcasd.placelogger` App Group in their signing profiles. This uses local
-notifications, not APNs or Firebase Messaging.
+## Save-result notifications
 
-The account-scoped `GET /api/v1/ingests/{id}?wait_seconds=25` reads an existing
-operation without resubmitting it. Pending results and automatic retries continue
-the background download, bounded to one hour. Network failures get two retries;
-if the outcome cannot be checked, the notification explicitly says so rather than
-claiming the save failed. iOS controls background scheduling, and force-quitting
-the containing app can cancel background transfers. Verify delivery on a physical
-phone after dismissing the share sheet and locking the phone.
+This retains the original extension-owned request/local-notification flow. The
+account API accepts the save durably before waiting, so server processing survives
+an extension exit, phone disconnection, or response timeout. The native POST uses
+`wait_seconds=150` and a 180-second request timeout. Other API clients still get
+immediate 202 acceptance by default. A completed, partial, failed, or retry-scheduled
+result supplies the existing detailed notification text and destinations. A pending
+response is not presented as a completed save.
 
-Notification payloads include the account session. Logout/account changes suppress
-old deliveries and taps. The device-only Keychain session stamp is accessible after
-first unlock so the callback can check the active account while the phone is locked.
+The extension can continue while the user returns to the source app, as observed
+with the original app, but iOS controls its lifetime. If iOS terminates it before
+the result arrives, processing continues and Activity shows the result; this flow
+does not guarantee a later notification. Automatic retries can also finish after
+the original request ends. APNs will address that delivery gap after Apple approval.
 
-There is no bundled shared API token or legacy-token fallback in this client.
-This client requires the Firebase account service; deploy the result endpoint
-before installing a build that uses background completion notifications.
+There is no background URLSession polling, App Group entitlement, or main-app
+background callback. The rejected polling prototype repeatedly launched downloads,
+which Apple documents as subject to increasing scheduling delays. See
+[Apple's background transfer documentation](https://developer.apple.com/documentation/foundation/downloading-files-in-the-background).
 
-### Transition to remote push after Apple approval
+All library requests and notification taps are account-scoped. Logout clears
+notifications, and in-flight responses check the original account generation.
+There is no shared API token fallback. Deploy the waiting-result API before
+installing this client. Phone verification of the restored flow remains required.
 
-The intended long-term delivery path is the existing Fly worker sending a visible
-completion/failure alert through Firebase Cloud Messaging (FCM), which uses APNs
-for iPhone delivery. The background result download above is an interim delivery
-method. It must not become part of capture acceptance or result materialization.
+## Next step: APNs after Apple approval
 
-Keep these boundaries when adding push:
+The existing Fly worker can send result alerts directly to Apple Push Notification
+service (APNs). Firebase Authentication is independent; Firebase Cloud Messaging
+is optional and is not installed or required.
 
-- The committed, account-owned ingest result remains the source of truth. Both
-  delivery methods refer to the same ingest ID, saved-entry IDs, and final status.
-  The status endpoint remains useful for Activity and recovery if an alert is missed.
-- Register each installation's FCM token against its verified account and login
-  generation. Handle token rotation, logout, account switches, and deletion; a
-  device token is a delivery address, never authorization to read a library.
-- Add a small durable send record in the existing SQLite database when a private
-  result is committed. Retry sends after transient failures without reprocessing
-  the post. Sending a push and committing SQLite cannot be one atomic transaction,
-  so use a stable event ID and design for possible duplicate/missed delivery.
-- Explicitly select one completion-delivery method for an installation. Once push
-  is registered and enabled, stop creating background result downloads there and
-  drain/cancel older watchers to avoid two alerts for one save. Do not assume APNs
-  collapse IDs alone deduplicate a local alert and a remote alert.
-- Preserve success/failure wording and notification destinations. Remote alerts
-  may display while app code is not running, so the existing local account check
-  alone cannot protect a stale push. Verify registration ownership before sending
-  and review queued-push privacy during logout/account changes before enabling
-  private place names in remote payloads. Always authenticate detail reads on tap.
+Keep the private saved result as the source of truth. Add account-owned device-token
+registration, a small durable send record in SQLite, and the Fly-side APNs sender.
+Handle logout, token changes, send retries and duplicate events. Switch each device
+from local result notifications to remote ones so it does not receive both. Check
+queued-alert privacy across account switches, and authenticate detail reads on tap.
+No new app-data database, cloud functions, or external queue is needed.
 
-After membership approval, configure the APNs key and push entitlement, add the
-FCM client/token registration, implement the Fly-side sender and send records,
-and test delivery with the app inactive, retries, account switching, and duplicates.
-These pieces are future work, not implemented by this notification repair. No
-Firestore, Cloud Functions, separate Firebase project, or external queue is needed
-for this design; the existing Fly backend can use the Firebase Admin SDK directly.
-
-References: [FCM for Apple apps](https://firebase.google.com/docs/cloud-messaging/ios/get-started),
-[FCM server environment](https://firebase.google.com/docs/cloud-messaging/server-environment),
-[Firebase pricing](https://firebase.google.com/pricing).
+This remains future work. Apple login and push capabilities still require the
+membership/provider/provisioning setup. See
+[Sending notification requests to APNs](https://developer.apple.com/documentation/usernotifications/sending-notification-requests-to-apns).
 
 The map shows resolved places as selectable pins. Pins use the saved place
 type's icon (for example, a fork and knife for restaurants or a tree for
