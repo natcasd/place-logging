@@ -2,7 +2,8 @@
 
 Jot uses standard Firebase Authentication with Apple and Google. Firebase holds
 login identities; private library data stays in SQLite on Fly. The selected
-project is `place-logging-7b73af`, using its existing billing account (Blaze).
+project is `jot-app-20260915` (Jot App), linked to the existing billing account
+(Blaze). The verified authentication subtype is `FIREBASE_AUTH`.
 Do not enable the optional Identity Platform upgrade, email, phone, anonymous
 sign-in, or a separate app-data database as part of this setup.
 
@@ -45,7 +46,7 @@ python bind_legacy_account.py \
   --source /absolute/path/to/fresh-snapshot.sqlite \
   --output /absolute/path/to/new-bound.sqlite \
   --owner-id nathan --owner-name Nathan \
-  --firebase-project place-logging-7b73af \
+  --firebase-project jot-app-20260915 \
   --expected-uid THE_VERIFIED_FIREBASE_UID \
   --credential-file /private/path/to/admin-credential.json
 ```
@@ -89,12 +90,26 @@ created. Coverage includes incorrect signatures/projects/issuers, expiry,
 revocation, disabled/deleted users, emulator refusal, concurrent first login,
 provider linking, ownership conflicts, safe offline binding, and startup guards.
 
-Cloud setup is not complete. The existing project and billing were verified, and
-Firebase/project-management APIs were enabled. `addFirebase` still returned 403
-although all four documented IAM permissions were granted. Console sign-in is
-needed to diagnose/complete project activation. Apple/Google provider setup,
-mobile SDK configuration, secure deployment credentials, and real-device login
-remain outstanding. No Identity Platform upgrade or app-data database was created.
+The replacement project is active, linked to the existing billing account, and
+verified as standard Firebase Authentication after billing linkage. Google
+sign-in is enabled. The registered iOS app is
+`1:271626317276:ios:7d30fc01f17100b8403319`, bundle `com.natcasd.placelogger`.
+Download its configuration locally; never commit backend administrative credentials.
+Apple provider setup and physical-device signing remain pending Apple Developer
+Program approval. Real-device login and secure deployment credentials still need
+validation. No app-data database was created in Firebase.
+
+Initialize standard Authentication using the Firebase console's Get started
+flow and verify `subtype: FIREBASE_AUTH` via the project configuration API. Do not
+use `identityPlatform:initializeAuth`, the Identity Platform upgrade, or
+`firebase:provisionFirebaseApp` for authentication initialization. The provisioning
+workflow enabled the unwanted Identity Platform tier in the former project.
+
+The old `place-logging-7b73af` project remains intact for existing Places services.
+It is not the selected Firebase identity project. No production service or phone
+build has switched to the replacement. Prepare and test new Places credentials
+before coordinated cutover, then verify no remaining dependencies before deleting
+the old project. Do not alter existing library ownership to perform this change.
 
 Official references:
 - [Verify ID tokens](https://firebase.google.com/docs/auth/admin/verify-id-tokens)

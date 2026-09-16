@@ -25,7 +25,7 @@
 	<key>FirebaseKeychainGroup</key>
 	<string>$(AppIdentifierPrefix)com.natcasd.placelogger.auth</string>
 	<key>FirebaseProjectID</key>
-	<string>place-logging-7b73af</string>
+	<string>jot-app-20260915</string>
 	<key>NSExtension</key>
 	<dict>
 		<key>NSExtensionAttributes</key>

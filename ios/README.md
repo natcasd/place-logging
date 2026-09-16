@@ -42,7 +42,9 @@ saved-place pins visible.
 ## Configure and build
 
 1. Register the parent bundle `com.natcasd.placelogger` in the selected Firebase
-   project `place-logging-7b73af`. Enable Apple and Google authentication.
+   project `jot-app-20260915` (Jot App). This project uses standard Firebase
+   Authentication on Blaze. Google is enabled; Apple setup and physical-device
+   provisioning remain pending Apple Developer Program approval.
 2. Download its `GoogleService-Info.plist` into `Firebase/`. The resource folder
    is bundled in both targets. The configuration is ignored by Git; no Admin SDK
    credential belongs in the app. A missing/wrong-project configuration builds
@@ -60,6 +62,18 @@ Both targets share `$(AppIdentifierPrefix)com.natcasd.placelogger.auth`. The mai
 app additionally requires Sign in with Apple. Physical-device provisioning must
 support these capabilities; an unsigned simulator build does not verify them.
 Cloud/provider configuration and actual phone login still require validation.
+
+Firebase's project configuration API must report `subtype: FIREBASE_AUTH`.
+Initialize standard Authentication through the Firebase console's Get started
+flow. Do not use `identityPlatform:initializeAuth`, the optional Identity Platform
+upgrade, or `firebase:provisionFirebaseApp` to initialize authentication: the last
+workflow selected Identity Platform during the earlier setup. Billing linkage is
+separate from the authentication tier.
+
+The old project `place-logging-7b73af` still provides the existing Places setup.
+Changing the expected Firebase project here does not migrate Places credentials
+or deploy the backend. Prepare and test replacement Places configuration before
+the coordinated release, and check dependencies before retiring the old project.
 
 ## Account isolation and restoration
 
