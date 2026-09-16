@@ -8,9 +8,20 @@ primary_region = 'ewr'
 
 [build]
 
+[processes]
+  app = 'uvicorn firebase_service:create_app --factory --host 0.0.0.0 --port 8000 --no-access-log'
+
 [env]
-  DB_PATH = '/data/places.db'
+  JOT_ACCOUNT_DB_PATH = '/data/jot-accounts.sqlite'
+  FIREBASE_PROJECT_ID = 'jot-app-20260915'
+  JOT_PROCESSING_VERSION = 'public-v1'
+  GOOGLE_APPLICATION_CREDENTIALS = '/run/secrets/firebase-admin.json'
   WORKDIR = '/tmp/place-logger-downloads'
+
+[[files]]
+  guest_path = '/run/secrets/firebase-admin.json'
+  secret_name = 'JOT_FIREBASE_ADMIN_CREDENTIAL'
+  processes = ['app']
 
 [[mounts]]
   source = 'placedata'

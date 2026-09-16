@@ -108,8 +108,10 @@ verified just before deletion cannot recreate the deleted account afterward.
 
 These are deletions from live application storage. Retained backups need an
 explicit expiry policy and a restore procedure that reapplies later deletions
-before serving data. Operational backup/restore handling remains required before release; do not claim
-backups are instantly erased. The native Account screen now requires an explicit
+before serving data. The MVP takes one consistent backup before the coordinated switch. Automatic
+backups and extra recovery infrastructure are deferred. A future manual restore
+must preserve deletions and writes made after its snapshot; do not treat an old
+backup as a lossless rollback or claim backups are instantly erased. The native Account screen now requires an explicit
 destructive confirmation followed by reauthentication. Apple-linked accounts use
 Apple and revoke their Apple authorization before submitting the backend request.
 The client forces a fresh Firebase ID token, checks the original session across
@@ -151,3 +153,25 @@ Official references:
 - [Add Firebase to an existing project](https://firebase.google.com/docs/projects/api/workflow_set-up-and-manage-project)
 - [Native Apple sign-in](https://firebase.google.com/docs/auth/ios/apple)
 - [Google sign-in on iOS](https://firebase.google.com/docs/auth/ios/google-signin)
+
+## MVP deployment
+
+`fly.toml` starts the account factory against a separately prepared
+`/data/jot-accounts.sqlite`. It keeps the existing single machine and volume.
+The source `/data/places.db` is retained; startup refuses an unbound library.
+The backend-only `JOT_FIREBASE_ADMIN_CREDENTIAL` Fly secret contains base64 JSON
+and is mounted as a file. Stage the replacement Places key with this same release.
+Never include either secret in Git or the mobile app. Deployment remains manual.
+
+Before deployment: stop accepting legacy writes, take a consistent fresh backup,
+prepare/bind a new copy to the explicitly confirmed Firebase UID, and compare
+all saved fields and API responses. Install the matching account-aware phone
+build with the same Firebase project. Do not reopen the old global API against
+the migrated database. After new writes, prefer a forward fix; reverting to the
+old database would omit those writes.
+
+Google login and shared-Keychain provisioning can be tested using a Personal Team
+build that omits the Apple entitlement/button. Apple provider setup remains pending
+membership approval. When available, link Apple from the signed-in account to
+preserve the Firebase UID and library; do not register a separate Apple account
+and assume matching emails merge them.
