@@ -32,6 +32,46 @@ There is no bundled shared API token or legacy-token fallback in this client.
 This client requires the Firebase account service; deploy the result endpoint
 before installing a build that uses background completion notifications.
 
+### Transition to remote push after Apple approval
+
+The intended long-term delivery path is the existing Fly worker sending a visible
+completion/failure alert through Firebase Cloud Messaging (FCM), which uses APNs
+for iPhone delivery. The background result download above is an interim delivery
+method. It must not become part of capture acceptance or result materialization.
+
+Keep these boundaries when adding push:
+
+- The committed, account-owned ingest result remains the source of truth. Both
+  delivery methods refer to the same ingest ID, saved-entry IDs, and final status.
+  The status endpoint remains useful for Activity and recovery if an alert is missed.
+- Register each installation's FCM token against its verified account and login
+  generation. Handle token rotation, logout, account switches, and deletion; a
+  device token is a delivery address, never authorization to read a library.
+- Add a small durable send record in the existing SQLite database when a private
+  result is committed. Retry sends after transient failures without reprocessing
+  the post. Sending a push and committing SQLite cannot be one atomic transaction,
+  so use a stable event ID and design for possible duplicate/missed delivery.
+- Explicitly select one completion-delivery method for an installation. Once push
+  is registered and enabled, stop creating background result downloads there and
+  drain/cancel older watchers to avoid two alerts for one save. Do not assume APNs
+  collapse IDs alone deduplicate a local alert and a remote alert.
+- Preserve success/failure wording and notification destinations. Remote alerts
+  may display while app code is not running, so the existing local account check
+  alone cannot protect a stale push. Verify registration ownership before sending
+  and review queued-push privacy during logout/account changes before enabling
+  private place names in remote payloads. Always authenticate detail reads on tap.
+
+After membership approval, configure the APNs key and push entitlement, add the
+FCM client/token registration, implement the Fly-side sender and send records,
+and test delivery with the app inactive, retries, account switching, and duplicates.
+These pieces are future work, not implemented by this notification repair. No
+Firestore, Cloud Functions, separate Firebase project, or external queue is needed
+for this design; the existing Fly backend can use the Firebase Admin SDK directly.
+
+References: [FCM for Apple apps](https://firebase.google.com/docs/cloud-messaging/ios/get-started),
+[FCM server environment](https://firebase.google.com/docs/cloud-messaging/server-environment),
+[Firebase pricing](https://firebase.google.com/pricing).
+
 The map shows resolved places as selectable pins. Pins use the saved place
 type's icon (for example, a fork and knife for restaurants or a tree for
 parks). Repeated saves with the same Google Place ID share one pin while
