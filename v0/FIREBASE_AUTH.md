@@ -32,9 +32,10 @@ and retry without presenting an unnecessary login screen.
 
 ## Preserve Nathan's library
 
-Schema 4 adds only nullable `firebase_project_id` and `firebase_uid` columns to
-`users`, with a unique pair and all-or-neither constraint. The offline migration
-upgrades schema 1/2/3 copies, preserving existing fields and IDs. New captures,
+Schema 4 added nullable `firebase_project_id` and `firebase_uid` columns to
+`users`, with a unique pair and all-or-neither constraint. Schema 5 adds the
+`deleting` user status without new tables or columns. The offline migration
+upgrades schema 1/2/3/4 copies, preserving existing fields and IDs. New captures,
 recommendations, or ownership tables are unnecessary.
 
 The existing internal owner stays unchanged. Before release, Nathan signs in on
@@ -80,7 +81,40 @@ Required environment: `JOT_ACCOUNT_DB_PATH`, `FIREBASE_PROJECT_ID`, and
 `GOOGLE_APPLICATION_CREDENTIALS` or an appropriate Application Default
 Credentials deployment configuration. Credentials must allow user lookup for
 revocation checks. Never put service-account credentials in the mobile app.
-The service explicitly starts the durable worker and drains it on shutdown.
+The service explicitly starts the durable processing and account-deletion workers
+and drains in-flight work on shutdown. Deletion also requires permission to delete
+Firebase users; do not expose this administrative credential to clients.
+
+## Account deletion
+
+`DELETE /api/v1/account` requires a verified Apple/Google Firebase session whose
+`auth_time` is within five minutes. An otherwise valid older session receives
+403 with `code: recent_sign_in_required`; it does not invalidate normal login.
+The native client must obtain fresh provider authentication and, for linked Apple
+accounts, revoke the Apple token before requesting deletion.
+
+The response is 202 `deletion_requested`. In one transaction the account becomes
+`deleting`, immediately blocking private reads, writes, and processing deliveries.
+Repeating the request with a still-valid fresh token is idempotent. An identity
+without a library gets a separate empty deletion record; it cannot claim an
+unbound historical library.
+
+The worker checks pending deletions every 30 seconds, deletes the Firebase user
+first, and then cascades deletion of that account's private SQL records. A missing
+Firebase user counts as success. Provider outages preserve the blocked account and
+retry after restart. Other users and shared public processing/Places data remain.
+New-account creation rechecks Firebase under the database transaction so a token
+verified just before deletion cannot recreate the deleted account afterward.
+
+These are deletions from live application storage. Retained backups need an
+explicit expiry policy and a restore procedure that reapplies later deletions
+before serving data. Operational backup/restore handling remains required before release; do not claim
+backups are instantly erased. The native Account screen now requires an explicit
+destructive confirmation followed by reauthentication. Apple-linked accounts use
+Apple and revoke their Apple authorization before submitting the backend request.
+The client forces a fresh Firebase ID token, checks the original session across
+every asynchronous step, and signs out only after durable acceptance. Real-device
+provider/revocation testing remains required.
 
 ## Verification and outstanding setup
 

@@ -101,8 +101,15 @@ struct PlaceLoggerAPI: Sendable {
     _ = try await perform(request)
   }
 
-  private func perform(_ originalRequest: URLRequest) async throws -> Data {
-    for forceRefresh in [false, true] {
+  func deleteAccount() async throws {
+    var request = URLRequest(url: baseURL.appending(path: "/api/v1/account"))
+    request.httpMethod = "DELETE"
+    // Reauthentication must be reflected in auth_time, not an older cached token.
+    _ = try await perform(request, requireFreshToken: true)
+  }
+
+  private func perform(_ originalRequest: URLRequest, requireFreshToken: Bool = false) async throws -> Data {
+    for forceRefresh in (requireFreshToken ? [true] : [false, true]) {
       let token = try await authorizer.token(for: account, forceRefresh: forceRefresh)
       try Task.checkCancellation()
       try await authorizer.validate(account)

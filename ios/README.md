@@ -103,3 +103,13 @@ responses, bounded authentication retries, verification outages, stable request
 identity, queued acceptance, nullable URLs, and distinct same-place mentions.
 Full Apple/Google login, cross-process Keychain behavior, logout/relaunch, and
 real two-device isolation remain release checks after cloud configuration.
+
+## Account deletion
+
+Account > Delete Account explains permanent library removal, asks for destructive
+confirmation, then reauthenticates the original account. Apple-linked accounts
+confirm with Apple and revoke the Apple authorization through Firebase; Google-only
+accounts confirm with Google. The fresh ID token authorizes the durable backend
+request. After acceptance, sign-out clears the shared session and private view
+state. A changed account aborts the operation. Real provider and Apple revocation
+checks remain part of physical-device release validation.
