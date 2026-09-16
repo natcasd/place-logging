@@ -265,14 +265,13 @@ def create_account_app(*, db_path: Path, verify_session: SessionVerifier,
         except ValueError:
             raise HTTPException(422, 'A supported public post URL is required') from None
 
-    async def wait_for_result(account: AccountStore, ingest_id: int, seconds: int, *, stop_on_retry: bool = False):
+    async def wait_for_result(account: AccountStore, ingest_id: int, seconds: int):
         deadline = asyncio.get_running_loop().time() + seconds
         captures = CaptureStore(db_path, account.user_id)
         while True:
             result = await asyncio.to_thread(captures.result, ingest_id)
             remaining = deadline - asyncio.get_running_loop().time()
-            if (result['status'] in {'completed', 'partial', 'failed'} or remaining <= 0
-                    or (stop_on_retry and result['status'] == 'retry_scheduled')):
+            if result['status'] in {'completed', 'partial', 'failed'} or remaining <= 0:
                 return result
             await asyncio.sleep(min(0.5, remaining))
 
@@ -286,8 +285,8 @@ def create_account_app(*, db_path: Path, verify_session: SessionVerifier,
             return accepted
         # The extension's ordinary request waits for the real result, as before.
         # Acceptance is already durable: disconnecting cannot cancel the worker.
-        result = await wait_for_result(account, accepted['ingest_id'], wait_seconds, stop_on_retry=True)
-        if result['status'] in {'completed', 'partial', 'failed', 'retry_scheduled'}:
+        result = await wait_for_result(account, accepted['ingest_id'], wait_seconds)
+        if result['status'] in {'completed', 'partial', 'failed'}:
             response.status_code = 200
         return result
 

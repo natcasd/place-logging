@@ -125,6 +125,15 @@ class AccountIngestTests(unittest.TestCase):
         self.assertEqual(len(self.a.activity()), 1)
         self.assertEqual(self.post('/ingests?wait_seconds=151', source_url='https://youtu.be/post', request_key='other').status_code, 422)
 
+    def test_waiting_share_does_not_report_scheduled_retry_as_a_final_outcome(self):
+        self.accept()
+        lease = self.queue.claim()
+        self.queue.fail(lease, requests.Timeout('temporary'), stage='fetching')
+        pending = self.post('/ingests?wait_seconds=1', source_url='https://youtu.be/post', request_key='first')
+        self.assertEqual(pending.status_code, 202)
+        self.assertEqual(pending.json()['status'], 'retry_scheduled')
+        self.assertEqual(pending.json()['saved_entries'], [])
+
     def test_acceptance_is_durable_and_processing_occurs_outside_request(self):
         with patch('ingest_service.IngestService.ingest', side_effect=AssertionError('legacy called')):
             accepted = self.accept()

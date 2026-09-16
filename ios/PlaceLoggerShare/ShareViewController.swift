@@ -143,12 +143,10 @@ private struct ShareStatusView: View {
     }
     .padding(28)
     .task {
-      var account: AccountSessionSnapshot?
       do {
         let url = try await loadURL()
         state = .saving(url)
         let current = try AccountSession.shared.requireSnapshot()
-        account = current
         let result = try await PlaceLoggerAPI(account: current, authorizer: AccountSession.shared)
           .ingest(sourceURL: url, requestKey: requestKey)
         if result.hasNotificationOutcome {
@@ -158,10 +156,8 @@ private struct ShareStatusView: View {
         }
         complete()
       } catch {
-        if let account {
-          await LocalNotification.send(title: "Couldn't confirm your save",
-                                       body: error.localizedDescription, account: account)
-        }
+        // A transport error is not a processing outcome. Keep it in the sheet;
+        // the accepted save may still finish successfully on the server.
         state = .failed(error.localizedDescription)
       }
     }
