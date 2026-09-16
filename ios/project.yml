@@ -50,6 +50,8 @@ targets:
       properties:
         keychain-access-groups:
           - $(AppIdentifierPrefix)com.natcasd.placelogger.auth
+        com.apple.security.application-groups:
+          - group.com.natcasd.placelogger
         com.apple.developer.applesignin:
           - Default
     settings:
@@ -99,6 +101,8 @@ targets:
       properties:
         keychain-access-groups:
           - $(AppIdentifierPrefix)com.natcasd.placelogger.auth
+        com.apple.security.application-groups:
+          - group.com.natcasd.placelogger
     dependencies:
       - package: Firebase
         product: FirebaseAuth

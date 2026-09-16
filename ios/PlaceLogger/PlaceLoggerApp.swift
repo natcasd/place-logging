@@ -74,6 +74,11 @@ final class PlaceLoggerAppDelegate: NSObject, UIApplicationDelegate,
     [.banner, .sound]
   }
 
+  func application(_ application: UIApplication, handleEventsForBackgroundURLSession identifier: String,
+                   completionHandler: @escaping () -> Void) {
+    SaveCompletionNotifications.reconnect(identifier: identifier, completion: completionHandler)
+  }
+
   nonisolated func userNotificationCenter(
     _ center: UNUserNotificationCenter,
     didReceive response: UNNotificationResponse

@@ -17,7 +17,7 @@ from pathlib import Path
 from threading import Event, Thread
 from typing import Protocol
 
-from fastapi import APIRouter, Depends, FastAPI, HTTPException, Query
+from fastapi import APIRouter, Depends, FastAPI, HTTPException, Query, Response
 from pydantic import BaseModel, Field
 from fastapi.responses import JSONResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
@@ -114,6 +114,13 @@ class AcceptedIngest(BaseModel):
     status: str
     accepted_sequence: int
     saved_entries: list[SavedEntryOutcome] = Field(default_factory=list)
+
+
+class SaveResult(AcceptedIngest):
+    item_id: int | None
+    failure_kind: str | None = None
+    error_message: str | None = None
+    next_retry_at: str | None = None
 
 
 def create_account_app(*, db_path: Path, verify_session: SessionVerifier,
@@ -261,6 +268,21 @@ def create_account_app(*, db_path: Path, verify_session: SessionVerifier,
     @router.post('/ingests', status_code=202, response_model=AcceptedIngest)
     def ingest(payload: AccountIngestRequest, account: AccountStore = Depends(scoped_store)):
         return accept(payload.source_url, payload.request_key, account, 'share_extension')
+
+    @router.get('/ingests/{ingest_id}', response_model=SaveResult)
+    async def ingest_result(ingest_id: int, response: Response, wait_seconds: int = Query(default=0, ge=0, le=25),
+                            account: AccountStore = Depends(scoped_store)):
+        # Short read transactions let the durable worker keep making progress.
+        # Each read rechecks account state and ownership, including during deletion.
+        response.headers['Cache-Control'] = 'no-store'
+        deadline = asyncio.get_running_loop().time() + wait_seconds
+        captures = CaptureStore(db_path, account.user_id)
+        while True:
+            result = await asyncio.to_thread(captures.result, ingest_id)
+            remaining = deadline - asyncio.get_running_loop().time()
+            if result['status'] in {'completed', 'partial', 'failed'} or remaining <= 0:
+                return result
+            await asyncio.sleep(min(0.5, remaining))
 
     @router.post('/shortcut/ingests', status_code=202, response_model=AcceptedIngest)
     def shortcut_ingest(payload: AccountShortcutRequest, account: AccountStore = Depends(scoped_store)):

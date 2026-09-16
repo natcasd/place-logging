@@ -1,6 +1,5 @@
 import SwiftUI
 import UniformTypeIdentifiers
-import UserNotifications
 
 final class ShareViewController: UIViewController {
   override func viewDidLoad() {
@@ -109,7 +108,7 @@ private struct ShareStatusView: View {
   enum Phase {
     case starting
     case saving(URL)
-    case failed(String)
+    case failed(String, accepted: Bool)
   }
 
   var body: some View {
@@ -125,15 +124,15 @@ private struct ShareStatusView: View {
         Text(url.host() ?? url.absoluteString)
           .font(.caption)
           .foregroundStyle(.secondary)
-        Text("Once accepted, Jot keeps processing your post. Check Activity for the result.")
+        Text("You can close this and keep scrolling. Jot will notify you when it’s done.")
           .font(.caption)
           .multilineTextAlignment(.center)
           .foregroundStyle(.secondary)
-      case .failed(let message):
+      case .failed(let message, let accepted):
         Image(systemName: "exclamationmark.triangle.fill")
           .font(.largeTitle)
           .foregroundStyle(.orange)
-        Text("Couldn’t Save")
+        Text(accepted ? "Save accepted" : "Couldn’t Save")
           .font(.headline)
         Text(message)
           .multilineTextAlignment(.center)
@@ -143,66 +142,25 @@ private struct ShareStatusView: View {
     }
     .padding(28)
     .task {
+      var account: AccountSessionSnapshot?
+      var accepted = false
       do {
         let url = try await loadURL()
         state = .saving(url)
-        let account = try AccountSession.shared.requireSnapshot()
-        let result = try await PlaceLoggerAPI(account: account, authorizer: AccountSession.shared)
+        let current = try AccountSession.shared.requireSnapshot()
+        account = current
+        let result = try await PlaceLoggerAPI(account: current, authorizer: AccountSession.shared)
           .ingest(sourceURL: url, requestKey: requestKey)
-        await LocalNotification.send(
-          title: "Post accepted",
-          body: "Open Activity in Jot to check your save.",
-          ingestID: result.ingestID,
-          itemID: result.itemID,
-          entry: nil,
-          account: account
-        )
+        accepted = true
+        try await SaveCompletionNotifications.follow(result, account: current)
         complete()
       } catch {
-        state = .failed(error.localizedDescription)
+        if !accepted, let account {
+          await SaveCompletionNotifications.send(title: "Couldn't confirm your save",
+                                                  body: error.localizedDescription, account: account)
+        }
+        state = .failed(error.localizedDescription, accepted: accepted)
       }
     }
-  }
-}
-
-private enum LocalNotification {
-  static func send(
-    title: String,
-    body: String,
-    ingestID: Int?,
-    itemID: Int?,
-    entry: SavedEntryOutcome?,
-    account: AccountSessionSnapshot
-  ) async {
-    let center = UNUserNotificationCenter.current()
-    guard (try? await AccountSession.shared.validate(account)) != nil else { return }
-    let settings = await center.notificationSettings()
-    guard settings.authorizationStatus == .authorized
-      || settings.authorizationStatus == .provisional
-    else {
-      return
-    }
-
-    let content = UNMutableNotificationContent()
-    content.title = title
-    content.body = body
-    content.sound = .default
-    var userInfo: [String: Any] = ["account_uid": account.userID,
-                                  "account_generation": account.generation.uuidString]
-    if let ingestID { userInfo["ingest_id"] = ingestID }
-    if let itemID { userInfo["item_id"] = itemID }
-    if let entry {
-      userInfo["entry_id"] = entry.entryID
-      userInfo["has_location"] = entry.hasLocation
-    }
-    content.userInfo = userInfo
-
-    let request = UNNotificationRequest(
-      identifier: UUID().uuidString,
-      content: content,
-      trigger: UNTimeIntervalNotificationTrigger(timeInterval: 1, repeats: false)
-    )
-    guard (try? await AccountSession.shared.validate(account)) != nil else { return }
-    try? await center.add(request)
   }
 }

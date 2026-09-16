@@ -35,6 +35,19 @@ class CaptureStore(AccountStore):
                 'accepted_sequence': run['accepted_sequence'],
                 'saved_entries': self._outcomes(con, run['item_id']) if run['status'] != 'cancelled' else []}
 
+    def result(self, ingest_id: int) -> dict[str, Any]:
+        """Read this account's current save outcome without replaying a share."""
+        with self._transaction() as con:
+            run = self._run(con, ingest_id)
+            return {
+                'ingest_id': run['id'], 'item_id': run['item_id'], 'status': run['status'],
+                'accepted_sequence': run['accepted_sequence'],
+                'saved_entries': self._outcomes(con, run['item_id'])
+                    if run['item_id'] is not None and run['status'] in {'completed', 'partial'} else [],
+                'failure_kind': run['failure_kind'], 'error_message': run['error_message'],
+                'next_retry_at': run['next_retry_at'],
+            }
+
     def _new_run(self, con: sqlite3.Connection, capture_id: int, key: str, intent: str) -> dict[str, Any]:
         capture = self._capture(con, capture_id)
         sequence = self._sequence(con)

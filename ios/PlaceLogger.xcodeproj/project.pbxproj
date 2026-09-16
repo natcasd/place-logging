@@ -8,14 +8,17 @@
 
 /* Begin PBXBuildFile section */
 		064A3063186D6FA1DE5DCC64 /* ShareViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 14F9A82FE76648FCA9EB4AE7 /* ShareViewController.swift */; };
+		0B91F36C1AE2EF8128725118 /* SaveNotificationContext.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2F102B4037C209CA6F6DBF57 /* SaveNotificationContext.swift */; };
 		141865D65714B738433B24A6 /* AccountSession.swift in Sources */ = {isa = PBXBuildFile; fileRef = 090B72C20819A8749149A437 /* AccountSession.swift */; };
 		16A4DDC42F963A621D2A47BF /* SavedCategory.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0A5DF9D7C729E03A9AA36BF /* SavedCategory.swift */; };
 		1BCE08B7F007446A3BDC80EF /* SignInView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 57215C611CE42A12A16FD1F0 /* SignInView.swift */; };
 		26C4D2D6EDA00B35597DCDA7 /* PlaceLoggerShare.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = ED4E058694F66A65E2067927 /* PlaceLoggerShare.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		2B3C761B0F6580623D93432B /* PlaceLoggerAPI.swift in Sources */ = {isa = PBXBuildFile; fileRef = CD439B1B2B56ED9548B3A7D6 /* PlaceLoggerAPI.swift */; };
+		2D96E8F87D88CC85679B5C3A /* SaveCompletionNotifications.swift in Sources */ = {isa = PBXBuildFile; fileRef = 067A00D1D1DA37DB7D029127 /* SaveCompletionNotifications.swift */; };
 		301834390C584CCFA9C3CC49 /* GoogleSignInSwift in Frameworks */ = {isa = PBXBuildFile; productRef = 8C095687C0046532B0F035D0 /* GoogleSignInSwift */; };
 		35FA7C74B90CA3C91792B341 /* PlaceLoggerAPI.swift in Sources */ = {isa = PBXBuildFile; fileRef = CD439B1B2B56ED9548B3A7D6 /* PlaceLoggerAPI.swift */; };
 		4833F5F46EB68D6E8E155F54 /* LocationModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 078E98746CBF2A957EED82FC /* LocationModel.swift */; };
+		5331E0F2AB55B6B878230BE2 /* SaveNotificationContext.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2F102B4037C209CA6F6DBF57 /* SaveNotificationContext.swift */; };
 		539E263B1CEE634631ADBCF8 /* Models.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9065EE50C75A067C2E5FDFAF /* Models.swift */; };
 		69B386FEE19FE092410014D4 /* AccountSessionContract.swift in Sources */ = {isa = PBXBuildFile; fileRef = 251DF286F21344AA3B0AE581 /* AccountSessionContract.swift */; };
 		6B9118EB245C5AE58643E039 /* PlaceLoggerApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3966F5FA07BE13D9F432C431 /* PlaceLoggerApp.swift */; };
@@ -30,6 +33,7 @@
 		C8B4996F54A37D0C4B1CC0D4 /* FirebaseAuth in Frameworks */ = {isa = PBXBuildFile; productRef = A11F85BFFF7AA3793AD6513D /* FirebaseAuth */; };
 		D8CD16D2D03261DA49C75A82 /* PlacesView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 84E6A5828324B0E8949325D2 /* PlacesView.swift */; };
 		E6783F86A30669586692FC5C /* GoogleSignIn in Frameworks */ = {isa = PBXBuildFile; productRef = 860330874A239E93BF405A84 /* GoogleSignIn */; };
+		EE12EB61B7C12A65F7209C80 /* SaveCompletionNotifications.swift in Sources */ = {isa = PBXBuildFile; fileRef = 067A00D1D1DA37DB7D029127 /* SaveCompletionNotifications.swift */; };
 		F592F03462AD7E0AE4DD5488 /* GeneratedEntryTypeCatalog.swift in Sources */ = {isa = PBXBuildFile; fileRef = CEAE714E97D796CCAF830463 /* GeneratedEntryTypeCatalog.swift */; };
 		F9533630E5D156EE8C48ADAE /* AccountSessionContract.swift in Sources */ = {isa = PBXBuildFile; fileRef = 251DF286F21344AA3B0AE581 /* AccountSessionContract.swift */; };
 		F95C56977278060D2DB4E2A0 /* APIConfig.swift in Sources */ = {isa = PBXBuildFile; fileRef = DEC84888F492275FE45F6B68 /* APIConfig.swift */; };
@@ -60,11 +64,13 @@
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
+		067A00D1D1DA37DB7D029127 /* SaveCompletionNotifications.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SaveCompletionNotifications.swift; sourceTree = "<group>"; };
 		078E98746CBF2A957EED82FC /* LocationModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocationModel.swift; sourceTree = "<group>"; };
 		090B72C20819A8749149A437 /* AccountSession.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AccountSession.swift; sourceTree = "<group>"; };
 		117409D5429477A36432D246 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		14F9A82FE76648FCA9EB4AE7 /* ShareViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShareViewController.swift; sourceTree = "<group>"; };
 		251DF286F21344AA3B0AE581 /* AccountSessionContract.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AccountSessionContract.swift; sourceTree = "<group>"; };
+		2F102B4037C209CA6F6DBF57 /* SaveNotificationContext.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SaveNotificationContext.swift; sourceTree = "<group>"; };
 		3966F5FA07BE13D9F432C431 /* PlaceLoggerApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlaceLoggerApp.swift; sourceTree = "<group>"; };
 		4A0D76B916EFF821B9BED9A7 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		57215C611CE42A12A16FD1F0 /* SignInView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SignInView.swift; sourceTree = "<group>"; };
@@ -122,6 +128,8 @@
 				DEC84888F492275FE45F6B68 /* APIConfig.swift */,
 				9065EE50C75A067C2E5FDFAF /* Models.swift */,
 				CD439B1B2B56ED9548B3A7D6 /* PlaceLoggerAPI.swift */,
+				067A00D1D1DA37DB7D029127 /* SaveCompletionNotifications.swift */,
+				2F102B4037C209CA6F6DBF57 /* SaveNotificationContext.swift */,
 			);
 			path = Shared;
 			sourceTree = "<group>";
@@ -294,6 +302,8 @@
 				F9533630E5D156EE8C48ADAE /* AccountSessionContract.swift in Sources */,
 				ADDA8920EC727782B0A39DBB /* Models.swift in Sources */,
 				35FA7C74B90CA3C91792B341 /* PlaceLoggerAPI.swift in Sources */,
+				2D96E8F87D88CC85679B5C3A /* SaveCompletionNotifications.swift in Sources */,
+				0B91F36C1AE2EF8128725118 /* SaveNotificationContext.swift in Sources */,
 				064A3063186D6FA1DE5DCC64 /* ShareViewController.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -312,6 +322,8 @@
 				2B3C761B0F6580623D93432B /* PlaceLoggerAPI.swift in Sources */,
 				6B9118EB245C5AE58643E039 /* PlaceLoggerApp.swift in Sources */,
 				D8CD16D2D03261DA49C75A82 /* PlacesView.swift in Sources */,
+				EE12EB61B7C12A65F7209C80 /* SaveCompletionNotifications.swift in Sources */,
+				5331E0F2AB55B6B878230BE2 /* SaveNotificationContext.swift in Sources */,
 				16A4DDC42F963A621D2A47BF /* SavedCategory.swift in Sources */,
 				1BCE08B7F007446A3BDC80EF /* SignInView.swift in Sources */,
 			);

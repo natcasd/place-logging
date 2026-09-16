@@ -5,17 +5,32 @@ The native client has two targets:
 - `PlaceLogger`: Apple/Google sign-in, a private saved library, map, Activity,
   and account settings with verified provider linking and sign-out.
 - `PlaceLoggerShare`: uses the same secure Keychain session to queue a social
-  URL, then closes after acceptance. Processing continues on the server.
+  URL and start a background result download, then closes. Processing continues
+  on the server while the user returns to the source app.
 
 The app reads account-scoped `/api/v1/entries` and `/api/v1/activity`. It refreshes
-pending Activity while foregrounded. A share notification acknowledges acceptance;
-it does not claim processing has finished. Backend APNs completion notifications
-remain a separate integration. Notification payloads include the account session,
-and a tap from another/older session is ignored.
+pending Activity while foregrounded. Share notifications report the actual saved
+results or processing failure. They do not fire merely because a post was accepted.
+The extension uses a background `URLSession` download; iOS can hand its completion
+to the containing app after the extension exits. Both targets require the
+`group.com.natcasd.placelogger` App Group in their signing profiles. This uses local
+notifications, not APNs or Firebase Messaging.
+
+The account-scoped `GET /api/v1/ingests/{id}?wait_seconds=25` reads an existing
+operation without resubmitting it. Pending results and automatic retries continue
+the background download, bounded to one hour. Network failures get two retries;
+if the outcome cannot be checked, the notification explicitly says so rather than
+claiming the save failed. iOS controls background scheduling, and force-quitting
+the containing app can cancel background transfers. Verify delivery on a physical
+phone after dismissing the share sheet and locking the phone.
+
+Notification payloads include the account session. Logout/account changes suppress
+old deliveries and taps. The device-only Keychain session stamp is accessible after
+first unlock so the callback can check the active account while the phone is locked.
 
 There is no bundled shared API token or legacy-token fallback in this client.
-The currently installed phone app and production backend have not been changed.
-This client requires the complete Firebase account service and coordinated cutover.
+This client requires the Firebase account service; deploy the result endpoint
+before installing a build that uses background completion notifications.
 
 The map shows resolved places as selectable pins. Pins use the saved place
 type's icon (for example, a fork and knife for restaurants or a tree for

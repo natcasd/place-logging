@@ -3,6 +3,27 @@ import XCTest
 @testable import JotClientCore
 
 final class ResponseContractTests: XCTestCase {
+  func testSaveNotificationsWaitForThisOperationsActualOutcome() throws {
+    let account = AccountSessionSnapshot(projectID: "jot", userID: "a", generation: UUID())
+    let context = SaveNotificationContext(account: account, ingestID: 42, startedAt: Date())
+    for status in ["queued", "processing", "retry_scheduled"] {
+      let result = try JSONDecoder().decode(IngestResponse.self, from: Data("{\"ingest_id\":42,\"status\":\"\(status)\",\"saved_entries\":[]}".utf8))
+      XCTAssertFalse(context.accepts(result))
+    }
+    let result = try JSONDecoder().decode(IngestResponse.self, from: Data(#"{"ingest_id":42,"item_id":7,"status":"completed","saved_entries":[{"entry_id":8,"name":"Cafe","type":"Restaurant","resolution_status":"resolved","is_new":true,"source_count":1}]}"#.utf8))
+    XCTAssertTrue(context.accepts(result))
+    XCTAssertEqual(result.notificationTitle, "Logged Restaurant · Cafe")
+    XCTAssertFalse(SaveNotificationContext(account: account, ingestID: 43, startedAt: Date()).accepts(result))
+    let decoded = try JSONDecoder().decode(SaveNotificationContext.self, from: JSONEncoder().encode(context))
+    XCTAssertEqual(decoded.account, account)
+  }
+
+  func testFailureNotificationUsesTheActualProcessingError() throws {
+    let result = try JSONDecoder().decode(IngestResponse.self, from: Data(#"{"ingest_id":42,"status":"failed","saved_entries":[],"failure_kind":"media_fetch_failed","error_message":"This post could not be downloaded."}"#.utf8))
+    XCTAssertEqual(result.notificationTitle, "Download failed")
+    XCTAssertEqual(result.notificationBody, "This post could not be downloaded.")
+  }
+
   func testPrivateRecommendationCanHaveNoSocialURL() throws {
     let data = Data(#"{"id":1,"item_id":2,"source_url":null,"source_platform":"other","description":"Try this cafe","why_its_cool":"Personal note"}"#.utf8)
     let source = try JSONDecoder().decode(SavedEntrySource.self, from: data)

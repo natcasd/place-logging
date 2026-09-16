@@ -58,6 +58,46 @@ class AccountIngestTests(unittest.TestCase):
         self.assertEqual(response.status_code, 202, response.text)
         return response.json()
 
+    def test_result_tracks_completion_and_never_exposes_other_accounts(self):
+        accepted = self.accept()
+        path = f"/api/v1/ingests/{accepted['ingest_id']}"
+        self.assertEqual(self.client.get(path).status_code, 401)
+        self.assertEqual(self.client.get(path, headers={'Authorization': 'Bearer b'}).status_code, 404)
+        queued = self.client.get(path, headers={'Authorization': 'Bearer a'}).json()
+        self.assertEqual(queued['status'], 'queued')
+        self.assertEqual(queued['saved_entries'], [])
+        PostProcessingWorker(self.queue, self.root, lambda *_: BASELINE).run_once()
+        saved = self.client.get(path, headers={'Authorization': 'Bearer a'}).json()
+        self.assertEqual(saved['status'], 'completed')
+        self.assertEqual(saved['saved_entries'][0]['name'], 'Cafe')
+        self.a.delete_entries([saved['saved_entries'][0]['entry_id']])
+        self.assertEqual(self.client.get(path, headers={'Authorization': 'Bearer a'}).json()['saved_entries'], [])
+
+    def test_result_wait_returns_completion_without_accepting_another_save(self):
+        accepted = self.accept()
+        path = f"/api/v1/ingests/{accepted['ingest_id']}?wait_seconds=2"
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            pending = pool.submit(self.client.get, path, headers={'Authorization': 'Bearer a'})
+            PostProcessingWorker(self.queue, self.root, lambda *_: BASELINE).run_once()
+            result = pending.result(timeout=5)
+        self.assertEqual(result.status_code, 200)
+        self.assertEqual(result.json()['status'], 'completed')
+        self.assertEqual(len(self.a.activity()), 1)
+
+    def test_result_exposes_failure_details_and_rejects_unbounded_wait(self):
+        accepted = self.accept()
+        lease = self.queue.claim()
+        self.queue.fail(lease, ValueError('invalid extraction'), stage='extracting')
+        path = f"/api/v1/ingests/{accepted['ingest_id']}"
+        result = self.client.get(path, headers={'Authorization': 'Bearer a'}).json()
+        self.assertIn(result['status'], {'failed', 'retry_scheduled'})
+        self.assertTrue(result['error_message'])
+        self.assertEqual(result['saved_entries'], [])
+        self.assertEqual(self.client.get(path + '?wait_seconds=26', headers={'Authorization': 'Bearer a'}).status_code, 422)
+        with sqlite3.connect(self.db) as con:
+            con.execute("UPDATE users SET status='deleting' WHERE id='a'")
+        self.assertEqual(self.client.get(path, headers={'Authorization': 'Bearer a'}).status_code, 401)
+
     def test_acceptance_is_durable_and_processing_occurs_outside_request(self):
         with patch('ingest_service.IngestService.ingest', side_effect=AssertionError('legacy called')):
             accepted = self.accept()

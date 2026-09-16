@@ -207,8 +207,10 @@ python backfill_movie_enrichments.py --db-path data/places.db
 
 ## Known gaps
 
-- Automatic retry completion is reflected in Activity when the app refreshes;
-  it does not currently send a remote push notification.
+- Share-initiated saves can deliver completion through the native client's
+  background result download and local notification, including automatic retries.
+  Server-initiated remote push and notifications for other ingestion clients are
+  not implemented.
 - URL-only ingest (pure-text + article/tweet URLs are the v0.5 expansion in doc 09).
 - Routes use resolvable anchors such as a trailhead or venue; custom route
   geometry is intentionally not synthesized from a post.

@@ -494,9 +494,12 @@ enum PlaceLoggerError: LocalizedError {
   case invalidResponse
   case server(status: Int, detail: String?)
   case noSharedURL
+  case notificationHandoffUnavailable
 
   var errorDescription: String? {
     switch self {
+    case .notificationHandoffUnavailable:
+      "Your post was accepted, but result notifications couldn't be started. Open Activity in Jot to check this save."
     case .signInRequired:
       "Open Jot and sign in before saving."
     case .signInUnavailable:

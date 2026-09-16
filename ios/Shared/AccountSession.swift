@@ -25,11 +25,13 @@ private struct SharedSessionStamp: Codable {
   func write(group: String) throws {
     let data = try JSONEncoder().encode(self)
     let query = Self.baseQuery(group: group)
-    var status = SecItemUpdate(query as CFDictionary, [kSecValueData as String: data] as CFDictionary)
+    let attributes: [String: Any] = [kSecValueData as String: data,
+      kSecAttrAccessible as String: kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly]
+    var status = SecItemUpdate(query as CFDictionary, attributes as CFDictionary)
     if status == errSecItemNotFound {
       var item = query
       item[kSecValueData as String] = data
-      item[kSecAttrAccessible as String] = kSecAttrAccessibleWhenUnlockedThisDeviceOnly
+      item[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
       status = SecItemAdd(item as CFDictionary, nil)
     }
     guard status == errSecSuccess else { throw PlaceLoggerError.sessionUnavailable }
@@ -40,6 +42,16 @@ private struct SharedSessionStamp: Codable {
      kSecAttrService as String: "com.natcasd.jot.session",
      kSecAttrAccount as String: "active-account",
      kSecAttrAccessGroup as String: group]
+  }
+
+  static func allowBackgroundAccess(group: String) throws {
+    // Change only protection attributes, never rewrite a possibly stale account
+    // stamp while another process is logging out or switching accounts.
+    let status = SecItemUpdate(baseQuery(group: group) as CFDictionary,
+      [kSecAttrAccessible as String: kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly] as CFDictionary)
+    guard status == errSecSuccess || status == errSecItemNotFound else {
+      throw PlaceLoggerError.sessionUnavailable
+    }
   }
 }
 
@@ -61,6 +73,9 @@ final class AccountSession: ObservableObject, AccountAuthorizer {
       else { throw PlaceLoggerError.signInUnavailable }
       if FirebaseApp.app() == nil { FirebaseApp.configure(options: options) }
       try Auth.auth().useUserAccessGroup(APIConfig.keychainGroup)
+      // Preserve the account generation while allowing background result
+      // delivery to check logout/account changes when the phone is locked.
+      try SharedSessionStamp.allowBackgroundAccess(group: APIConfig.keychainGroup)
       isConfigured = true
       configurationError = nil
       reloadSharedSession()
