@@ -39,7 +39,7 @@ targets:
         CFBundleDisplayName: Jot
         UILaunchScreen: {}
         APIBaseURL: https://place-logging.fly.dev
-        FirebaseProjectID: place-logging-7b73af
+        FirebaseProjectID: jot-app-20260915
         FirebaseKeychainGroup: $(AppIdentifierPrefix)com.natcasd.placelogger.auth
         CFBundleURLTypes:
           - CFBundleURLSchemes:
@@ -82,7 +82,7 @@ targets:
       properties:
         CFBundleDisplayName: Save to Jot
         APIBaseURL: https://place-logging.fly.dev
-        FirebaseProjectID: place-logging-7b73af
+        FirebaseProjectID: jot-app-20260915
         FirebaseKeychainGroup: $(AppIdentifierPrefix)com.natcasd.placelogger.auth
         NSExtension:
           NSExtensionPointIdentifier: com.apple.share-services
