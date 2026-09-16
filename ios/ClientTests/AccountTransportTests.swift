@@ -83,6 +83,49 @@ final class AccountTransportTests: XCTestCase {
                           session: URLSession(configuration: config), baseURL: URL(string: "https://jot.test")!)
   }
 
+  func testAccountDeletionUsesFreshTokenAndDeleteEndpoint() async throws {
+    let auth = TestAuthorizer(account)
+    let requests = Requests()
+    StubProtocol.install { request in
+      _ = await requests.record(request)
+      return (202, Data(#"{"status":"deletion_requested"}"#.utf8))
+    }
+    try await api(auth).deleteAccount()
+    let recorded = await requests.all()
+    XCTAssertEqual(recorded.count, 1)
+    XCTAssertEqual(recorded.first?.httpMethod, "DELETE")
+    XCTAssertEqual(recorded.first?.url?.path, "/api/v1/account")
+    XCTAssertEqual(recorded.first?.value(forHTTPHeaderField: "Authorization"), "Bearer fresh-token")
+    let state = await auth.state()
+    XCTAssertEqual(state.0, [true])
+    XCTAssertEqual(state.1, 0)
+  }
+
+  func testDeletionReauthenticationFailureKeepsSession() async throws {
+    let auth = TestAuthorizer(account)
+    StubProtocol.install { _ in (403, Data(#"{"detail":"Sign in again","code":"recent_sign_in_required"}"#.utf8)) }
+    do { try await api(auth).deleteAccount(); XCTFail("Accepted stale login") }
+    catch PlaceLoggerError.server(let status, _) { XCTAssertEqual(status, 403) }
+    let state = await auth.state()
+    XCTAssertEqual(state.0, [true])
+    XCTAssertEqual(state.1, 0)
+    try await auth.validate(account)
+  }
+
+  func testAccountChangeDuringDeletionRefreshPreventsSendingRequest() async throws {
+    let auth = TestAuthorizer(account)
+    await auth.changeDuringToken()
+    let requests = Requests()
+    StubProtocol.install { request in
+      _ = await requests.record(request)
+      return (202, Data())
+    }
+    do { try await api(auth).deleteAccount(); XCTFail("Deleted after account changed") }
+    catch PlaceLoggerError.sessionChanged { }
+    let recorded = await requests.all()
+    XCTAssertTrue(recorded.isEmpty)
+  }
+
   func testTokenRefreshReusesSameSaveKeyAndBody() async throws {
     let auth = TestAuthorizer(account)
     let requests = Requests()

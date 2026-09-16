@@ -108,8 +108,13 @@ verified just before deletion cannot recreate the deleted account afterward.
 
 These are deletions from live application storage. Retained backups need an
 explicit expiry policy and a restore procedure that reapplies later deletions
-before serving data. Operational backup/restore handling and the native deletion
-screen remain required before release; do not claim backups are instantly erased.
+before serving data. Operational backup/restore handling remains required before release; do not claim
+backups are instantly erased. The native Account screen now requires an explicit
+destructive confirmation followed by reauthentication. Apple-linked accounts use
+Apple and revoke their Apple authorization before submitting the backend request.
+The client forces a fresh Firebase ID token, checks the original session across
+every asynchronous step, and signs out only after durable acceptance. Real-device
+provider/revocation testing remains required.
 
 ## Verification and outstanding setup
 
