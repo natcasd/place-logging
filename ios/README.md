@@ -142,8 +142,16 @@ real two-device isolation remain release checks after cloud configuration.
 
 ## Account deletion
 
-Account > Delete Account explains permanent library removal, asks for destructive
-confirmation, then reauthenticates the original account. Apple-linked accounts
+Account shows an email-initial avatar, the account email, and its sign-in provider.
+Its three-dot Account options menu contains Sign out and Delete account; provider
+linking is not offered in this screen. If the provider supplies no email, the
+screen uses a generic account icon and label.
+
+Account > Account options > Delete account explains permanent library removal,
+then requires typing exactly `DELETE` on a second confirmation screen before the
+final deletion button enables. It then reauthenticates the original account.
+Cancel is available at each step until an authentication/deletion request is busy.
+Apple-linked accounts
 confirm with Apple and revoke the Apple authorization through Firebase; Google-only
 accounts confirm with Google. The fresh ID token authorizes the durable backend
 request. After acceptance, sign-out clears the shared session and private view
