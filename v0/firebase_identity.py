@@ -8,12 +8,13 @@ import uuid
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Callable
 
 import firebase_admin
 from firebase_admin import auth, credentials, exceptions
 from google.auth.exceptions import GoogleAuthError
 
-from account_app import InvalidSession, SessionServiceUnavailable, VerifiedAccount
+from account_app import InvalidSession, RecentSignInRequired, SessionServiceUnavailable, VerifiedAccount
 from account_store import AccountConflict, AccountUnavailable
 from multi_user_migration import APPLICATION_ID, SCHEMA_VERSION
 
@@ -65,7 +66,7 @@ class FirebaseTokenVerifier:
                 or authenticated_at > time.time()):
             raise InvalidSession()
         if recent and time.time() - authenticated_at > 300:
-            raise InvalidSession()
+            raise RecentSignInRequired()
         name = claims.get('name')
         name = name.strip()[:120] if isinstance(name, str) else ''
         return FirebaseIdentity(self.project_id, uid, name or 'Jot user', authenticated_at)
@@ -103,7 +104,8 @@ class IdentityStore:
         finally:
             con.close()
 
-    def resolve(self, identity: FirebaseIdentity) -> VerifiedAccount:
+    def resolve(self, identity: FirebaseIdentity, *,
+                confirm_new_identity: Callable[[], FirebaseIdentity] | None = None) -> VerifiedAccount:
         with self.transaction() as con:
             row = con.execute('SELECT id, status FROM users WHERE firebase_project_id = ? AND firebase_uid = ?',
                               (identity.project_id, identity.uid)).fetchone()
@@ -111,6 +113,13 @@ class IdentityStore:
                 if row['status'] != 'active':
                     raise AccountUnavailable()
                 return VerifiedAccount(row['id'])
+            if confirm_new_identity is not None:
+                # A request may have verified its token just before deletion.
+                # Recheck new identities while holding the SQLite write lock,
+                # so a late request cannot recreate a just-deleted account.
+                confirmed = confirm_new_identity()
+                if (confirmed.project_id, confirmed.uid) != (identity.project_id, identity.uid):
+                    raise InvalidSession()
             # Never claim an existing account, even if this is the first login,
             # its UID resembles an internal ID, or its email/name matches.
             user_id = uuid.uuid4().hex
@@ -142,4 +151,5 @@ class FirebaseSessionVerifier:
         self.accounts = accounts
 
     def __call__(self, token: str) -> VerifiedAccount:
-        return self.accounts.resolve(self.tokens.verify(token))
+        return self.accounts.resolve(self.tokens.verify(token),
+                                     confirm_new_identity=lambda: self.tokens.verify(token))

@@ -10,6 +10,7 @@ import tempfile
 from pathlib import Path
 
 from account_app import create_account_app
+from account_deletion import AccountDeletion
 from firebase_identity import FirebaseSessionVerifier, IdentityStore, create_token_verifier
 from post_processing_store import PostProcessingStore
 from post_processing_worker import PostProcessingWorker
@@ -39,4 +40,5 @@ def create_app():
     tokens = create_token_verifier(project, credential_path=Path(credential_file) if credential_file else None)
     worker = PostProcessingWorker(PostProcessingStore(db_path, version),
                                   Path(tempfile.gettempdir()), process_public_post)
-    return create_account_app(db_path=db_path, verify_session=FirebaseSessionVerifier(tokens, accounts), worker=worker)
+    return create_account_app(db_path=db_path, verify_session=FirebaseSessionVerifier(tokens, accounts),
+                              worker=worker, deletion=AccountDeletion(accounts, tokens))

@@ -4,7 +4,7 @@
 CREATE TABLE users (
   id TEXT PRIMARY KEY NOT NULL CHECK (length(trim(id)) > 0),
   display_name TEXT NOT NULL CHECK (length(trim(display_name)) > 0),
-  status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'disabled')),
+  status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'disabled', 'deleting')),
   mutation_sequence INTEGER NOT NULL DEFAULT 0 CHECK (mutation_sequence >= 0),
   created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
   firebase_project_id TEXT,

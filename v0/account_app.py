@@ -38,6 +38,10 @@ class InvalidSession(Exception):
     """A verifier raises this for invalid, expired, or revoked credentials."""
 
 
+class RecentSignInRequired(InvalidSession):
+    """A valid session needs fresh provider authentication for a sensitive action."""
+
+
 class SessionServiceUnavailable(Exception):
     """Temporary verifier failure; clients should retain their sign-in state."""
 
@@ -51,6 +55,14 @@ class SessionVerifier(Protocol):
     def __call__(self, token: str) -> VerifiedAccount:
         """Verify the session and return its server-mapped internal account ID."""
         ...
+
+
+class AccountDeletionHandler(Protocol):
+    db_path: Path
+
+    def request(self, token: str) -> None: ...
+
+    def run(self, stop: Event) -> None: ...
 
 
 # Null URLs are valid for direct/Siri input. Keep the released single-user
@@ -105,25 +117,33 @@ class AcceptedIngest(BaseModel):
 
 
 def create_account_app(*, db_path: Path, verify_session: SessionVerifier,
-                       worker: PostProcessingWorker | None = None) -> FastAPI:
+                       worker: PostProcessingWorker | None = None,
+                       deletion: AccountDeletionHandler | None = None) -> FastAPI:
     if not callable(verify_session):
         raise ValueError('A session verifier is required')
     if worker is not None and worker.store.db_path.resolve() != db_path.resolve():
         raise ValueError('Worker and account API must use the same database')
+    if deletion is not None and deletion.db_path.resolve() != db_path.resolve():
+        raise ValueError('Deletion worker and account API must use the same database')
 
     @asynccontextmanager
     async def lifespan(application):
         stop = Event()
-        thread = None
+        threads = []
         if worker is not None:
             worker.store.active_tokens()  # Validate the explicit schema before starting.
             thread = Thread(target=worker.run, args=(stop,), name='jot-public-worker', daemon=True)
             thread.start()
+            threads.append(thread)
+        if deletion is not None:
+            thread = Thread(target=deletion.run, args=(stop,), name='jot-account-deletion', daemon=True)
+            thread.start()
+            threads.append(thread)
         try:
             yield
         finally:
             stop.set()
-            if thread is not None:
+            for thread in threads:
                 # Drain in-flight work with its lease renewal and cleanup intact.
                 # A forced process termination recovers through durable leases.
                 await asyncio.to_thread(thread.join)
@@ -152,6 +172,13 @@ def create_account_app(*, db_path: Path, verify_session: SessionVerifier,
     async def not_found(_request, _error):
         return JSONResponse(status_code=404, content={'detail': 'Not found'})
 
+    @application.exception_handler(RecentSignInRequired)
+    async def recent_sign_in_required(_request, _error):
+        return JSONResponse(status_code=403, content={
+            'detail': 'Sign in again to confirm account deletion.',
+            'code': 'recent_sign_in_required',
+        })
+
     @application.exception_handler(SessionServiceUnavailable)
     async def session_unavailable(_request, _error):
         return JSONResponse(status_code=503, content={'detail': 'Sign-in verification is temporarily unavailable. Try again.'},
@@ -170,6 +197,17 @@ def create_account_app(*, db_path: Path, verify_session: SessionVerifier,
         return JSONResponse(status_code=503, content={'detail': 'Could not resolve this share link. Try again.'})
 
     router = APIRouter(prefix='/api/v1', dependencies=[Depends(scoped_store)])
+
+    # Deliberately outside the active-account router: a lost response can be
+    # retried after status becomes deleting, without granting library access.
+    @application.delete('/api/v1/account', status_code=202)
+    def delete_account(credentials: HTTPAuthorizationCredentials | None = Depends(bearer)):
+        if credentials is None:
+            raise InvalidSession()
+        if deletion is None:
+            raise HTTPException(status_code=503, detail='Account deletion is temporarily unavailable')
+        deletion.request(credentials.credentials)
+        return {'status': 'deletion_requested'}
 
     @router.get('/account')
     def current_account(account: AccountStore = Depends(scoped_store)):
