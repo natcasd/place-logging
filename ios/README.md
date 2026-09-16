@@ -2,20 +2,54 @@
 
 The native client has two targets:
 
-- `PlaceLogger`: Apple/Google sign-in, a private saved library, map, Activity,
-  and account settings with verified provider linking and sign-out.
-- `PlaceLoggerShare`: uses the same secure Keychain session to queue a social
-  URL, then closes after acceptance. Processing continues on the server.
+- `PlaceLogger`: Apple/Google sign-in, a private saved library, Apple Maps,
+  Activity, and account settings with provider linking and sign-out.
+- `PlaceLoggerShare`: submits a social URL using the shared Keychain session,
+  waits for the actual result through an ordinary HTTP request, posts the local
+  result notification, and completes the share request.
 
-The app reads account-scoped `/api/v1/entries` and `/api/v1/activity`. It refreshes
-pending Activity while foregrounded. A share notification acknowledges acceptance;
-it does not claim processing has finished. Backend APNs completion notifications
-remain a separate integration. Notification payloads include the account session,
-and a tap from another/older session is ignored.
+## Save-result notifications
 
-There is no bundled shared API token or legacy-token fallback in this client.
-The currently installed phone app and production backend have not been changed.
-This client requires the complete Firebase account service and coordinated cutover.
+This retains the original extension-owned request/local-notification flow. The
+account API accepts the save durably before waiting, so server processing survives
+an extension exit, phone disconnection, or response timeout. The native POST uses
+`wait_seconds=150` and a 180-second request timeout. Other API clients still get
+immediate 202 acceptance by default. A completed, partial, failed, or retry-scheduled
+result supplies the existing detailed notification text and destinations. A pending
+response is not presented as a completed save.
+
+The extension can continue while the user returns to the source app, as observed
+with the original app, but iOS controls its lifetime. If iOS terminates it before
+the result arrives, processing continues and Activity shows the result; this flow
+does not guarantee a later notification. Automatic retries can also finish after
+the original request ends. APNs will address that delivery gap after Apple approval.
+
+There is no background URLSession polling, App Group entitlement, or main-app
+background callback. The rejected polling prototype repeatedly launched downloads,
+which Apple documents as subject to increasing scheduling delays. See
+[Apple's background transfer documentation](https://developer.apple.com/documentation/foundation/downloading-files-in-the-background).
+
+All library requests and notification taps are account-scoped. Logout clears
+notifications, and in-flight responses check the original account generation.
+There is no shared API token fallback. Deploy the waiting-result API before
+installing this client. Phone verification of the restored flow remains required.
+
+## Next step: APNs after Apple approval
+
+The existing Fly worker can send result alerts directly to Apple Push Notification
+service (APNs). Firebase Authentication is independent; Firebase Cloud Messaging
+is optional and is not installed or required.
+
+Keep the private saved result as the source of truth. Add account-owned device-token
+registration, a small durable send record in SQLite, and the Fly-side APNs sender.
+Handle logout, token changes, send retries and duplicate events. Switch each device
+from local result notifications to remote ones so it does not receive both. Check
+queued-alert privacy across account switches, and authenticate detail reads on tap.
+No new app-data database, cloud functions, or external queue is needed.
+
+This remains future work. Apple login and push capabilities still require the
+membership/provider/provisioning setup. See
+[Sending notification requests to APNs](https://developer.apple.com/documentation/usernotifications/sending-notification-requests-to-apns).
 
 The map shows resolved places as selectable pins. Pins use the saved place
 type's icon (for example, a fork and knife for restaurants or a tree for

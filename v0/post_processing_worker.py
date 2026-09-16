@@ -21,10 +21,12 @@ Processor = Callable[[str, Path, Callable[[str], None]], ProcessedPost | dict]
 
 
 class PostProcessingWorker:
-    def __init__(self, store: PostProcessingStore, workdir: Path, processor: Processor):
+    def __init__(self, store: PostProcessingStore, workdir: Path, processor: Processor,
+                 *, enrich: Callable[[], bool] | None = None):
         self.store = store
         self.workdir = workdir / 'jot-public-jobs'
         self.processor = processor
+        self.enrich = enrich
 
     def clean_abandoned_media(self) -> int:
         # Only our token-named directories are eligible. Never scan/delete an
@@ -102,6 +104,8 @@ class PostProcessingWorker:
         while not stop.is_set():
             try:
                 busy = self.run_once()
+                if self.enrich is not None:
+                    busy = self.enrich() or busy
             except Exception as error:
                 # Avoid logging provider payloads, URLs, or private context.
                 log.error('Public worker iteration failed: %s', type(error).__name__)

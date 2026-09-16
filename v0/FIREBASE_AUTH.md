@@ -64,13 +64,15 @@ deletes records to resolve that conflict. Repeating the same binding is safe;
 output files are never overwritten. There is no public "claim old library" API.
 
 The account service refuses startup with unreconciled captures, an unbound
-existing library, or bindings from another Firebase project. Real binding has
-not been performed: Nathan's actual Firebase sign-in is still required.
+existing library, or bindings from another Firebase project. The production
+library was explicitly bound to the confirmed Firebase identity during the
+2026-09-16 cutover; full library response parity was verified. Do not repeat that
+cutover or replace the live database with the earlier migration copy.
 
 ## Explicit service entrypoint
 
-Production still starts the old `app:app`; merging this change does not deploy.
-After complete client integration and a separately rehearsed cutover, use:
+Production uses the account service below; merging does not deploy. Fly deployment
+is a separate manual workflow gated on CI for the selected main commit:
 
 ```sh
 uvicorn firebase_service:create_app --factory --host 0.0.0.0 --port 8000
@@ -131,9 +133,11 @@ verified as standard Firebase Authentication after billing linkage. Google
 sign-in is enabled. The registered iOS app is
 `1:271626317276:ios:7d30fc01f17100b8403319`, bundle `com.natcasd.placelogger`.
 Download its configuration locally; never commit backend administrative credentials.
-Apple provider setup and physical-device signing remain pending Apple Developer
-Program approval. Real-device login and secure deployment credentials still need
-validation. No app-data database was created in Firebase.
+Apple provider setup remains pending Apple Developer Program approval. Google
+login was verified on the Personal Team phone build and the owner confirmed the
+existing library is visible. Backend credentials are deployed on Fly. Apple
+login/linking and real-device account deletion still require validation. No
+app-data database was created in Firebase.
 
 Initialize standard Authentication using the Firebase console's Get started
 flow and verify `subtype: FIREBASE_AUTH` via the project configuration API. Do not
@@ -141,11 +145,11 @@ use `identityPlatform:initializeAuth`, the Identity Platform upgrade, or
 `firebase:provisionFirebaseApp` for authentication initialization. The provisioning
 workflow enabled the unwanted Identity Platform tier in the former project.
 
-The old `place-logging-7b73af` project remains intact for existing Places services.
-It is not the selected Firebase identity project. No production service or phone
-build has switched to the replacement. Prepare and test new Places credentials
-before coordinated cutover, then verify no remaining dependencies before deleting
-the old project. Do not alter existing library ownership to perform this change.
+The old `place-logging-7b73af` project remains intact pending dependency review.
+Production Places requests now use the replacement project's API-restricted key.
+Apple Maps remains the native map/search provider. Verify remaining dependencies
+and end-to-end saves before deleting the old project. Do not alter library
+ownership to perform this cleanup.
 
 Official references:
 - [Verify ID tokens](https://firebase.google.com/docs/auth/admin/verify-id-tokens)

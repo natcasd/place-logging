@@ -207,8 +207,10 @@ python backfill_movie_enrichments.py --db-path data/places.db
 
 ## Known gaps
 
-- Automatic retry completion is reflected in Activity when the app refreshes;
-  it does not currently send a remote push notification.
+- Share-initiated saves use the original extension-owned HTTP request and local
+  result notification. Processing is durable, but delivery depends on the extension
+  surviving until the response. APNs delivery after Apple approval is the next step;
+  no background-download polling or Firebase Messaging dependency is required.
 - URL-only ingest (pure-text + article/tweet URLs are the v0.5 expansion in doc 09).
 - Routes use resolvable anchors such as a trailhead or venue; custom route
   geometry is intentionally not synthesized from a post.

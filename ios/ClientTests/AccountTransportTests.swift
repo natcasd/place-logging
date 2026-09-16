@@ -142,6 +142,9 @@ final class AccountTransportTests: XCTestCase {
     XCTAssertEqual(recorded[0].httpBody, recorded[1].httpBody)
     let body = try JSONSerialization.jsonObject(with: XCTUnwrap(recorded[0].httpBody)) as? [String: String]
     XCTAssertEqual(body?["request_key"], "same-intent")
+    XCTAssertEqual(URLComponents(url: recorded[0].url!, resolvingAgainstBaseURL: false)?.queryItems,
+                   [URLQueryItem(name: "wait_seconds", value: "150")])
+    XCTAssertEqual(recorded[0].timeoutInterval, 180)
     XCTAssertEqual(body?["source_url"], "https://youtu.be/post")
     XCTAssertEqual(recorded[0].value(forHTTPHeaderField: "Authorization"), "Bearer initial-token")
     XCTAssertEqual(recorded[1].value(forHTTPHeaderField: "Authorization"), "Bearer fresh-token")

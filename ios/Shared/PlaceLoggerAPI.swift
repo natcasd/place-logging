@@ -75,11 +75,13 @@ struct PlaceLoggerAPI: Sendable {
   }
 
   func ingest(sourceURL: URL, requestKey: String) async throws -> IngestResponse {
-    let url = baseURL.appending(path: "/api/v1/ingests")
+    var components = URLComponents(url: baseURL.appending(path: "/api/v1/ingests"), resolvingAgainstBaseURL: false)!
+    components.queryItems = [URLQueryItem(name: "wait_seconds", value: "150")]
+    let url = components.url!
     var request = URLRequest(url: url)
     request.httpMethod = "POST"
     request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-    request.timeoutInterval = 30
+    request.timeoutInterval = 180
     request.httpBody = try JSONSerialization.data(withJSONObject: [
       "source_url": sourceURL.absoluteString,
       "request_key": requestKey

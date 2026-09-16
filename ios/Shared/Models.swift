@@ -220,6 +220,10 @@ struct IngestResponse: Decodable, Sendable {
   let errorMessage: String?
   let nextRetryAt: String?
 
+  var hasNotificationOutcome: Bool {
+    ["completed", "partial", "failed", "retry_scheduled"].contains(status ?? "")
+  }
+
   var notificationTitle: String {
     if status == "queued" || status == "processing" { return "Post accepted" }
     if status == "retry_scheduled" { return "Retry scheduled" }

@@ -1,4 +1,4 @@
-"""Explicit account-service entrypoint; the production Docker command is unchanged.
+"""Account-service entrypoint selected by the production Fly process command.
 
 Run only after the offline migration and verified legacy-owner binding:
 uvicorn firebase_service:create_app --factory --host 0.0.0.0 --port 8000
@@ -11,6 +11,8 @@ from pathlib import Path
 
 from account_app import create_account_app
 from account_deletion import AccountDeletion
+from account_movie_enrichment import AccountMovieEnricher
+from movie_enrichment import WikidataMovieProvider
 from firebase_identity import FirebaseSessionVerifier, IdentityStore, create_token_verifier
 from post_processing_store import PostProcessingStore
 from post_processing_worker import PostProcessingWorker
@@ -38,7 +40,9 @@ def create_app():
     validate_release_database(accounts, project)
     credential_file = os.environ.get('GOOGLE_APPLICATION_CREDENTIALS')
     tokens = create_token_verifier(project, credential_path=Path(credential_file) if credential_file else None)
-    worker = PostProcessingWorker(PostProcessingStore(db_path, version),
-                                  Path(tempfile.gettempdir()), process_public_post)
+    queue = PostProcessingStore(db_path, version)
+    movies = AccountMovieEnricher(queue, WikidataMovieProvider())
+    worker = PostProcessingWorker(queue, Path(tempfile.gettempdir()), process_public_post,
+                                  enrich=movies.run_once)
     return create_account_app(db_path=db_path, verify_session=FirebaseSessionVerifier(tokens, accounts),
                               worker=worker, deletion=AccountDeletion(accounts, tokens))
