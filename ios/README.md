@@ -140,7 +140,17 @@ identity, queued acceptance, nullable URLs, and distinct same-place mentions.
 Full Apple/Google login, cross-process Keychain behavior, logout/relaunch, and
 real two-device isolation remain release checks after cloud configuration.
 
-## Account deletion
+## Welcome screen
+
+The welcome screen uses the complete Jot bookmark beside lowercase `jot`, with a
+single “Sign in or create an account” entry point and “Continue with” provider
+buttons. First-time provider authentication creates the Firebase account;
+returning users use the same provider credentials to reopen their library.
+The welcome redesign does not change account creation, ownership, or session
+logic. Apple sign-in remains unavailable in the temporary Google-only Personal
+Team device build until Apple setup is complete.
+
+## Account settings and deletion
 
 Account shows an email-initial avatar, the account email, and its sign-in provider.
 Its three-dot Account options menu contains Sign out and Delete account; provider

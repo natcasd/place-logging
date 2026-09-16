@@ -17,6 +17,8 @@
 		35FA7C74B90CA3C91792B341 /* PlaceLoggerAPI.swift in Sources */ = {isa = PBXBuildFile; fileRef = CD439B1B2B56ED9548B3A7D6 /* PlaceLoggerAPI.swift */; };
 		4833F5F46EB68D6E8E155F54 /* LocationModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 078E98746CBF2A957EED82FC /* LocationModel.swift */; };
 		539E263B1CEE634631ADBCF8 /* Models.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9065EE50C75A067C2E5FDFAF /* Models.swift */; };
+		56A9CE5A501087B08D810572 /* GoogleSans-OFL.txt in Resources */ = {isa = PBXBuildFile; fileRef = BD838062A9B98B216A92E943 /* GoogleSans-OFL.txt */; };
+		598166E9EEE815FD9E111821 /* GoogleSans-Medium.ttf in Resources */ = {isa = PBXBuildFile; fileRef = C284A1CFABD4FD41A730BBF1 /* GoogleSans-Medium.ttf */; };
 		69B386FEE19FE092410014D4 /* AccountSessionContract.swift in Sources */ = {isa = PBXBuildFile; fileRef = 251DF286F21344AA3B0AE581 /* AccountSessionContract.swift */; };
 		6B9118EB245C5AE58643E039 /* PlaceLoggerApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3966F5FA07BE13D9F432C431 /* PlaceLoggerApp.swift */; };
 		95F78D6A82183785A37380C1 /* AccountSession.swift in Sources */ = {isa = PBXBuildFile; fileRef = 090B72C20819A8749149A437 /* AccountSession.swift */; };
@@ -74,7 +76,9 @@
 		84E6A5828324B0E8949325D2 /* PlacesView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlacesView.swift; sourceTree = "<group>"; };
 		9065EE50C75A067C2E5FDFAF /* Models.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models.swift; sourceTree = "<group>"; };
 		AFD08F150E5FA09C074BB8E5 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		BD838062A9B98B216A92E943 /* GoogleSans-OFL.txt */ = {isa = PBXFileReference; lastKnownFileType = text; path = "GoogleSans-OFL.txt"; sourceTree = "<group>"; };
 		C0A5DF9D7C729E03A9AA36BF /* SavedCategory.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SavedCategory.swift; sourceTree = "<group>"; };
+		C284A1CFABD4FD41A730BBF1 /* GoogleSans-Medium.ttf */ = {isa = PBXFileReference; lastKnownFileType = file; path = "GoogleSans-Medium.ttf"; sourceTree = "<group>"; };
 		C3073F44E078202B89E6435C /* PlaceLogger.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = PlaceLogger.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		CD439B1B2B56ED9548B3A7D6 /* PlaceLoggerAPI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlaceLoggerAPI.swift; sourceTree = "<group>"; };
 		CEAE714E97D796CCAF830463 /* GeneratedEntryTypeCatalog.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GeneratedEntryTypeCatalog.swift; sourceTree = "<group>"; };
@@ -135,6 +139,15 @@
 			name = Products;
 			sourceTree = "<group>";
 		};
+		B2F52259D6B235E8BC1CBE51 /* Fonts */ = {
+			isa = PBXGroup;
+			children = (
+				C284A1CFABD4FD41A730BBF1 /* GoogleSans-Medium.ttf */,
+				BD838062A9B98B216A92E943 /* GoogleSans-OFL.txt */,
+			);
+			path = Fonts;
+			sourceTree = "<group>";
+		};
 		B8531FA0AABAF9495DF70EB5 /* PlaceLoggerShare */ = {
 			isa = PBXGroup;
 			children = (
@@ -170,6 +183,7 @@
 				84E6A5828324B0E8949325D2 /* PlacesView.swift */,
 				C0A5DF9D7C729E03A9AA36BF /* SavedCategory.swift */,
 				57215C611CE42A12A16FD1F0 /* SignInView.swift */,
+				B2F52259D6B235E8BC1CBE51 /* Fonts */,
 			);
 			path = PlaceLogger;
 			sourceTree = "<group>";
@@ -271,6 +285,8 @@
 			files = (
 				C55C77A4144D37D643617FE9 /* Assets.xcassets in Resources */,
 				BFD45C69D2F7294C09E4C7B7 /* Firebase in Resources */,
+				598166E9EEE815FD9E111821 /* GoogleSans-Medium.ttf in Resources */,
+				56A9CE5A501087B08D810572 /* GoogleSans-OFL.txt in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

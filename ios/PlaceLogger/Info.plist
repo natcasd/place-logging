@@ -37,6 +37,10 @@
 	<string>jot-app-20260915</string>
 	<key>NSLocationWhenInUseUsageDescription</key>
 	<string>Jot uses your location to open the saved-place map near you and recenter it when requested.</string>
+	<key>UIAppFonts</key>
+	<array>
+		<string>GoogleSans-Medium.ttf</string>
+	</array>
 	<key>UILaunchScreen</key>
 	<dict/>
 </dict>
