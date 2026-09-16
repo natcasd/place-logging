@@ -221,7 +221,7 @@ struct IngestResponse: Decodable, Sendable {
   let nextRetryAt: String?
 
   var hasNotificationOutcome: Bool {
-    ["completed", "partial", "failed", "retry_scheduled"].contains(status ?? "")
+    ["completed", "partial", "failed"].contains(status ?? "")
   }
 
   var notificationTitle: String {

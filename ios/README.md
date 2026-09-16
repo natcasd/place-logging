@@ -14,9 +14,11 @@ This retains the original extension-owned request/local-notification flow. The
 account API accepts the save durably before waiting, so server processing survives
 an extension exit, phone disconnection, or response timeout. The native POST uses
 `wait_seconds=150` and a 180-second request timeout. Other API clients still get
-immediate 202 acceptance by default. A completed, partial, failed, or retry-scheduled
+immediate 202 acceptance by default. A completed, partial, or failed
 result supplies the existing detailed notification text and destinations. A pending
-response is not presented as a completed save.
+response is not presented as a completed save. Acceptance, scheduled retries and
+transport uncertainty do not produce notifications; transport errors stay in the
+share sheet.
 
 The extension can continue while the user returns to the source app, as observed
 with the original app, but iOS controls its lifetime. If iOS terminates it before

@@ -4,7 +4,7 @@ import XCTest
 
 final class ResponseContractTests: XCTestCase {
   func testSaveNotificationsWaitForThisOperationsActualOutcome() throws {
-    for status in ["queued", "processing"] {
+    for status in ["queued", "processing", "retry_scheduled", "cancelled"] {
       let result = try JSONDecoder().decode(IngestResponse.self, from: Data("{\"ingest_id\":42,\"status\":\"\(status)\",\"saved_entries\":[]}".utf8))
       XCTAssertFalse(result.hasNotificationOutcome)
     }
