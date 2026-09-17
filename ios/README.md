@@ -5,7 +5,7 @@
 This branch tests automatic dismissal before processing finishes. The extension
 first posts with `wait_seconds=0`. Only after confirmed durable acceptance does it
 show the outlined green circle/check with “Processing…” and “You will be notified
-on completion.” It starts system dismissal after 250 ms, targeting roughly 0.5
+on completion.” It starts system dismissal after 750 ms, targeting roughly 1.0
 seconds including the system animation. Network acceptance time is additional.
 An unconfirmed save stays open with the existing error message.
 

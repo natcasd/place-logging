@@ -175,9 +175,9 @@ private struct ShareStatusView: View {
             shareLogger.info("Result request ended without a notification outcome")
           }
         }
-        // The check finishes in 220 ms; then use the system dismissal animation.
-        // Aim for roughly half a second total, including that system animation.
-        try await Task.sleep(for: .milliseconds(250))
+        // The check finishes in 220 ms, then holds before system dismissal.
+        // Aim for roughly one second total, including that system animation.
+        try await Task.sleep(for: .milliseconds(750))
         complete()
       } catch {
         guard !Task.isCancelled else { return }
