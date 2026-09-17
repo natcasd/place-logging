@@ -37,6 +37,7 @@ targets:
       path: PlaceLogger/Info.plist
       properties:
         CFBundleDisplayName: Jot
+        CFBundleName: Jot
         UILaunchScreen: {}
         APIBaseURL: https://place-logging.fly.dev
         FirebaseProjectID: jot-app-20260915
