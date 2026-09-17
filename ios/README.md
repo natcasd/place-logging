@@ -183,6 +183,15 @@ The welcome redesign does not change account creation, ownership, or session
 logic. Apple sign-in remains unavailable in the temporary Google-only Personal
 Team device build until Apple setup is complete.
 
+## Share Sheet setup guidance
+
+After the first successful library load on an installation, an empty account sees
+a single setup sheet explaining how to add Jot to Share Sheet Favorites and move
+it to the front. The app records that it evaluated the prompt after a successful
+load, so it neither interrupts established libraries nor appears automatically
+again. Account > Help > Set up the Share Sheet reopens the same guidance at any
+time. The bundled silent demonstration loops unless Reduce Motion is enabled.
+
 ## Account settings and deletion
 
 Account shows an email-initial avatar, the account email, and its sign-in provider.

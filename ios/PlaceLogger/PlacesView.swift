@@ -99,6 +99,9 @@ struct PlacesView: View {
   @State private var selectedTab: PlacesTab = .aroundMe
   @State private var requestedMapEntryID: Int?
   @State private var aroundMeFilterType: String?
+  @State private var showShareSheetSetup = false
+  @AppStorage("shareSheetSetupPromptEvaluated.v1")
+  private var hasEvaluatedShareSheetSetupPrompt = false
 
   init(router: PlaceLoggerRouter, account: AccountSessionSnapshot) {
     self.router = router
@@ -116,7 +119,7 @@ struct PlacesView: View {
         } description: {
           Text(error)
         } actions: {
-          Button("Try Again") { Task { await model.load() } }
+          Button("Try Again") { Task { await loadAndEvaluateShareSheetSetup() } }
         }
       } else {
         TabView(selection: $selectedTab) {
@@ -170,7 +173,7 @@ struct PlacesView: View {
         }
       }
     }
-    .task { await model.load() }
+    .task { await loadAndEvaluateShareSheetSetup() }
     .task(id: scenePhase) {
       guard scenePhase == .active else { return }
       while !Task.isCancelled {
@@ -216,6 +219,18 @@ struct PlacesView: View {
     .onChange(of: scenePhase) { _, phase in
       guard phase == .active else { return }
       Task { await model.load() }
+    }
+    .sheet(isPresented: $showShareSheetSetup) {
+      ShareSheetSetupView()
+    }
+  }
+
+  private func loadAndEvaluateShareSheetSetup() async {
+    await model.ensureLoaded()
+    guard model.errorMessage == nil, !hasEvaluatedShareSheetSetupPrompt else { return }
+    hasEvaluatedShareSheetSetupPrompt = true
+    if model.places.isEmpty && model.activity.isEmpty {
+      showShareSheetSetup = true
     }
   }
 
