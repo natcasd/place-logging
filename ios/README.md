@@ -1,5 +1,33 @@
 # Jot for iPhone
 
+## Share auto-close experiment
+
+This branch tests automatic dismissal before processing finishes. The extension
+first posts with `wait_seconds=0`. Only after confirmed durable acceptance does it
+show the outlined green circle/check with “Processing…” and “You will be notified
+on completion.” It starts system dismissal after 750 ms, targeting roughly 1.0
+seconds including the system animation. Network acceptance time is additional.
+An unconfirmed save stays open with the existing error message.
+
+The extension requests a half-height sheet through its preferred content size
+and selects the medium detent when a native sheet controller is available. A
+large detent remains available for expansion. The source app owns presentation,
+so the actual height still needs physical-device verification in the source app.
+
+An independent task repeats the POST with the **same request key** and
+`wait_seconds=150` to retain the existing result/local-notification attempt without
+creating a second save. It is not tied to SwiftUI view cancellation, but iOS can
+still terminate the extension after `completeRequest`. This experiment does not
+guarantee notification delivery. No polling, APNs, FCM, backend deployment, or
+database change is included. ShareFlow logs contain lifecycle events, not URLs or
+account identifiers.
+
+Verify on a phone with a new post: let the sheet close automatically, stay in the
+source app, and check for the final notification. A cached post alone does not
+exercise a long processing interval. If notifications regress, reinstall the
+previous signed build without deleting the app. The baseline flow below remains
+the rollback behavior until this experiment is accepted.
+
 The native client has two targets:
 
 - `PlaceLogger`: Apple/Google sign-in, a private saved library, Apple Maps,

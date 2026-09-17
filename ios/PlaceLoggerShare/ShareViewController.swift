@@ -1,16 +1,21 @@
 import SwiftUI
 import UniformTypeIdentifiers
 import UserNotifications
+import OSLog
+
+private let shareLogger = Logger(subsystem: "com.natcasd.placelogger.share", category: "ShareFlow")
 
 final class ShareViewController: UIViewController {
   override func viewDidLoad() {
     super.viewDidLoad()
+    configureSheet()
     let root = ShareStatusView(
       loadURL: { [weak self] in
         guard let self else { throw PlaceLoggerError.noSharedURL }
         return try await self.sharedURL()
       },
       complete: { [weak self] in
+        shareLogger.info("Requesting automatic share dismissal")
         self?.extensionContext?.completeRequest(returningItems: nil)
       },
       cancel: { [weak self] error in
@@ -28,6 +33,31 @@ final class ShareViewController: UIViewController {
       host.view.bottomAnchor.constraint(equalTo: view.bottomAnchor),
     ])
     host.didMove(toParent: self)
+  }
+
+  override func viewWillAppear(_ animated: Bool) {
+    super.viewWillAppear(animated)
+    configureSheet()
+  }
+
+  override func viewWillLayoutSubviews() {
+    super.viewWillLayoutSubviews()
+    // The extension's host owns presentation. Give it a compact preferred size
+    // even when it does not expose a sheet presentation controller to us.
+    let screenHeight = view.window?.windowScene?.coordinateSpace.bounds.height
+      ?? view.window?.screen.bounds.height ?? 800
+    let height = max(320, screenHeight / 2)
+    let size = CGSize(width: view.bounds.width, height: height)
+    if preferredContentSize != size { preferredContentSize = size }
+  }
+
+  private func configureSheet() {
+    preferredContentSize = CGSize(width: 390, height: 400)
+    guard let sheet = sheetPresentationController else { return }
+    sheet.detents = [.medium(), .large()]
+    sheet.selectedDetentIdentifier = .medium
+    sheet.prefersGrabberVisible = true
+    sheet.prefersScrollingExpandsWhenScrolledToEdge = false
   }
 
   private func sharedURL() async throws -> URL {
@@ -109,6 +139,7 @@ private struct ShareStatusView: View {
   enum Phase {
     case starting
     case saving(URL)
+    case processing
     case failed(String)
   }
 
@@ -125,10 +156,8 @@ private struct ShareStatusView: View {
         Text(url.host() ?? url.absoluteString)
           .font(.caption)
           .foregroundStyle(.secondary)
-        Text("Processing your post. You can return to scrolling; results will appear in Activity.")
-          .font(.caption)
-          .multilineTextAlignment(.center)
-          .foregroundStyle(.secondary)
+      case .processing:
+        ShareProcessingConfirmation()
       case .failed(let message):
         Image(systemName: "exclamationmark.triangle.fill")
           .font(.largeTitle)
@@ -147,21 +176,105 @@ private struct ShareStatusView: View {
         let url = try await loadURL()
         state = .saving(url)
         let current = try AccountSession.shared.requireSnapshot()
-        let result = try await PlaceLoggerAPI(account: current, authorizer: AccountSession.shared)
-          .ingest(sourceURL: url, requestKey: requestKey)
-        if result.hasNotificationOutcome {
-          await LocalNotification.send(title: result.notificationTitle, body: result.notificationBody,
-            ingestID: result.ingestID, itemID: result.itemID,
-            entry: result.savedEntries.count == 1 ? result.savedEntries.first : nil, account: current)
+        let api = PlaceLoggerAPI(account: current, authorizer: AccountSession.shared)
+        let key = requestKey
+        _ = try await api.ingest(sourceURL: url, requestKey: key, waitForResult: false)
+        shareLogger.info("Save durably accepted")
+        state = .processing
+
+        // This task deliberately outlives the SwiftUI view's task. Reuse the
+        // accepted request key so the waiting POST cannot create another save.
+        // iOS may still terminate the extension after completeRequest: this is
+        // an on-device experiment, not a guarantee of background notifications.
+        Task {
+          do {
+            let result = try await api.ingest(sourceURL: url, requestKey: key)
+            shareLogger.info("Save result received after acceptance")
+            if result.hasNotificationOutcome {
+              await LocalNotification.send(title: result.notificationTitle, body: result.notificationBody,
+                ingestID: result.ingestID, itemID: result.itemID,
+                entry: result.savedEntries.count == 1 ? result.savedEntries.first : nil, account: current)
+            }
+          } catch {
+            // Receipt is already confirmed. A failed result request must not
+            // produce a misleading failure/accepted notification.
+            shareLogger.info("Result request ended without a notification outcome")
+          }
         }
+        // The check finishes in 220 ms, then holds before system dismissal.
+        // Aim for roughly one second total, including that system animation.
+        try await Task.sleep(for: .milliseconds(750))
         complete()
       } catch {
+        guard !Task.isCancelled else { return }
         // A transport error is not a processing outcome. Keep it in the sheet;
         // the accepted save may still finish successfully on the server.
         state = .failed(error.localizedDescription)
       }
     }
   }
+}
+
+/// Acknowledges receipt, not completion of post processing.
+private struct ShareProcessingConfirmation: View {
+  var body: some View {
+    VStack(spacing: 19) {
+      ShareReceiptCheckmark()
+      VStack(spacing: 9) {
+        Text("Processing…")
+          .font(.title2.weight(.semibold))
+        Text("You will be notified on completion.")
+          .font(.subheadline)
+          .foregroundStyle(.secondary)
+          .multilineTextAlignment(.center)
+      }
+    }
+  }
+}
+
+private struct ShareReceiptCheckmark: View {
+  @Environment(\.accessibilityReduceMotion) private var reduceMotion
+  @State private var ringProgress: CGFloat = 0
+  @State private var checkProgress: CGFloat = 0
+
+  var body: some View {
+    ZStack {
+      Circle()
+        .trim(from: 0, to: reduceMotion ? 1 : ringProgress)
+        .stroke(style: StrokeStyle(lineWidth: 3, lineCap: .round))
+        .rotationEffect(.degrees(-90))
+      CheckmarkStroke()
+        .trim(from: 0, to: reduceMotion ? 1 : checkProgress)
+        .stroke(style: StrokeStyle(lineWidth: 3, lineCap: .round, lineJoin: .round))
+    }
+    .foregroundStyle(.green)
+    .frame(width: 68, height: 68)
+    .accessibilityLabel("Post received")
+    .task {
+      guard !reduceMotion else { return }
+      withAnimation(.easeOut(duration: 0.16)) { ringProgress = 1 }
+      do {
+        try await Task.sleep(for: .milliseconds(100))
+        withAnimation(.easeOut(duration: 0.12)) { checkProgress = 1 }
+      } catch {
+        // Dismissal cancels the remaining animation.
+      }
+    }
+  }
+
+  private struct CheckmarkStroke: Shape {
+    func path(in rect: CGRect) -> Path {
+      Path { path in
+        path.move(to: CGPoint(x: rect.width * 0.29, y: rect.height * 0.51))
+        path.addLine(to: CGPoint(x: rect.width * 0.43, y: rect.height * 0.65))
+        path.addLine(to: CGPoint(x: rect.width * 0.71, y: rect.height * 0.36))
+      }
+    }
+  }
+}
+
+#Preview("Share received") {
+  ShareProcessingConfirmation()
 }
 
 @MainActor
@@ -185,7 +298,12 @@ private enum LocalNotification {
     let request = UNNotificationRequest(identifier: identifier, content: content,
                                          trigger: UNTimeIntervalNotificationTrigger(timeInterval: 1, repeats: false))
     guard (try? await AccountSession.shared.validate(account)) != nil else { return }
-    try? await center.add(request)
+    do {
+      try await center.add(request)
+      shareLogger.info("Completion notification scheduled")
+    } catch {
+      shareLogger.info("Completion notification could not be scheduled")
+    }
     if (try? await AccountSession.shared.validate(account)) == nil {
       center.removePendingNotificationRequests(withIdentifiers: [identifier])
       center.removeDeliveredNotifications(withIdentifiers: [identifier])

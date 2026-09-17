@@ -155,6 +155,26 @@ final class AccountTransportTests: XCTestCase {
     XCTAssertEqual(state.1, 0)
   }
 
+  func testAcceptanceAndResultWaitReuseOneSaveIntent() async throws {
+    let auth = TestAuthorizer(account)
+    let requests = Requests()
+    StubProtocol.install { request in
+      _ = await requests.record(request)
+      return (202, Data(#"{"ingest_id":42,"item_id":7,"status":"queued","accepted_sequence":1,"saved_entries":[]}"#.utf8))
+    }
+    let client = api(auth)
+    let url = URL(string: "https://youtu.be/post")!
+    _ = try await client.ingest(sourceURL: url, requestKey: "one-share", waitForResult: false)
+    _ = try await client.ingest(sourceURL: url, requestKey: "one-share")
+    let recorded = await requests.all()
+    XCTAssertEqual(recorded.count, 2)
+    XCTAssertEqual(recorded[0].httpBody, recorded[1].httpBody)
+    XCTAssertEqual(URLComponents(url: recorded[0].url!, resolvingAgainstBaseURL: false)?.queryItems,
+                   [URLQueryItem(name: "wait_seconds", value: "0")])
+    XCTAssertEqual(URLComponents(url: recorded[1].url!, resolvingAgainstBaseURL: false)?.queryItems,
+                   [URLQueryItem(name: "wait_seconds", value: "150")])
+  }
+
   func testOldResponseCannotPopulateNewSession() async throws {
     let auth = TestAuthorizer(account)
     StubProtocol.install { _ in
