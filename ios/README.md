@@ -109,23 +109,28 @@ saved-place pins visible.
    project `jot-app-20260915` (Jot App). This project uses standard Firebase
    Authentication on Blaze. Google is enabled; Apple setup and physical-device
    provisioning remain pending Apple Developer Program approval.
-2. Download its `GoogleService-Info.plist` into `Firebase/`. The resource folder
-   is bundled in both targets. The configuration is ignored by Git; no Admin SDK
-   credential belongs in the app. A missing/wrong-project configuration builds
-   successfully but shows sign-in unavailable and makes no library requests.
-3. Copy `Config/Secrets.xcconfig.example` to `Config/Secrets.xcconfig` and set
-   `GOOGLE_REVERSED_CLIENT_ID` from the downloaded configuration. This registers
-   Google's native OAuth callback URL scheme. Existing legacy token settings are
-   unused and do not grant access to the account API.
-4. Run `xcodegen generate` from this directory.
-5. Build without signing:
+2. Keep the checked-in `Firebase/GoogleService-Info.plist` and
+   `GOOGLE_REVERSED_CLIENT_ID` in `Config/Base.xcconfig` aligned with that Firebase
+   registration. They contain public native-client identifiers that are embedded
+   in the app. Never put Admin SDK credentials, service-account files, backend
+   bearer tokens, or OAuth web-client secrets in either location.
+3. Run `xcodegen generate` from this directory.
+4. Build without signing:
    `xcodebuild -project PlaceLogger.xcodeproj -scheme PlaceLogger -sdk iphonesimulator -configuration Debug CODE_SIGNING_ALLOWED=NO build`
-6. Run the standalone native account-contract tests: `swift test`.
+5. Run the standalone native account-contract tests: `swift test`.
 
 Both targets share `$(AppIdentifierPrefix)com.natcasd.placelogger.auth`. The main
 app additionally requires Sign in with Apple. Physical-device provisioning must
 support these capabilities; an unsigned simulator build does not verify them.
 Cloud/provider configuration and actual phone login still require validation.
+
+Until Apple Developer Program enrollment is approved, use the
+`GoogleOnlyDeviceDebug` configuration for physical-device Google sign-in tests.
+It keeps the shared keychain entitlement, omits only the unavailable Sign in with
+Apple entitlement, and removes Apple sign-in UI from that build. It must not be
+used for release archives. For example:
+
+`xcodebuild -project PlaceLogger.xcodeproj -scheme PlaceLogger -configuration GoogleOnlyDeviceDebug -destination 'id=DEVICE_ID' -derivedDataPath /tmp/jot-google-device build`
 
 Firebase's project configuration API must report `subtype: FIREBASE_AUTH`.
 Initialize standard Authentication through the Firebase console's Get started

@@ -34,6 +34,12 @@ jobs:
         run: sudo xcode-select --switch /Applications/Xcode_26.6.app
       - name: Test account transport and response contracts
         run: swift test --package-path ios
+      - name: Verify Firebase client configuration
+        run: |
+          test "$(/usr/libexec/PlistBuddy -c 'Print :BUNDLE_ID' ios/Firebase/GoogleService-Info.plist)" = "com.natcasd.placelogger"
+          test "$(/usr/libexec/PlistBuddy -c 'Print :PROJECT_ID' ios/Firebase/GoogleService-Info.plist)" = "jot-app-20260915"
+          reversed_client_id="$(/usr/libexec/PlistBuddy -c 'Print :REVERSED_CLIENT_ID' ios/Firebase/GoogleService-Info.plist)"
+          grep -Fq "GOOGLE_REVERSED_CLIENT_ID = ${reversed_client_id}" ios/Config/Base.xcconfig
       - name: Build app and share extension without signing
         run: >-
           xcodebuild

@@ -74,6 +74,7 @@
 		6CD6A43383B4B57A4456C3BB /* PlaceLogger.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = PlaceLogger.entitlements; sourceTree = "<group>"; };
 		81D76753AC00D3F0620B6AE5 /* Firebase */ = {isa = PBXFileReference; lastKnownFileType = folder; path = Firebase; sourceTree = SOURCE_ROOT; };
 		84E6A5828324B0E8949325D2 /* PlacesView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlacesView.swift; sourceTree = "<group>"; };
+		85DEFDF17C133D0B46199B95 /* GoogleOnlyDevice.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = GoogleOnlyDevice.entitlements; sourceTree = "<group>"; };
 		9065EE50C75A067C2E5FDFAF /* Models.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models.swift; sourceTree = "<group>"; };
 		AFD08F150E5FA09C074BB8E5 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		BD838062A9B98B216A92E943 /* GoogleSans-OFL.txt */ = {isa = PBXFileReference; lastKnownFileType = text; path = "GoogleSans-OFL.txt"; sourceTree = "<group>"; };
@@ -175,6 +176,7 @@
 			children = (
 				AFD08F150E5FA09C074BB8E5 /* Assets.xcassets */,
 				CEAE714E97D796CCAF830463 /* GeneratedEntryTypeCatalog.swift */,
+				85DEFDF17C133D0B46199B95 /* GoogleOnlyDevice.entitlements */,
 				4A0D76B916EFF821B9BED9A7 /* Info.plist */,
 				078E98746CBF2A957EED82FC /* LocationModel.swift */,
 				F78E9211232784677A89E816 /* MapSearchModel.swift */,
@@ -388,6 +390,73 @@
 			};
 			name = Debug;
 		};
+		37A6F3C17421FF06521B71BC /* GoogleOnlyDeviceDebug */ = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReference = FB99F6D2DFD3814F7A9E74CF /* Base.xcconfig */;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				CURRENT_PROJECT_VERSION = 1;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				DEVELOPMENT_TEAM = 92QRZ5S66S;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"$(inherited)",
+					"DEBUG=1",
+				);
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				MARKETING_VERSION = 0.1.0;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				MTL_FAST_MATH = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_VERSION = 6.0;
+			};
+			name = GoogleOnlyDeviceDebug;
+		};
 		44E00FF7B3F92F062182E75F /* Debug */ = {
 			isa = XCBuildConfiguration;
 			baseConfigurationReference = FB99F6D2DFD3814F7A9E74CF /* Base.xcconfig */;
@@ -557,6 +626,50 @@
 			};
 			name = Release;
 		};
+		8A6855EF60D5C6FDF7B58784 /* GoogleOnlyDeviceDebug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				APPLICATION_EXTENSION_API_ONLY = YES;
+				CODE_SIGN_ENTITLEMENTS = PlaceLoggerShare/PlaceLoggerShare.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = PlaceLoggerShare/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				OTHER_LDFLAGS = "$(inherited) -ObjC";
+				PRODUCT_BUNDLE_IDENTIFIER = com.natcasd.placelogger.share;
+				PRODUCT_NAME = PlaceLoggerShare;
+				SDKROOT = iphoneos;
+				SKIP_INSTALL = YES;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = GoogleOnlyDeviceDebug;
+		};
+		F9E64A68528CE72A07C1381E /* GoogleOnlyDeviceDebug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_ENTITLEMENTS = PlaceLogger/GoogleOnlyDevice.entitlements;
+				CODE_SIGN_IDENTITY = "iPhone Developer";
+				CODE_SIGN_STYLE = Automatic;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = PlaceLogger/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				OTHER_LDFLAGS = "$(inherited) -ObjC";
+				PRODUCT_BUNDLE_IDENTIFIER = com.natcasd.placelogger;
+				PRODUCT_NAME = PlaceLogger;
+				SDKROOT = iphoneos;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "$(inherited) GOOGLE_ONLY_DEVICE_DEBUG";
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = GoogleOnlyDeviceDebug;
+		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
@@ -564,6 +677,7 @@
 			isa = XCConfigurationList;
 			buildConfigurations = (
 				1A38EE354189511A51B43190 /* Debug */,
+				8A6855EF60D5C6FDF7B58784 /* GoogleOnlyDeviceDebug */,
 				0D389E576F6D826AD04749E4 /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
@@ -573,6 +687,7 @@
 			isa = XCConfigurationList;
 			buildConfigurations = (
 				6111B653C58A5687D04DD574 /* Debug */,
+				F9E64A68528CE72A07C1381E /* GoogleOnlyDeviceDebug */,
 				6D6310565C920A5A1A872264 /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
@@ -582,6 +697,7 @@
 			isa = XCConfigurationList;
 			buildConfigurations = (
 				44E00FF7B3F92F062182E75F /* Debug */,
+				37A6F3C17421FF06521B71BC /* GoogleOnlyDeviceDebug */,
 				4E38FE34DC8E372BE32905FD /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;

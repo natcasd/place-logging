@@ -25,7 +25,4 @@ ios/build/
 *.xcuserstate
 xcuserdata/
 
-# Local Firebase app configuration (download after registering Jot).
-ios/Firebase/GoogleService-Info.plist
-
 ios/.build/

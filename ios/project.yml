@@ -6,9 +6,11 @@ options:
   createIntermediateGroups: true
 configs:
   Debug: debug
+  GoogleOnlyDeviceDebug: debug
   Release: release
 configFiles:
   Debug: Config/Base.xcconfig
+  GoogleOnlyDeviceDebug: Config/Base.xcconfig
   Release: Config/Base.xcconfig
 settings:
   base:
@@ -48,20 +50,18 @@ targets:
           - CFBundleURLSchemes:
               - $(GOOGLE_REVERSED_CLIENT_ID)
         NSLocationWhenInUseUsageDescription: Jot uses your location to open the saved-place map near you and recenter it when requested.
-    entitlements:
-      path: PlaceLogger/PlaceLogger.entitlements
-      properties:
-        keychain-access-groups:
-          - $(AppIdentifierPrefix)com.natcasd.placelogger.auth
-        com.apple.developer.applesignin:
-          - Default
     settings:
       base:
+        CODE_SIGN_ENTITLEMENTS: PlaceLogger/PlaceLogger.entitlements
         OTHER_LDFLAGS: $(inherited) -ObjC
         PRODUCT_BUNDLE_IDENTIFIER: com.natcasd.placelogger
         PRODUCT_NAME: PlaceLogger
         GENERATE_INFOPLIST_FILE: false
         CODE_SIGN_STYLE: Automatic
+      configs:
+        GoogleOnlyDeviceDebug:
+          CODE_SIGN_ENTITLEMENTS: PlaceLogger/GoogleOnlyDevice.entitlements
+          SWIFT_ACTIVE_COMPILATION_CONDITIONS: $(inherited) GOOGLE_ONLY_DEVICE_DEBUG
     dependencies:
       - package: Firebase
         product: FirebaseAuth
@@ -97,16 +97,12 @@ targets:
               NSExtensionActivationSupportsText: true
               NSExtensionActivationSupportsImageWithMaxCount: 1
               NSExtensionActivationSupportsMovieWithMaxCount: 1
-    entitlements:
-      path: PlaceLoggerShare/PlaceLoggerShare.entitlements
-      properties:
-        keychain-access-groups:
-          - $(AppIdentifierPrefix)com.natcasd.placelogger.auth
     dependencies:
       - package: Firebase
         product: FirebaseAuth
     settings:
       base:
+        CODE_SIGN_ENTITLEMENTS: PlaceLoggerShare/PlaceLoggerShare.entitlements
         OTHER_LDFLAGS: $(inherited) -ObjC
         PRODUCT_BUNDLE_IDENTIFIER: com.natcasd.placelogger.share
         PRODUCT_NAME: PlaceLoggerShare
