@@ -7,6 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		05871F5CB75C9D28A14CECCE /* ShareSheetSetupView.swift in Sources */ = {isa = PBXBuildFile; fileRef = FCB25A4CECC5B483A0D09AE3 /* ShareSheetSetupView.swift */; };
 		064A3063186D6FA1DE5DCC64 /* ShareViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 14F9A82FE76648FCA9EB4AE7 /* ShareViewController.swift */; };
 		141865D65714B738433B24A6 /* AccountSession.swift in Sources */ = {isa = PBXBuildFile; fileRef = 090B72C20819A8749149A437 /* AccountSession.swift */; };
 		16A4DDC42F963A621D2A47BF /* SavedCategory.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0A5DF9D7C729E03A9AA36BF /* SavedCategory.swift */; };
@@ -19,6 +20,7 @@
 		539E263B1CEE634631ADBCF8 /* Models.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9065EE50C75A067C2E5FDFAF /* Models.swift */; };
 		56A9CE5A501087B08D810572 /* GoogleSans-OFL.txt in Resources */ = {isa = PBXBuildFile; fileRef = BD838062A9B98B216A92E943 /* GoogleSans-OFL.txt */; };
 		598166E9EEE815FD9E111821 /* GoogleSans-Medium.ttf in Resources */ = {isa = PBXBuildFile; fileRef = C284A1CFABD4FD41A730BBF1 /* GoogleSans-Medium.ttf */; };
+		64108E3C542A4FF571206BEF /* JotShareSetup.mp4 in Resources */ = {isa = PBXBuildFile; fileRef = 6A3C4C10EDA63E082C3BD152 /* JotShareSetup.mp4 */; };
 		69B386FEE19FE092410014D4 /* AccountSessionContract.swift in Sources */ = {isa = PBXBuildFile; fileRef = 251DF286F21344AA3B0AE581 /* AccountSessionContract.swift */; };
 		6B9118EB245C5AE58643E039 /* PlaceLoggerApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3966F5FA07BE13D9F432C431 /* PlaceLoggerApp.swift */; };
 		95F78D6A82183785A37380C1 /* AccountSession.swift in Sources */ = {isa = PBXBuildFile; fileRef = 090B72C20819A8749149A437 /* AccountSession.swift */; };
@@ -71,6 +73,7 @@
 		4A0D76B916EFF821B9BED9A7 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		57215C611CE42A12A16FD1F0 /* SignInView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SignInView.swift; sourceTree = "<group>"; };
 		6068070D6A2AE7358E5EAD2E /* PlaceLoggerShare.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = PlaceLoggerShare.entitlements; sourceTree = "<group>"; };
+		6A3C4C10EDA63E082C3BD152 /* JotShareSetup.mp4 */ = {isa = PBXFileReference; path = JotShareSetup.mp4; sourceTree = "<group>"; };
 		6CD6A43383B4B57A4456C3BB /* PlaceLogger.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = PlaceLogger.entitlements; sourceTree = "<group>"; };
 		81D76753AC00D3F0620B6AE5 /* Firebase */ = {isa = PBXFileReference; lastKnownFileType = folder; path = Firebase; sourceTree = SOURCE_ROOT; };
 		84E6A5828324B0E8949325D2 /* PlacesView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlacesView.swift; sourceTree = "<group>"; };
@@ -87,6 +90,7 @@
 		ED4E058694F66A65E2067927 /* PlaceLoggerShare.appex */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = "wrapper.app-extension"; path = PlaceLoggerShare.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 		F78E9211232784677A89E816 /* MapSearchModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MapSearchModel.swift; sourceTree = "<group>"; };
 		FB99F6D2DFD3814F7A9E74CF /* Base.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Base.xcconfig; sourceTree = "<group>"; };
+		FCB25A4CECC5B483A0D09AE3 /* ShareSheetSetupView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShareSheetSetupView.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -159,6 +163,14 @@
 			path = PlaceLoggerShare;
 			sourceTree = "<group>";
 		};
+		DFB024173DE61365F2305AD6 /* Resources */ = {
+			isa = PBXGroup;
+			children = (
+				6A3C4C10EDA63E082C3BD152 /* JotShareSetup.mp4 */,
+			);
+			path = Resources;
+			sourceTree = "<group>";
+		};
 		E58E0C81873DC123E36A0D95 = {
 			isa = PBXGroup;
 			children = (
@@ -184,8 +196,10 @@
 				3966F5FA07BE13D9F432C431 /* PlaceLoggerApp.swift */,
 				84E6A5828324B0E8949325D2 /* PlacesView.swift */,
 				C0A5DF9D7C729E03A9AA36BF /* SavedCategory.swift */,
+				FCB25A4CECC5B483A0D09AE3 /* ShareSheetSetupView.swift */,
 				57215C611CE42A12A16FD1F0 /* SignInView.swift */,
 				B2F52259D6B235E8BC1CBE51 /* Fonts */,
+				DFB024173DE61365F2305AD6 /* Resources */,
 			);
 			path = PlaceLogger;
 			sourceTree = "<group>";
@@ -289,6 +303,7 @@
 				BFD45C69D2F7294C09E4C7B7 /* Firebase in Resources */,
 				598166E9EEE815FD9E111821 /* GoogleSans-Medium.ttf in Resources */,
 				56A9CE5A501087B08D810572 /* GoogleSans-OFL.txt in Resources */,
+				64108E3C542A4FF571206BEF /* JotShareSetup.mp4 in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -331,6 +346,7 @@
 				6B9118EB245C5AE58643E039 /* PlaceLoggerApp.swift in Sources */,
 				D8CD16D2D03261DA49C75A82 /* PlacesView.swift in Sources */,
 				16A4DDC42F963A621D2A47BF /* SavedCategory.swift in Sources */,
+				05871F5CB75C9D28A14CECCE /* ShareSheetSetupView.swift in Sources */,
 				1BCE08B7F007446A3BDC80EF /* SignInView.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;

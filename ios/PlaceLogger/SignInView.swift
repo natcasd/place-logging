@@ -294,6 +294,7 @@ struct AccountSettingsView: View {
   @State private var errorMessage: String?
   @State private var showDeletion = false
   @State private var deletionAccount: AccountSessionSnapshot?
+  @State private var showShareSheetSetup = false
 
   private var email: String? {
     guard let email = Auth.auth().currentUser?.email?.trimmingCharacters(in: .whitespacesAndNewlines),
@@ -314,52 +315,88 @@ struct AccountSettingsView: View {
   var body: some View {
     NavigationStack {
       ScrollView {
-        HStack(spacing: 12) {
-          ZStack {
-            Circle().fill(Color.primary.opacity(0.07))
-            if let initial = email?.first {
-              Text(String(initial).uppercased()).font(.title2.weight(.medium))
-            } else {
-              Image(systemName: "person.fill").font(.title2)
+        VStack(spacing: 28) {
+          HStack(spacing: 12) {
+            ZStack {
+              Circle().fill(Color.primary.opacity(0.07))
+              if let initial = email?.first {
+                Text(String(initial).uppercased()).font(.title2.weight(.medium))
+              } else {
+                Image(systemName: "person.fill").font(.title2)
+              }
             }
-          }
-          .frame(width: 48, height: 48)
-          .accessibilityHidden(true)
+            .frame(width: 48, height: 48)
+            .accessibilityHidden(true)
 
-          VStack(alignment: .leading, spacing: 5) {
-            Text(email ?? "Your account").font(.body)
-            Text(signInDescription).font(.footnote).foregroundStyle(.secondary)
-          }
-          .frame(maxWidth: .infinity, alignment: .leading)
-          .accessibilityElement(children: .combine)
+            VStack(alignment: .leading, spacing: 5) {
+              Text(email ?? "Your account").font(.body)
+              Text(signInDescription).font(.footnote).foregroundStyle(.secondary)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .accessibilityElement(children: .combine)
 
-          Menu {
-            Button {
-              do {
-                try AccountSession.shared.signOut()
-                GIDSignIn.sharedInstance.signOut()
-              } catch { errorMessage = error.localizedDescription }
+            Menu {
+              Button {
+                do {
+                  try AccountSession.shared.signOut()
+                  GIDSignIn.sharedInstance.signOut()
+                } catch { errorMessage = error.localizedDescription }
+              } label: {
+                Label("Sign out", systemImage: "rectangle.portrait.and.arrow.right")
+              }
+              Button(role: .destructive) {
+                do {
+                  deletionAccount = try AccountSession.shared.requireSnapshot()
+                  showDeletion = true
+                } catch { errorMessage = error.localizedDescription }
+              } label: {
+                Label("Delete account", systemImage: "trash")
+              }
             } label: {
-              Label("Sign out", systemImage: "rectangle.portrait.and.arrow.right")
+              Image(systemName: "ellipsis")
+                .font(.title3)
+                .frame(width: 44, height: 44)
+                .contentShape(Rectangle())
             }
-            Button(role: .destructive) {
-              do {
-                deletionAccount = try AccountSession.shared.requireSnapshot()
-                showDeletion = true
-              } catch { errorMessage = error.localizedDescription }
-            } label: {
-              Label("Delete account", systemImage: "trash")
-            }
-          } label: {
-            Image(systemName: "ellipsis")
-              .font(.title3)
-              .frame(width: 44, height: 44)
-              .contentShape(Rectangle())
+            .tint(.primary)
+            .accessibilityLabel("Account options")
           }
-          .tint(.primary)
-          .accessibilityLabel("Account options")
+          .padding(.horizontal, 20)
+
+          VStack(alignment: .leading, spacing: 8) {
+            Text("HELP")
+              .font(.footnote.weight(.semibold))
+              .foregroundStyle(.secondary)
+              .padding(.horizontal, 16)
+
+            Button { showShareSheetSetup = true } label: {
+              HStack(spacing: 14) {
+                Image(systemName: "square.and.arrow.up")
+                  .font(.title3.weight(.semibold))
+                  .foregroundStyle(.orange)
+                  .frame(width: 32)
+
+                VStack(alignment: .leading, spacing: 3) {
+                  Text("Set up the Share Sheet")
+                    .foregroundStyle(.primary)
+                  Text("Add Jot to Favorites")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+                Image(systemName: "chevron.right")
+                  .font(.footnote.weight(.semibold))
+                  .foregroundStyle(.tertiary)
+              }
+              .padding(16)
+              .background(Color(uiColor: .secondarySystemGroupedBackground))
+              .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+            }
+            .buttonStyle(.plain)
+          }
+          .padding(.horizontal, 20)
         }
-        .padding(.horizontal, 20)
         .padding(.top, 24)
       }
       .background(Color(uiColor: .systemGroupedBackground))
@@ -373,6 +410,9 @@ struct AccountSettingsView: View {
       }
       .sheet(isPresented: $showDeletion) {
         if let deletionAccount { DeleteAccountView(account: deletionAccount) }
+      }
+      .sheet(isPresented: $showShareSheetSetup) {
+        ShareSheetSetupView()
       }
     }
   }
