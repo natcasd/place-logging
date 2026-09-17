@@ -7,71 +7,47 @@ struct ShareSheetSetupView: View {
   @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
   var body: some View {
-    NavigationStack {
-      ScrollView {
-        VStack(spacing: 20) {
-          Image(systemName: "square.and.arrow.up")
-            .font(.system(size: 32, weight: .semibold))
-            .foregroundStyle(.orange)
-            .frame(width: 64, height: 64)
-            .background(Color.orange.opacity(0.12), in: Circle())
-            .accessibilityHidden(true)
+    VStack(spacing: 14) {
+      HStack(spacing: 12) {
+        Text("Add Jot to Favorites")
+          .font(.title2.bold())
 
-          VStack(spacing: 10) {
-            Text("Keep Jot one tap away")
-              .font(.title2.bold())
+        Spacer()
 
-            Text("Add Jot to your Share Sheet Favorites so it’s easy to find whenever you save a place.")
-              .foregroundStyle(.secondary)
-          }
-          .multilineTextAlignment(.center)
-
-          LoopingShareSetupVideo(playsAutomatically: !reduceMotion)
-            .aspectRatio(1206 / 1740, contentMode: .fit)
-            .frame(maxWidth: 340)
-            .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
-            .overlay {
-              RoundedRectangle(cornerRadius: 24, style: .continuous)
-                .strokeBorder(Color.primary.opacity(0.08))
-            }
-            .accessibilityElement(children: .ignore)
-            .accessibilityLabel(
-              "Video showing how to open More, tap Edit, add Jot to Favorites, and move it to the top"
-            )
-
-          Text("Tap More → Edit → + beside Jot. Move Jot to the top, then tap Done.")
-            .font(.subheadline.weight(.medium))
-            .multilineTextAlignment(.center)
-            .frame(maxWidth: 360)
+        Button { dismiss() } label: {
+          Image(systemName: "xmark")
+            .font(.body.weight(.semibold))
+            .frame(width: 36, height: 36)
+            .background(Color.primary.opacity(0.07), in: Circle())
         }
-        .padding(.horizontal, 24)
-        .padding(.top, 20)
-        .padding(.bottom, 112)
+        .foregroundStyle(.primary)
+        .accessibilityLabel("Close")
+      }
+
+      LoopingShareSetupVideo(playsAutomatically: !reduceMotion)
+        .aspectRatio(1206 / 1740, contentMode: .fit)
         .frame(maxWidth: .infinity)
-      }
-      .background(Color(uiColor: .systemGroupedBackground))
-      .navigationTitle("Set up sharing")
-      .navigationBarTitleDisplayMode(.inline)
-      .toolbar {
-        ToolbarItem(placement: .cancellationAction) {
-          Button { dismiss() } label: {
-            Image(systemName: "xmark")
-          }
-          .accessibilityLabel("Close")
-        }
-      }
-      .safeAreaInset(edge: .bottom) {
-        Button("Got it") { dismiss() }
-          .font(.headline)
-          .frame(maxWidth: 420, minHeight: 52)
-          .background(Color.orange, in: Capsule())
-          .foregroundStyle(.white)
-          .padding(.horizontal, 24)
-          .padding(.vertical, 12)
-          .frame(maxWidth: .infinity)
-          .background(.ultraThinMaterial)
-      }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(
+          "Video showing how to open More, tap Edit, add Jot to Favorites, and move it to the top"
+        )
+
+      Text("Tap More → Edit → + beside Jot. Move it to the top, then tap Done.")
+        .font(.subheadline.weight(.medium))
+        .multilineTextAlignment(.center)
+        .fixedSize(horizontal: false, vertical: true)
+
+      Button("Got it") { dismiss() }
+        .font(.headline)
+        .frame(maxWidth: .infinity, minHeight: 52)
+        .background(Color.orange, in: Capsule())
+        .foregroundStyle(.white)
     }
+    .padding(.horizontal, 20)
+    .padding(.top, 12)
+    .padding(.bottom, 16)
+    .frame(maxWidth: .infinity, maxHeight: .infinity)
+    .background(Color(uiColor: .systemGroupedBackground))
     .presentationDragIndicator(.visible)
   }
 }

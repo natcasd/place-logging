@@ -290,7 +290,7 @@ private struct SignInButtons: View {
   }
 }
 
-struct AccountSettingsView: View {
+struct SettingsView: View {
   @State private var errorMessage: String?
   @State private var showDeletion = false
   @State private var deletionAccount: AccountSessionSnapshot?
@@ -302,105 +302,88 @@ struct AccountSettingsView: View {
     return email
   }
 
-  private var signInDescription: String {
-    let providers = Auth.auth().currentUser?.providerData.map(\.providerID) ?? []
-    if providers.contains("apple.com") && providers.contains("google.com") {
-      return "Connected with Apple and Google"
-    }
-    if providers.contains("apple.com") { return "Signed in with Apple" }
-    if providers.contains("google.com") { return "Signed in with Google" }
-    return "Signed in"
-  }
-
   var body: some View {
     NavigationStack {
       ScrollView {
-        VStack(spacing: 28) {
-          HStack(spacing: 12) {
-            ZStack {
-              Circle().fill(Color.primary.opacity(0.07))
-              if let initial = email?.first {
-                Text(String(initial).uppercased()).font(.title2.weight(.medium))
-              } else {
-                Image(systemName: "person.fill").font(.title2)
-              }
-            }
-            .frame(width: 48, height: 48)
-            .accessibilityHidden(true)
+        VStack(alignment: .leading, spacing: 24) {
+          VStack(alignment: .leading, spacing: 10) {
+            Text("Account")
+              .font(.headline)
 
-            VStack(alignment: .leading, spacing: 5) {
-              Text(email ?? "Your account").font(.body)
-              Text(signInDescription).font(.footnote).foregroundStyle(.secondary)
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .accessibilityElement(children: .combine)
+            HStack(spacing: 12) {
+              ZStack {
+                Circle().fill(Color.primary.opacity(0.07))
+                if let initial = email?.first {
+                  Text(String(initial).uppercased()).font(.title2.weight(.medium))
+                } else {
+                  Image(systemName: "person.fill").font(.title2)
+                }
+              }
+              .frame(width: 48, height: 48)
+              .accessibilityHidden(true)
 
-            Menu {
-              Button {
-                do {
-                  try AccountSession.shared.signOut()
-                  GIDSignIn.sharedInstance.signOut()
-                } catch { errorMessage = error.localizedDescription }
-              } label: {
-                Label("Sign out", systemImage: "rectangle.portrait.and.arrow.right")
+              VStack(alignment: .leading, spacing: 5) {
+                Text(email ?? "Your account").font(.body)
               }
-              Button(role: .destructive) {
-                do {
-                  deletionAccount = try AccountSession.shared.requireSnapshot()
-                  showDeletion = true
-                } catch { errorMessage = error.localizedDescription }
+              .frame(maxWidth: .infinity, alignment: .leading)
+              .accessibilityElement(children: .combine)
+
+              Menu {
+                Button {
+                  do {
+                    try AccountSession.shared.signOut()
+                    GIDSignIn.sharedInstance.signOut()
+                  } catch { errorMessage = error.localizedDescription }
+                } label: {
+                  Label("Sign out", systemImage: "rectangle.portrait.and.arrow.right")
+                }
+                Button(role: .destructive) {
+                  do {
+                    deletionAccount = try AccountSession.shared.requireSnapshot()
+                    showDeletion = true
+                  } catch { errorMessage = error.localizedDescription }
+                } label: {
+                  Label("Delete account", systemImage: "trash")
+                }
               } label: {
-                Label("Delete account", systemImage: "trash")
+                Image(systemName: "ellipsis")
+                  .font(.title3)
+                  .frame(width: 44, height: 44)
+                  .contentShape(Rectangle())
               }
-            } label: {
-              Image(systemName: "ellipsis")
-                .font(.title3)
-                .frame(width: 44, height: 44)
-                .contentShape(Rectangle())
+              .tint(.primary)
+              .accessibilityLabel("Account options")
             }
-            .tint(.primary)
-            .accessibilityLabel("Account options")
           }
-          .padding(.horizontal, 20)
 
-          VStack(alignment: .leading, spacing: 8) {
-            Text("HELP")
-              .font(.footnote.weight(.semibold))
-              .foregroundStyle(.secondary)
-              .padding(.horizontal, 16)
+          VStack(alignment: .leading, spacing: 10) {
+            Text("Help")
+              .font(.headline)
 
             Button { showShareSheetSetup = true } label: {
-              HStack(spacing: 14) {
+              HStack(spacing: 12) {
                 Image(systemName: "square.and.arrow.up")
                   .font(.title3.weight(.semibold))
                   .foregroundStyle(.orange)
-                  .frame(width: 32)
+                  .frame(width: 48, height: 48)
 
-                VStack(alignment: .leading, spacing: 3) {
-                  Text("Set up the Share Sheet")
-                    .foregroundStyle(.primary)
-                  Text("Add Jot to Favorites")
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
+                Text("Add Jot to Favorites")
+                  .foregroundStyle(.primary)
+                  .frame(maxWidth: .infinity, alignment: .leading)
 
                 Image(systemName: "chevron.right")
                   .font(.footnote.weight(.semibold))
                   .foregroundStyle(.tertiary)
               }
-              .padding(16)
-              .background(Color(uiColor: .secondarySystemGroupedBackground))
-              .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
             }
             .buttonStyle(.plain)
           }
-          .padding(.horizontal, 20)
         }
-        .padding(.top, 24)
+        .padding(.horizontal, 20)
+        .padding(.top, 16)
       }
       .background(Color(uiColor: .systemGroupedBackground))
-      .navigationTitle("Account")
+      .navigationTitle("Settings")
       .alert("Couldn’t update account", isPresented: Binding(
         get: { errorMessage != nil }, set: { if !$0 { errorMessage = nil } }
       )) {

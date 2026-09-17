@@ -189,7 +189,7 @@ After the first successful library load on an installation, an empty account see
 a single setup sheet explaining how to add Jot to Share Sheet Favorites and move
 it to the front. The app records that it evaluated the prompt after a successful
 load, so it neither interrupts established libraries nor appears automatically
-again. Account > Help > Set up the Share Sheet reopens the same guidance at any
+again. Settings > Help > Add Jot to Favorites reopens the same guidance at any
 time. The bundled silent demonstration loops unless Reduce Motion is enabled.
 
 ## Account settings and deletion

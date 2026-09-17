@@ -167,9 +167,9 @@ struct PlacesView: View {
           }
           .tag(PlacesTab.activity)
 
-          AccountSettingsView()
-            .tabItem { Label("Account", systemImage: "person.crop.circle") }
-            .tag(PlacesTab.account)
+          SettingsView()
+            .tabItem { Label("Settings", systemImage: "gearshape") }
+            .tag(PlacesTab.settings)
         }
       }
     }
@@ -296,7 +296,7 @@ private enum PlacesTab: Hashable {
   case saved
   case aroundMe
   case activity
-  case account
+  case settings
 }
 
 private enum PlacesNavigation: Hashable {
