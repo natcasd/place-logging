@@ -18,7 +18,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
-from urllib.parse import urlparse
+from urllib.parse import urlparse, urlsplit, urlunsplit
 
 import requests
 from google import genai
@@ -507,7 +507,11 @@ def _preferred_tiktok_format(info: dict[str, Any]) -> str | None:
 def _tiktok_metadata(info: dict[str, Any], source_url: str) -> dict[str, Any]:
     creator_display_name = info.get("uploader") or info.get("channel")
     source_account_handle = info.get("uploader_id") or info.get("channel_id")
-    return {
+    image_post = info.get("tiktok_image_post") or {}
+    slides = image_post.get("slides") if isinstance(image_post, dict) else None
+    is_photo_post = isinstance(slides, list) and bool(slides)
+    poi = info.get("tiktok_poi")
+    metadata = {
         "source_platform": "tiktok",
         "caption_or_description": info.get("description") or info.get("title"),
         "uploader": creator_display_name or source_account_handle,
@@ -517,9 +521,78 @@ def _tiktok_metadata(info: dict[str, Any], source_url: str) -> dict[str, Any]:
         "duration_seconds": info.get("duration"),
         "hashtags": info.get("tags"),
         "webpage_url": info.get("webpage_url") or source_url,
-        "media_count": 1,
-        "media_types": ["video"],
+        "media_count": len(slides) if is_photo_post else 1,
+        "media_types": ["image"] * len(slides) if is_photo_post else ["video"],
     }
+    if isinstance(poi, dict) and poi:
+        metadata["native_location"] = poi
+        if poi.get("name"):
+            metadata["native_location_tag"] = poi["name"]
+    if is_photo_post:
+        metadata["post_kind"] = "photo"
+        if image_post.get("title"):
+            metadata["photo_title"] = image_post["title"]
+    return metadata
+
+
+def _tiktok_yt_dlp_url(source_url: str) -> str:
+    """Use yt-dlp's supported /video/ route for either TikTok post kind."""
+    parsed = urlsplit(source_url)
+    parts = [part for part in parsed.path.split("/") if part]
+    for index, part in enumerate(parts[:-1]):
+        if part.casefold() in {"video", "photo"} and parts[index + 1].isdigit():
+            parts[index] = "video"
+            return urlunsplit((
+                parsed.scheme or "https",
+                parsed.netloc,
+                "/" + "/".join(parts),
+                "",
+                "",
+            ))
+    return source_url
+
+
+def _download_tiktok_images(
+    info: dict[str, Any],
+    cleanup_dir: Path,
+    source_url: str,
+) -> list[Path]:
+    image_post = info.get("tiktok_image_post") or {}
+    slides = image_post.get("slides") if isinstance(image_post, dict) else None
+    if not isinstance(slides, list) or not slides:
+        return []
+
+    media_paths: list[Path] = []
+    for index, slide in enumerate(slides, start=1):
+        if not isinstance(slide, dict):
+            raise RuntimeError("TikTok photo post contained an invalid slide")
+        urls = slide.get("urls") or []
+        image_path = cleanup_dir / f"{index:03d}-slide.jpg"
+        last_error: requests.RequestException | None = None
+        for image_url in urls:
+            if not isinstance(image_url, str) or not image_url:
+                continue
+            try:
+                response = requests.get(
+                    image_url,
+                    headers={
+                        "Referer": source_url,
+                        "User-Agent": "Mozilla/5.0 (compatible; Jot/1.0)",
+                    },
+                    timeout=30,
+                )
+                response.raise_for_status()
+            except requests.RequestException as exc:
+                last_error = exc
+                continue
+            image_path.write_bytes(response.content)
+            media_paths.append(image_path)
+            break
+        else:
+            raise RuntimeError(
+                f"TikTok photo slide {index} could not be downloaded"
+            ) from last_error
+    return media_paths
 
 
 def _run_tiktok_yt_dlp(
@@ -584,10 +657,11 @@ def _fetch_tiktok(
     workdir: Path,
     on_retry: RetryProgress | None = None,
 ) -> MediaFetch:
-    """Download one public TikTok video and its extraction metadata."""
+    """Download one public TikTok video or ordered photo-mode post."""
     workdir.mkdir(parents=True, exist_ok=True)
     cleanup_dir = Path(tempfile.mkdtemp(prefix="tiktok-", dir=workdir))
     try:
+        fetch_url = _tiktok_yt_dlp_url(source_url)
         probe_command = [
             sys.executable,
             "-m",
@@ -595,7 +669,7 @@ def _fetch_tiktok(
             "--no-playlist",
             "--skip-download",
             "--dump-single-json",
-            source_url,
+            fetch_url,
         ]
         probe = _run_tiktok_yt_dlp(probe_command, "metadata probe", on_retry)
         if probe.returncode != 0:
@@ -605,7 +679,17 @@ def _fetch_tiktok(
         except (json.JSONDecodeError, TypeError, ValueError):
             raise RuntimeError("TikTok metadata fetch returned invalid JSON")
         if not isinstance(info, dict) or info.get("_type") == "playlist":
-            raise RuntimeError("TikTok URL did not resolve to one public video")
+            raise RuntimeError("TikTok URL did not resolve to one public post")
+
+        photo_paths = _download_tiktok_images(info, cleanup_dir, fetch_url)
+        if photo_paths:
+            metadata = _tiktok_metadata(info, source_url)
+            log.info(
+                "Downloaded TikTok photo post id=%s media_count=%d",
+                info.get("id"),
+                len(photo_paths),
+            )
+            return MediaFetch(photo_paths, metadata, cleanup_dir)
 
         output_template = f"{cleanup_dir}/%(id)s.%(ext)s"
         download_command = [
@@ -621,7 +705,7 @@ def _fetch_tiktok(
         ]
         if preferred_format := _preferred_tiktok_format(info):
             download_command.extend(["-f", preferred_format])
-        download_command.append(source_url)
+        download_command.append(fetch_url)
         download = _run_tiktok_yt_dlp(download_command, "media download", on_retry)
         downloaded_paths = [
             path
@@ -710,7 +794,7 @@ Be selective about what becomes a saved entry:
 - Likewise, a movie poster visible in the background is not a movie recommendation, and a city shown as a story's setting is not a travel recommendation.
 - When the evidence is ambiguous, prefer preserving the information in source_content or a recommendation's description instead of creating an extra entry.
 
-When multiple media items are supplied, they are the slides of one carousel in display order. Analyze all of them together. The source metadata's caption_or_description may contain the post caption or Instagram's combined carousel captions; treat that text as evidence even when an exact caption-to-slide mapping is unavailable.
+When multiple media items are supplied, they are the slides of one Instagram or TikTok carousel in display order. Analyze all of them together. The source metadata's caption_or_description may contain the post caption or combined carousel captions; treat that text as evidence even when an exact caption-to-slide mapping is unavailable.
 
 Source metadata may include tagged_accounts_by_media from Instagram. media_index is 1-based and matches the supplied media order, so it is also the slide_index for a carousel. A tagged account's full_name and username are supporting identity evidence for that media item. Use a tag to identify a principal recommendation when it is consistent with the media and post context, but do not automatically extract every tagged account or assume every account is a physical place.
 
@@ -727,14 +811,14 @@ For each entry, return an object with:
 - description: a detailed, source-grounded explanation containing the useful information conveyed about this entry. Do not add facts that are not in the source.
 - location_query: only when the entry has a physical place, area, anchor, or venue that Google Places could resolve. Use the venue for an event or exhibit. Include the name plus directly evidenced neighborhood/city/region hints from the media, caption, or unambiguous source metadata. A creator display name or account handle is supporting context, not proof by itself: use a location clue from it only when its meaning is clear and consistent with the rest of the post. Never guess a city from an ambiguous handle. Omit this field for non-location entries and when there is not enough location evidence.
 - location_hints: object with any of { neighborhood, city, region_or_country, on_screen_text, visual_landmarks } — ONLY include fields where you have direct evidence from the supplied media, caption, or unambiguous source metadata. Omit a field rather than guess.
-- native_location_relevance: ONLY when source metadata includes native_location. Classify how that post-level Instagram tag relates to this individual entry: "exact" when it identifies the entry or its physical host; "area" when it only identifies a relevant broader neighborhood, city, or region; "unrelated" when it describes somewhere else; or "uncertain" when the relationship is unclear. Do not assume a tag is exact merely because Instagram attached it to the post. A city- or region-level native_location used to locate a more specific venue is always "area", never "exact".
+- native_location_relevance: ONLY when source metadata includes native_location. Classify how that post-level Instagram or TikTok location tag relates to this individual entry: "exact" when it identifies the entry or its physical host; "area" when it only identifies a relevant broader neighborhood, city, or region; "unrelated" when it describes somewhere else; or "uncertain" when the relationship is unclear. Do not assume a tag is exact merely because the platform attached it to the post. A city- or region-level native_location used to locate a more specific venue is always "area", never "exact".
 - starts_at, ends_at, and recurrence_text: only when the recommended entry itself occurs or exists during a bounded or recurring time and that timing is directly supported by the source. Use ISO 8601 for starts_at and ends_at and preserve a human-readable recurring schedule in recurrence_text. NEVER use these fields for ordinary business hours, service windows, days open, release or publication metadata, or incidental dates; keep that information in the description. A temporary event or limited-run offering at a stable venue can be its own entry, with the venue used as its location.
 - extraction_confidence: "high" | "medium" | "low"
 - timestamp_seconds: for a Reel, YouTube video, or video carousel slide, the
   non-negative number of seconds from the start of that video to the beginning
   of the entry's main section. Omit this field when the entry cannot be tied to
   a specific moment. Do not invent a timestamp from caption-only evidence.
-- slide_index: for an Instagram carousel, the 1-based slide number that most
+- slide_index: for an Instagram or TikTok carousel, the 1-based slide number that most
   clearly identifies or discusses the place. The first supplied media item is
   slide 1, the second is slide 2, and so on. Omit this field for non-carousel
   posts or when caption text cannot be tied to a specific slide. A video inside
@@ -827,6 +911,8 @@ _GEMINI_EVIDENCE_FIELDS = (
     "duration_seconds",
     "media_count",
     "media_types",
+    "post_kind",
+    "photo_title",
     "tagged_accounts_by_media",
 )
 
@@ -912,8 +998,8 @@ def _normalize_media_references(
 ) -> list[dict[str, Any]]:
     """Drop impossible timestamps and slide indexes before persistence."""
     media_types = metadata.get("media_types") or []
-    is_instagram = metadata.get("source_platform") == "instagram"
-    is_carousel = is_instagram and len(media_types) > 1
+    is_timestamped_platform = metadata.get("source_platform") in {"instagram", "tiktok"}
+    is_carousel = len(media_types) > 1
 
     for entry in entries:
         timestamp = entry.get("timestamp_seconds")
@@ -934,7 +1020,7 @@ def _normalize_media_references(
             entry.pop("slide_index", None)
             slide_index = None
 
-        if not is_instagram or "timestamp_seconds" not in entry:
+        if not is_timestamped_platform or "timestamp_seconds" not in entry:
             continue
         if is_carousel:
             if slide_index is None or media_types[slide_index - 1] != "video":
@@ -957,7 +1043,7 @@ def extract_bundle(
     paths = [media_paths] if isinstance(media_paths, Path) else media_paths
     media_size = sum(path.stat().st_size for path in paths)
     if media_size > MAX_INLINE_MEDIA_BYTES:
-        platform = "TikTok video" if metadata.get("source_platform") == "tiktok" else "Instagram post"
+        platform = "TikTok post" if metadata.get("source_platform") == "tiktok" else "Instagram post"
         raise ValueError(
             f"This {platform} is too large to process safely "
             f"({media_size / (1024 * 1024):.1f} MiB; "
@@ -1447,7 +1533,7 @@ def process_ingest(
     platform = source_platform(source_url)
     if platform == "other":
         raise ValueError(
-            "Supported URLs are public Instagram posts, TikTok videos, and YouTube videos"
+            "Supported URLs are public Instagram posts, TikTok posts, and YouTube videos"
         )
 
     if platform == "youtube":

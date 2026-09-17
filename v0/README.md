@@ -98,11 +98,12 @@ uvicorn app:app --host 0.0.0.0 --port 8000
 ```
 
 The native iOS share extension submits public Instagram images, carousels and
-Reels, TikTok videos, and YouTube videos to this API. YouTube URLs are sent
-directly to Gemini. Instagram and TikTok videos are fetched with `yt-dlp`;
-image URLs exposed by Instagram metadata are downloaded directly. All supplied
-media and available caption text are analyzed together. TikTok support covers
-public, individual videos and does not use account cookies.
+Reels, TikTok videos and photo posts, and YouTube videos to this API. YouTube
+URLs are sent directly to Gemini. Instagram media and TikTok videos are fetched
+with `yt-dlp`; image URLs exposed by Instagram and TikTok metadata are downloaded
+directly. All supplied media and available caption text are analyzed together.
+TikTok support covers public, individual videos and photo posts and does not use
+account cookies.
 
 ## Shared ingest API
 

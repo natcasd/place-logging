@@ -55,15 +55,15 @@ DURABLE_RETRY_BASE_SECONDS = 30.0
 DURABLE_RETRY_MAX_SECONDS = 30.0 * 60.0
 
 
-def _clean_tiktok_video_url(source_url: str) -> str:
+def _clean_tiktok_post_url(source_url: str) -> str:
     parsed = urlsplit(source_url)
     host = (parsed.hostname or "").lower().rstrip(".")
     parts = [part for part in parsed.path.split("/") if part]
-    has_video_id = any(
-        part.lower() == "video" and parts[index + 1].isdigit()
+    has_post_id = any(
+        part.lower() in {"video", "photo"} and parts[index + 1].isdigit()
         for index, part in enumerate(parts[:-1])
     )
-    if host in TIKTOK_HOSTS and has_video_id:
+    if host in TIKTOK_HOSTS and has_post_id:
         return f"https://{host}/{'/'.join(parts)}"
     return source_url
 
@@ -80,7 +80,7 @@ def _resolve_shared_source_url(source_url: str) -> str:
         and path_parts[0].lower() == "t"
     )
     if host not in TIKTOK_SHORT_HOSTS and not is_web_short_link:
-        return _clean_tiktok_video_url(value)
+        return _clean_tiktok_post_url(value)
     try:
         with requests.get(
             value,
@@ -100,7 +100,7 @@ def _resolve_shared_source_url(source_url: str) -> str:
     if resolved_host not in TIKTOK_HOSTS:
         log.warning("Ignoring TikTok share redirect to unexpected host %s", resolved_host)
         return value
-    return _clean_tiktok_video_url(resolved)
+    return _clean_tiktok_post_url(resolved)
 
 
 @dataclass(frozen=True)
@@ -147,7 +147,7 @@ class IngestService:
         platform = detect_source_platform(source_url)
         if platform == "other":
             raise ValueError(
-                "Supported URLs are public Instagram posts, TikTok videos, and YouTube videos"
+                "Supported URLs are public Instagram posts, TikTok posts, and YouTube videos"
             )
 
         reusable_run_id = find_reusable_ingest_run(self.db_path, source_url)
