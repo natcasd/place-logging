@@ -86,7 +86,7 @@ class YouTubeExtractionTests(unittest.TestCase):
             prompt,
         )
 
-    def test_prompt_classifies_native_location_per_entry(self) -> None:
+    def test_prompt_uses_native_location_as_entry_specific_text_context(self) -> None:
         prompt = pipeline._extraction_prompt(
             {
                 "source_platform": "instagram",
@@ -94,27 +94,21 @@ class YouTubeExtractionTests(unittest.TestCase):
                 "source_account_handle": "lechenenyc",
                 "native_location": {
                     "name": "Le Chêne",
-                    "latitude": 40.72943,
-                    "longitude": -74.00466,
+                    "address": "76 Carmine St",
                 },
             }
         )
 
-        self.assertIn("native_location_relevance", prompt)
+        self.assertIn("post-level native_location is supporting text only", prompt)
+        self.assertIn("do not assume it applies to every entry", prompt)
         self.assertIn("Never guess a city from an ambiguous handle", prompt)
-        self.assertIn(
-            'city- or region-level native_location used to locate a more specific '
-            'venue is always "area"',
-            prompt,
-        )
         self.assertIn('"source_account_handle": "lechenenyc"', prompt)
         self.assertIn('"creator_display_name": "Le Chêne"', prompt)
-        relevance_schema = pipeline.EXTRACTION_RESPONSE_SCHEMA["properties"][
-            "entries"
-        ]["items"]["properties"]["native_location_relevance"]
-        self.assertEqual(
-            relevance_schema["enum"],
-            ["exact", "area", "unrelated", "uncertain"],
+        self.assertNotIn(
+            "native_location_relevance",
+            pipeline.EXTRACTION_RESPONSE_SCHEMA["properties"]["entries"]["items"][
+                "properties"
+            ],
         )
 
     def test_schema_allows_only_controlled_types(self) -> None:
@@ -251,6 +245,8 @@ class InstagramFetcherTests(unittest.TestCase):
                 "uploader_id": "123456789",
                 "instagram_location": {
                     "name": "Le Chêne",
+                    "address": "76 Carmine St",
+                    "city": "New York",
                     "latitude": 40.72943,
                     "longitude": -74.00466,
                 },
@@ -263,7 +259,10 @@ class InstagramFetcherTests(unittest.TestCase):
         self.assertEqual(metadata["source_account_handle"], "lechenenyc")
         self.assertEqual(metadata["uploader"], "Le Chêne")
         self.assertEqual(metadata["native_location_tag"], "Le Chêne")
-        self.assertEqual(metadata["native_location"]["latitude"], 40.72943)
+        self.assertEqual(
+            metadata["native_location"],
+            {"name": "Le Chêne", "address": "76 Carmine St", "city": "New York"},
+        )
         self.assertIn("#nyc @friend", metadata["caption_or_description"])
         self.assertNotIn("uploader_id", metadata)
         self.assertEqual(metadata["tagged_accounts_by_media"], [])
@@ -297,8 +296,6 @@ class InstagramFetcherTests(unittest.TestCase):
                 "name": "Le Chêne",
                 "address": "76 Carmine St",
                 "city": "New York",
-                "latitude": 40.72943,
-                "longitude": -74.00466,
             },
         )
         self.assertNotIn("pk", location)
@@ -314,7 +311,7 @@ class InstagramFetcherTests(unittest.TestCase):
             )
 
         self.assertEqual(extracted["location"], "Le Chêne")
-        self.assertEqual(extracted["instagram_location"]["latitude"], 40.7)
+        self.assertEqual(extracted["instagram_location"], {"name": "Le Chêne"})
 
         self.assertEqual(
             _instagram_tagged_accounts(
@@ -1155,20 +1152,12 @@ class InstagramExtractionTests(unittest.TestCase):
 
 class ProcessIngestTests(unittest.TestCase):
     @patch.dict("pipeline.os.environ", {"GOOGLE_PLACES_API_KEY": "test"})
-    def test_exact_native_location_bias_resolves_matching_nearby_place(self) -> None:
+    def test_native_coordinates_and_legacy_relevance_never_reach_google(self) -> None:
         entry = {
             "extracted_name": "Le Chêne",
             "type_name": "Restaurant",
             "location_query": "Le Chêne New York",
             "native_location_relevance": "exact",
-        }
-        metadata = {
-            "source_platform": "instagram",
-            "native_location": {
-                "name": "Le Chêne",
-                "latitude": 40.72943,
-                "longitude": -74.00466,
-            },
         }
         candidate = {
             "displayName": {"text": "Le Chêne"},
@@ -1178,104 +1167,69 @@ class ProcessIngestTests(unittest.TestCase):
         response.json.return_value = {"places": [candidate]}
 
         with patch("pipeline.requests.post", return_value=response) as mock_post:
-            result = pipeline.resolve(entry, metadata)
+            result = pipeline.resolve(entry)
 
-        self.assertEqual(result, {"status": "auto", "place": candidate})
+        self.assertEqual(result["status"], "auto")
+        self.assertEqual(result["place"], candidate)
+        self.assertEqual(result["resolution_code"], "single_candidate_match")
         request_body = mock_post.call_args.kwargs["json"]
-        self.assertEqual(request_body["pageSize"], 5)
-        self.assertNotIn("maxResultCount", request_body)
         self.assertEqual(
-            request_body["locationBias"],
-            {
-                "circle": {
-                    "center": {"latitude": 40.72943, "longitude": -74.00466},
-                    "radius": 500.0,
-                }
-            },
+            request_body,
+            {"textQuery": "Le Chêne New York", "pageSize": 5},
         )
 
     @patch.dict("pipeline.os.environ", {"GOOGLE_PLACES_API_KEY": "test"})
-    def test_exact_native_location_rejects_invalid_results(self) -> None:
+    def test_aces_bushwick_candidates_reach_tiebreaker_without_distance_filter(self) -> None:
         entry = {
-            "extracted_name": "Le Chêne",
+            "extracted_name": "Ace’s Pizza",
             "type_name": "Restaurant",
-            "location_query": "Le Chêne New York",
-            "native_location_relevance": "exact",
+            "location_query": "Ace’s Pizza, Bushwick, Brooklyn",
         }
-        metadata = {
-            "native_location": {
-                "latitude": 40.72943,
-                "longitude": -74.00466,
-            }
+        bushwick = {
+            "id": "bushwick",
+            "displayName": {"text": "Ace’s Pizza Bushwick"},
+            "formattedAddress": "423 Troutman St, Brooklyn, NY",
+        }
+        driggs = {
+            "id": "driggs",
+            "displayName": {"text": "Ace’s Pizza"},
+            "formattedAddress": "637 Driggs Ave, Brooklyn, NY",
+        }
+        response = MagicMock(ok=True)
+        response.json.return_value = {"places": [bushwick, driggs]}
+
+        with patch("pipeline.requests.post", return_value=response) as mock_post, patch(
+            "pipeline._llm_tiebreaker",
+            return_value={"pick": 0, "confidence": "high", "reasoning": "Bushwick matches."},
+        ) as mock_tiebreaker:
+            result = pipeline.resolve(entry)
+
+        self.assertEqual(result["status"], "auto")
+        self.assertEqual(result["place"], bushwick)
+        self.assertEqual(result["resolution_code"], "tiebreaker_match")
+        mock_tiebreaker.assert_called_once_with(entry, [bushwick, driggs])
+        self.assertEqual(
+            mock_post.call_args.kwargs["json"],
+            {"textQuery": "Ace’s Pizza, Bushwick, Brooklyn", "pageSize": 5},
+        )
+
+    @patch.dict("pipeline.os.environ", {"GOOGLE_PLACES_API_KEY": "test"})
+    def test_single_candidate_requires_entry_name_alignment(self) -> None:
+        entry = {
+            "extracted_name": "Ace’s Pizza",
+            "type_name": "Restaurant",
+            "location_query": "Ace’s Pizza, Bushwick, Brooklyn",
         }
         response = MagicMock(ok=True)
         response.json.return_value = {
-            "places": [
-                {
-                    "displayName": {"text": "Le Chêne"},
-                    "location": {"latitude": 40.75, "longitude": -74.00466},
-                },
-                {
-                    "displayName": {"text": "Different Restaurant"},
-                    "location": {"latitude": 40.72950, "longitude": -74.00470},
-                },
-            ]
+            "places": [{"displayName": {"text": "Different Restaurant"}}]
         }
 
-        with patch("pipeline.requests.post", return_value=response), patch(
-            "pipeline._llm_tiebreaker"
-        ) as mock_tiebreaker:
-            result = pipeline.resolve(entry, metadata)
+        with patch("pipeline.requests.post", return_value=response):
+            result = pipeline.resolve(entry)
 
         self.assertEqual(result["status"], "unresolved")
-        self.assertIn("exact native location", result["reason"])
-        mock_tiebreaker.assert_not_called()
-
-    @patch.dict("pipeline.os.environ", {"GOOGLE_PLACES_API_KEY": "test"})
-    def test_area_location_biases_broadly_without_exact_candidate_filter(self) -> None:
-        entry = {
-            "extracted_name": "Somewhere Upstate",
-            "type_name": "Restaurant",
-            "location_query": "Somewhere Upstate New York",
-            "native_location_relevance": "area",
-        }
-        metadata = {
-            "native_location": {"latitude": 42.65, "longitude": -73.75}
-        }
-        candidate = {"displayName": {"text": "Somewhere Upstate"}}
-        response = MagicMock(ok=True)
-        response.json.return_value = {"places": [candidate]}
-
-        with patch("pipeline.requests.post", return_value=response) as mock_post:
-            result = pipeline.resolve(entry, metadata)
-
-        self.assertEqual(result, {"status": "auto", "place": candidate})
-        circle = mock_post.call_args.kwargs["json"]["locationBias"]["circle"]
-        self.assertEqual(circle["radius"], 20_000.0)
-
-    @patch.dict("pipeline.os.environ", {"GOOGLE_PLACES_API_KEY": "test"})
-    def test_unrelated_native_location_does_not_bias_google(self) -> None:
-        entry = {
-            "extracted_name": "Le Chêne",
-            "type_name": "Restaurant",
-            "location_query": "Le Chêne New York",
-            "native_location_relevance": "unrelated",
-        }
-        metadata = {
-            "native_location": {"latitude": 40.72943, "longitude": -74.00466}
-        }
-        candidate = {"displayName": {"text": "Le Chêne"}}
-        response = MagicMock(ok=True)
-        response.json.return_value = {"places": [candidate]}
-
-        with patch("pipeline.requests.post", return_value=response) as mock_post:
-            result = pipeline.resolve(entry, metadata)
-
-        self.assertEqual(result["status"], "auto")
-        self.assertEqual(
-            mock_post.call_args.kwargs["json"],
-            {"textQuery": "Le Chêne New York", "pageSize": 5},
-        )
+        self.assertEqual(result["resolution_code"], "single_candidate_name_mismatch")
 
     @patch.dict("pipeline.os.environ", {"GOOGLE_PLACES_API_KEY": "test"})
     def test_temporary_entry_rejects_unmatched_single_google_candidate(self) -> None:
@@ -1311,7 +1265,9 @@ class ProcessIngestTests(unittest.TestCase):
         with patch("pipeline.requests.post", return_value=response):
             result = pipeline.resolve(entry)
 
-        self.assertEqual(result, {"status": "auto", "place": candidate})
+        self.assertEqual(result["status"], "auto")
+        self.assertEqual(result["place"], candidate)
+        self.assertEqual(result["resolution_code"], "single_candidate_match")
 
     @patch("pipeline.resolve")
     @patch("pipeline.extract_youtube_bundle")
@@ -1487,7 +1443,6 @@ class ProcessIngestTests(unittest.TestCase):
             )
             mock_resolve.assert_called_once_with(
                 {"extracted_name": "Test Entry"},
-                result["metadata"],
             )
             self.assertFalse(cleanup_dir.exists())
 

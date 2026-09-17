@@ -41,6 +41,20 @@ class OriginalMention(StrictModel):
     status: Literal['resolved', 'needs_review', 'unresolved', 'not_applicable']
     place_id: Name | None = None
     candidate_ids: list[Name] = Field(default_factory=list, max_length=10)
+    location_query_used: Name | None = None
+    resolution_code: Literal[
+        'no_physical_location',
+        'no_location_query',
+        'no_query_text',
+        'places_api_error',
+        'zero_candidates',
+        'no_specific_candidates',
+        'single_candidate_name_mismatch',
+        'single_candidate_match',
+        'tiebreaker_failed',
+        'tiebreaker_match',
+        'tiebreaker_needs_review',
+    ] | None = None
 
     @model_validator(mode='after')
     def resolution(self):
@@ -57,11 +71,20 @@ class SourceContent(StrictModel):
     summary: Text | None = None
 
 
+class NativeLocation(StrictModel):
+    name: Name | None = None
+    address: Text | None = None
+    city: Name | None = None
+    region: Name | None = None
+    country: Name | None = None
+
+
 class OriginalMetadata(StrictModel):
     uploader: Name | None = None
     caption_or_description: Text | None = None
     source_content: SourceContent | None = None
     media_count: int = Field(default=0, ge=0, le=1000)
+    native_location: NativeLocation | None = None
 
 
 class OriginalResult(StrictModel):

@@ -59,6 +59,9 @@ def adapt_public_result(value: dict) -> ProcessedPost:
                 evidence.pop(key, None)
         state = 'resolved' if output['status'] == 'auto' else output['status']
         mention = {'key': f'output-{ordinal:04d}', 'extracted': evidence, 'status': state}
+        for key in ('location_query_used', 'resolution_code'):
+            if output.get(key):
+                mention[key] = output[key]
         if state == 'resolved':
             mention['place_id'] = remember(output['place'])
         elif state == 'needs_review':
@@ -71,6 +74,16 @@ def adapt_public_result(value: dict) -> ProcessedPost:
     content = metadata.get('source_content')
     if content is not None:
         display['source_content'] = {'summary': content.get('summary')}
+    native_location = metadata.get('native_location')
+    if isinstance(native_location, dict):
+        bounded_location = {
+            key: native_location[key]
+            for key in ('name', 'address', 'city', 'region', 'country')
+            if isinstance(native_location.get(key), str)
+            and native_location[key].strip()
+        }
+        if bounded_location:
+            display['native_location'] = bounded_location
     return ProcessedPost(validate_result({'metadata': display, 'mentions': mentions}), tuple(locations.values()))
 
 

@@ -12,18 +12,6 @@ from typing import Any
 from yt_dlp.extractor.instagram import InstagramIE
 
 
-def _finite_coordinate(value: Any, minimum: float, maximum: float) -> float | None:
-    if isinstance(value, bool):
-        return None
-    try:
-        coordinate = float(value)
-    except (TypeError, ValueError):
-        return None
-    if minimum <= coordinate <= maximum:
-        return coordinate
-    return None
-
-
 def _instagram_location(product_info: Any) -> dict[str, Any] | None:
     """Return only useful, non-ID context from Instagram's location object."""
     if isinstance(product_info, list):
@@ -40,12 +28,6 @@ def _instagram_location(product_info: Any) -> dict[str, Any] | None:
         value = raw_location.get(field)
         if isinstance(value, str) and value.strip():
             location[field] = value.strip()
-
-    latitude = _finite_coordinate(raw_location.get("lat"), -90, 90)
-    longitude = _finite_coordinate(raw_location.get("lng"), -180, 180)
-    if latitude is not None and longitude is not None:
-        location["latitude"] = latitude
-        location["longitude"] = longitude
 
     return location or None
 
