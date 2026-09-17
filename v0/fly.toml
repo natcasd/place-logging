@@ -14,7 +14,7 @@ primary_region = 'ewr'
 [env]
   JOT_ACCOUNT_DB_PATH = '/data/jot-accounts.sqlite'
   FIREBASE_PROJECT_ID = 'jot-app-20260915'
-  JOT_PROCESSING_VERSION = 'public-v1'
+  JOT_PROCESSING_VERSION = 'public-v2-tiktok-context'
   GOOGLE_APPLICATION_CREDENTIALS = '/run/secrets/firebase-admin.json'
   WORKDIR = '/tmp/place-logger-downloads'
 

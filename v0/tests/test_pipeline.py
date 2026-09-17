@@ -28,6 +28,7 @@ class SourcePlatformTests(unittest.TestCase):
             "https://vm.tiktok.com/abc/": "tiktok",
             "https://vt.tiktok.com/abc/": "tiktok",
             "https://m.tiktok.com/@user/video/123": "tiktok",
+            "https://www.tiktok.com/@user/photo/123": "tiktok",
             "https://example.com/video": "other",
         }
         for url, expected in cases.items():
@@ -685,6 +686,85 @@ class InstagramFetcherTests(unittest.TestCase):
 
 
 class TikTokFetcherTests(unittest.TestCase):
+    def test_yt_dlp_plugin_preserves_poi_without_internal_ids(self) -> None:
+        from yt_dlp.extractor.tiktok import TikTokIE
+        from yt_dlp_plugins.extractor.tiktok_context import (
+            _PlaceLoggerTikTokIE,
+            _tiktok_poi,
+        )
+
+        poi = _tiktok_poi(
+            {
+                "poi": {
+                    "id": "42203860509131758",
+                    "name": "Stissing House Restaurant",
+                    "address": "7801 S Main St, Pine Plains, NY 12567, USA",
+                    "city": "Pine Plains",
+                    "category": "Food and Drink",
+                    "ttTypeNameTiny": "Gastropub",
+                },
+                "contentLocation": {
+                    "address": {"addressLocality": "Pine Plains"},
+                },
+            }
+        )
+
+        self.assertEqual(
+            poi,
+            {
+                "name": "Stissing House Restaurant",
+                "address": "7801 S Main St, Pine Plains, NY 12567, USA",
+                "city": "Pine Plains",
+                "category": "Food and Drink",
+                "type_name": "Gastropub",
+            },
+        )
+        self.assertNotIn("id", poi)
+        self.assertEqual(TikTokIE.IE_NAME, "TikTok+place_logger_context")
+
+        with patch.object(
+            _PlaceLoggerTikTokIE.__wrapped__,
+            "_parse_aweme_video_web",
+            return_value={"id": "123"},
+        ):
+            extracted = _PlaceLoggerTikTokIE()._parse_aweme_video_web(
+                {"poi": {"name": "A Restaurant"}},
+                "https://www.tiktok.com/@creator/video/123",
+                "123",
+            )
+
+        self.assertEqual(extracted["tiktok_poi"], {"name": "A Restaurant"})
+
+    def test_yt_dlp_plugin_preserves_ordered_photo_slides(self) -> None:
+        from yt_dlp_plugins.extractor.tiktok_context import _tiktok_image_post
+
+        image_post = _tiktok_image_post(
+            {
+                "imagePost": {
+                    "title": "Seven bites from August",
+                    "images": [
+                        {
+                            "imageURL": {"urlList": ["https://cdn/1a", "https://cdn/1b"]},
+                            "imageWidth": 2160,
+                            "imageHeight": 2700,
+                        },
+                        {
+                            "imageURL": {"urlList": ["https://cdn/2"]},
+                            "imageWidth": 2160,
+                            "imageHeight": 2700,
+                        },
+                    ],
+                }
+            }
+        )
+
+        self.assertEqual(image_post["title"], "Seven bites from August")
+        self.assertEqual(
+            [slide["urls"][0] for slide in image_post["slides"]],
+            ["https://cdn/1a", "https://cdn/2"],
+        )
+        self.assertEqual(image_post["slides"][0]["width"], 2160)
+
     def test_prefers_h264_progressive_format_within_size_target(self) -> None:
         info = {
             "formats": [
@@ -736,6 +816,43 @@ class TikTokFetcherTests(unittest.TestCase):
         self.assertEqual(metadata["source_account_handle"], "examplecreator")
         self.assertEqual(metadata["media_types"], ["video"])
         self.assertEqual(metadata["duration_seconds"], 42)
+
+    def test_maps_tiktok_poi_and_photo_metadata(self) -> None:
+        metadata = pipeline._tiktok_metadata(
+            {
+                "description": "The bites I cannot stop thinking about",
+                "uploader": "Creator",
+                "tiktok_poi": {
+                    "name": "New York",
+                    "address": "United States",
+                    "category": "Place and Address",
+                    "type_name": "City",
+                },
+                "tiktok_image_post": {
+                    "title": "August in NYC",
+                    "slides": [
+                        {"urls": ["https://cdn/1"]},
+                        {"urls": ["https://cdn/2"]},
+                    ],
+                },
+            },
+            "https://www.tiktok.com/@creator/photo/123",
+        )
+
+        self.assertEqual(metadata["native_location"]["name"], "New York")
+        self.assertEqual(metadata["native_location_tag"], "New York")
+        self.assertEqual(metadata["media_count"], 2)
+        self.assertEqual(metadata["media_types"], ["image", "image"])
+        self.assertEqual(metadata["post_kind"], "photo")
+        self.assertEqual(metadata["photo_title"], "August in NYC")
+
+    def test_rewrites_tiktok_photo_route_only_for_yt_dlp(self) -> None:
+        self.assertEqual(
+            pipeline._tiktok_yt_dlp_url(
+                "https://www.tiktok.com/@creator/photo/123?_t=tracking"
+            ),
+            "https://www.tiktok.com/@creator/video/123",
+        )
 
     @patch("pipeline.time.sleep")
     @patch("pipeline.subprocess.run")
@@ -840,6 +957,63 @@ class TikTokFetcherTests(unittest.TestCase):
             finally:
                 pipeline.shutil.rmtree(fetched.cleanup_dir)
 
+    @patch("pipeline.requests.get")
+    @patch("pipeline.subprocess.run")
+    def test_fetches_all_tiktok_photo_slides_in_order(
+        self,
+        mock_run: MagicMock,
+        mock_get: MagicMock,
+    ) -> None:
+        probe_info = {
+            "id": "123",
+            "description": "Two favorite bites",
+            "uploader": "Creator",
+            "tiktok_poi": {"name": "New York", "type_name": "City"},
+            "tiktok_image_post": {
+                "title": "August in NYC",
+                "slides": [
+                    {"urls": ["https://cdn/1-primary", "https://cdn/1-fallback"]},
+                    {"urls": ["https://cdn/2"]},
+                ],
+            },
+        }
+        mock_run.return_value = SimpleNamespace(
+            returncode=0,
+            stderr="",
+            stdout=json.dumps(probe_info),
+        )
+        failed = MagicMock()
+        failed.raise_for_status.side_effect = requests.HTTPError("expired")
+        first = MagicMock(content=b"slide-one")
+        first.raise_for_status.return_value = None
+        second = MagicMock(content=b"slide-two")
+        second.raise_for_status.return_value = None
+        mock_get.side_effect = [failed, first, second]
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            fetched = pipeline.fetch(
+                "https://www.tiktok.com/@creator/photo/123?_t=tracking",
+                Path(temp_dir),
+            )
+            try:
+                self.assertEqual(
+                    [path.read_bytes() for path in fetched.media_paths],
+                    [b"slide-one", b"slide-two"],
+                )
+                self.assertEqual(
+                    [path.name for path in fetched.media_paths],
+                    ["001-slide.jpg", "002-slide.jpg"],
+                )
+                self.assertEqual(fetched.metadata["media_types"], ["image", "image"])
+                self.assertEqual(mock_run.call_count, 1)
+                probe_command = mock_run.call_args.args[0]
+                self.assertEqual(
+                    probe_command[-1],
+                    "https://www.tiktok.com/@creator/video/123",
+                )
+            finally:
+                pipeline.shutil.rmtree(fetched.cleanup_dir)
+
 
 class InstagramExtractionTests(unittest.TestCase):
     def test_normalizes_media_references_against_carousel_shape(self) -> None:
@@ -874,6 +1048,31 @@ class InstagramExtractionTests(unittest.TestCase):
         self.assertNotIn("timestamp_seconds", normalized[1])
         self.assertNotIn("slide_index", normalized[2])
         self.assertNotIn("timestamp_seconds", normalized[2])
+
+    def test_normalizes_tiktok_photo_slide_indices(self) -> None:
+        entries = [
+            {
+                "extracted_name": "First Bite",
+                "slide_index": 1,
+                "timestamp_seconds": 3,
+            },
+            {
+                "extracted_name": "Second Bite",
+                "slide_index": 2,
+            },
+        ]
+
+        normalized = pipeline._normalize_media_references(
+            entries,
+            {
+                "source_platform": "tiktok",
+                "media_types": ["image", "image"],
+            },
+        )
+
+        self.assertEqual(normalized[0]["slide_index"], 1)
+        self.assertNotIn("timestamp_seconds", normalized[0])
+        self.assertEqual(normalized[1]["slide_index"], 2)
 
     @patch("pipeline.types.Part.from_bytes")
     @patch("pipeline._client")
