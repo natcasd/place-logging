@@ -9,6 +9,11 @@ on completion.” It starts system dismissal after 750 ms, targeting roughly 1.0
 seconds including the system animation. Network acceptance time is additional.
 An unconfirmed save stays open with the existing error message.
 
+The extension requests a half-height sheet through its preferred content size
+and selects the medium detent when a native sheet controller is available. A
+large detent remains available for expansion. The source app owns presentation,
+so the actual height still needs physical-device verification in the source app.
+
 An independent task repeats the POST with the **same request key** and
 `wait_seconds=150` to retain the existing result/local-notification attempt without
 creating a second save. It is not tied to SwiftUI view cancellation, but iOS can

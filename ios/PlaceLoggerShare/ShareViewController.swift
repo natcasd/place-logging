@@ -8,6 +8,7 @@ private let shareLogger = Logger(subsystem: "com.natcasd.placelogger.share", cat
 final class ShareViewController: UIViewController {
   override func viewDidLoad() {
     super.viewDidLoad()
+    configureSheet()
     let root = ShareStatusView(
       loadURL: { [weak self] in
         guard let self else { throw PlaceLoggerError.noSharedURL }
@@ -32,6 +33,31 @@ final class ShareViewController: UIViewController {
       host.view.bottomAnchor.constraint(equalTo: view.bottomAnchor),
     ])
     host.didMove(toParent: self)
+  }
+
+  override func viewWillAppear(_ animated: Bool) {
+    super.viewWillAppear(animated)
+    configureSheet()
+  }
+
+  override func viewWillLayoutSubviews() {
+    super.viewWillLayoutSubviews()
+    // The extension's host owns presentation. Give it a compact preferred size
+    // even when it does not expose a sheet presentation controller to us.
+    let screenHeight = view.window?.windowScene?.coordinateSpace.bounds.height
+      ?? view.window?.screen.bounds.height ?? 800
+    let height = max(320, screenHeight / 2)
+    let size = CGSize(width: view.bounds.width, height: height)
+    if preferredContentSize != size { preferredContentSize = size }
+  }
+
+  private func configureSheet() {
+    preferredContentSize = CGSize(width: 390, height: 400)
+    guard let sheet = sheetPresentationController else { return }
+    sheet.detents = [.medium(), .large()]
+    sheet.selectedDetentIdentifier = .medium
+    sheet.prefersGrabberVisible = true
+    sheet.prefersScrollingExpandsWhenScrolledToEdge = false
   }
 
   private func sharedURL() async throws -> URL {
