@@ -348,11 +348,20 @@ class PostProcessingTests(unittest.TestCase):
                  'location': {'latitude': 40.0, 'longitude': -74.0}, 'formattedAddress': 'Provider Address',
                  'photos': [{'secret': 'provider-media'}], 'raw_provider_field': 'not retained'}
         value = {'metadata': {'uploader': 'Creator', 'source_content': {'summary': 'Summary', 'transcript': 'large raw text'},
+                             'native_location': {'name': 'Real Cafe', 'address': '1 Main St',
+                                                 'city': 'New York', 'latitude': 40.1, 'longitude': -73.9,
+                                                 'provider_id': 'not retained'},
                              'raw_media': 'not retained'},
-                 'resolved_entries': [{'extracted': extracted, 'status': 'auto', 'place': place}]}
+                 'resolved_entries': [{'extracted': extracted, 'status': 'auto', 'place': place,
+                                       'location_query_used': 'Real Cafe NYC',
+                                       'resolution_code': 'single_candidate_match'}]}
         adapted = adapt_public_result(value)
         self.assertEqual(adapted.original.mentions[0].place_id, 'place')
         self.assertEqual(adapted.original.mentions[0].key, 'output-0000')
+        self.assertEqual(adapted.original.mentions[0].location_query_used, 'Real Cafe NYC')
+        self.assertEqual(adapted.original.mentions[0].resolution_code, 'single_candidate_match')
+        self.assertEqual(adapted.original.metadata.native_location.name, 'Real Cafe')
+        self.assertEqual(adapted.original.metadata.native_location.address, '1 Main St')
         self.accept()
         worker = PostProcessingWorker(self.queue, self.root, lambda *_: adapted)
         worker.run_once()
@@ -360,6 +369,8 @@ class PostProcessingTests(unittest.TestCase):
         self.assertEqual(self.a.entries()[0]['description'], 'Source evidence')
         cache = self.rows('post_processing_cache')[0]['result_json']
         self.assertNotIn('Provider Address', cache)
+        self.assertNotIn('provider_id', cache)
+        self.assertNotIn('latitude', cache)
         self.assertNotIn('provider-media', '\n'.join(self.connection().iterdump()))
         self.assertNotIn('not retained', '\n'.join(self.connection().iterdump()))
 
