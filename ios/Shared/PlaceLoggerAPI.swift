@@ -74,9 +74,9 @@ struct PlaceLoggerAPI: Sendable {
     _ = try await perform(request)
   }
 
-  func ingest(sourceURL: URL, requestKey: String) async throws -> IngestResponse {
+  func ingest(sourceURL: URL, requestKey: String, waitForResult: Bool = true) async throws -> IngestResponse {
     var components = URLComponents(url: baseURL.appending(path: "/api/v1/ingests"), resolvingAgainstBaseURL: false)!
-    components.queryItems = [URLQueryItem(name: "wait_seconds", value: "150")]
+    components.queryItems = [URLQueryItem(name: "wait_seconds", value: waitForResult ? "150" : "0")]
     let url = components.url!
     var request = URLRequest(url: url)
     request.httpMethod = "POST"
