@@ -15,12 +15,23 @@ struct PlaceLoggerApp: App {
   var body: some Scene {
     WindowGroup {
       Group {
+#if DEBUG
+        if ProcessInfo.processInfo.arguments.contains("--activity-extraction-preview") {
+          ActivityExtractionPreview()
+        } else if let snapshot = session.snapshot {
+          PlacesView(router: router, account: snapshot)
+            .id(snapshot.generation)
+        } else {
+          SignInView(session: session)
+        }
+#else
         if let snapshot = session.snapshot {
           PlacesView(router: router, account: snapshot)
             .id(snapshot.generation)
         } else {
           SignInView(session: session)
         }
+#endif
       }
         .onOpenURL { url in GIDSignIn.sharedInstance.handle(url) }
         .onChange(of: scenePhase) { _, phase in

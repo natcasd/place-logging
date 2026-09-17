@@ -786,25 +786,27 @@ private struct ActivityDetail: View {
                     .font(.title2.bold())
                     .padding(.top, 4)
 
-                  ForEach(activity.results.sorted { $0.ordinal < $1.ordinal }) { result in
-                    ActivityRecommendationCard(
-                      result: result,
-                      isDeleting: deletingEntryID == result.entryID,
-                      requestDeletion: { pendingDeletion = result },
-                      scrollToExpandedReview: {
-                        withAnimation(.easeInOut(duration: 0.25)) {
-                          scrollProxy.scrollTo(result.reviewPanelAnchorID, anchor: .center)
+                  let orderedResults = activity.results.sorted { $0.ordinal < $1.ordinal }
+                  VStack(spacing: 0) {
+                    ForEach(Array(orderedResults.enumerated()), id: \.element.id) { index, result in
+                      ActivityRecommendationCard(
+                        result: result,
+                        isDeleting: deletingEntryID == result.entryID,
+                        requestDeletion: { pendingDeletion = result },
+                        scrollToConfirmation: {
+                          withAnimation(.easeInOut(duration: 0.25)) {
+                            scrollProxy.scrollTo(result.confirmationAnchorID, anchor: .bottom)
+                          }
+                        },
+                        confirmLocation: { candidateID in
+                          try await confirmLocation(result, candidateID)
                         }
-                      },
-                      scrollToConfirmation: {
-                        withAnimation(.easeInOut(duration: 0.25)) {
-                          scrollProxy.scrollTo(result.confirmationAnchorID, anchor: .bottom)
-                        }
-                      },
-                      confirmLocation: { candidateID in
-                        try await confirmLocation(result, candidateID)
+                      )
+
+                      if index < orderedResults.count - 1 {
+                        Divider()
                       }
-                    )
+                    }
                   }
                 } else if !["queued", "processing", "failed", "retry_scheduled"].contains(activity.status) {
                   ContentUnavailableView(
@@ -1043,10 +1045,8 @@ private struct ActivityRecommendationCard: View {
   let result: SavedEntryOutcome
   let isDeleting: Bool
   let requestDeletion: () -> Void
-  let scrollToExpandedReview: () -> Void
   let scrollToConfirmation: () -> Void
   let confirmLocation: (String) async throws -> Void
-  @State private var isExpanded = false
   @State private var selectedCandidateID: String?
   @State private var isConfirming = false
   @State private var confirmationError: String?
@@ -1062,21 +1062,36 @@ private struct ActivityRecommendationCard: View {
 
   var body: some View {
     VStack(spacing: 0) {
-      HStack(alignment: .center, spacing: 12) {
+      HStack(alignment: .top, spacing: 8) {
         VStack(alignment: .leading, spacing: 5) {
-          HStack(spacing: 5) {
-            Text(result.type)
+          HStack(alignment: .firstTextBaseline, spacing: 9) {
+            Text(result.name)
+              .font(.title3.weight(.bold))
+              .foregroundStyle(.primary)
+              .lineLimit(1)
+              .minimumScaleFactor(0.85)
+
+            HStack(spacing: 4) {
+              SavedCategoryIconView(icon: SavedCategory.category(for: result.type).icon)
+                .frame(width: 13, height: 13)
+              Text(result.type)
+                .lineLimit(1)
+            }
+            .fixedSize(horizontal: true, vertical: false)
+            .accessibilityElement(children: .combine)
+
             if let mediaReference = result.mediaReferenceText {
-              Text("·")
-              Text(mediaReference)
+              HStack(spacing: 4) {
+                Image(systemName: "clock")
+                Text(mediaReference.replacingOccurrences(of: "Appears at ", with: ""))
+                  .lineLimit(1)
+              }
+              .fixedSize(horizontal: true, vertical: false)
+              .accessibilityElement(children: .combine)
             }
           }
-          .font(.caption2.weight(.semibold))
+          .font(.caption)
           .foregroundStyle(.secondary)
-          .textCase(.uppercase)
-
-          Text(result.name)
-            .font(.headline)
 
           let description = result.description.trimmingCharacters(in: .whitespacesAndNewlines)
           if !description.isEmpty {
@@ -1085,66 +1100,34 @@ private struct ActivityRecommendationCard: View {
               .foregroundStyle(.secondary)
               .fixedSize(horizontal: false, vertical: true)
           }
-
-          if let address = result.formattedAddress, !address.isEmpty {
-            Text(compactActivityLocation(address))
-              .font(.subheadline)
-              .foregroundStyle(.secondary)
-          } else if showsMissingLocation {
-            Label("No location matched", systemImage: "exclamationmark.triangle.fill")
-              .font(.subheadline.weight(.semibold))
-              .foregroundStyle(.yellow)
-          }
         }
 
-        Spacer(minLength: 6)
+        Spacer(minLength: 0)
 
         if isDeleting || isConfirming {
           ProgressView()
             .controlSize(.small)
-            .frame(width: 34, height: 34)
-        } else if canReviewCandidates {
-          HStack(spacing: 5) {
-            Text("Needs review")
-            Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
-              .font(.caption2.weight(.bold))
-          }
-            .font(.caption.weight(.semibold))
-            .foregroundStyle(.yellow)
+            .frame(width: 44, height: 44)
         } else {
-          Button("Delete Recommendation", systemImage: "trash", role: .destructive) {
+          Button(role: .destructive) {
             requestDeletion()
+          } label: {
+            Image(systemName: "trash")
+              .font(.title2)
+              .frame(width: 44, height: 44)
+              .contentShape(Rectangle())
           }
-          .labelStyle(.iconOnly)
           .buttonStyle(.plain)
-          .frame(width: 34, height: 34)
+          .accessibilityLabel("Delete Recommendation")
         }
       }
-      .padding(14)
-      .contentShape(Rectangle())
-      .onTapGesture {
-        toggleReview()
-      }
-      .accessibilityAction(named: isExpanded ? "Collapse locations" : "Review locations") {
-        toggleReview()
-      }
+      .padding(.vertical, 10)
 
-      if canReviewCandidates && isExpanded {
-        Divider()
+      if canReviewCandidates {
         VStack(alignment: .leading, spacing: 12) {
-          HStack {
-            Text("Select the location")
-              .font(.headline)
-
-            Spacer()
-
-            Button("Delete Recommendation", systemImage: "trash", role: .destructive) {
-              requestDeletion()
-            }
-            .labelStyle(.iconOnly)
-            .buttonStyle(.plain)
-            .frame(width: 34, height: 34)
-          }
+          Label("Resolve location", systemImage: "exclamationmark.triangle")
+            .font(.headline)
+            .foregroundStyle(.yellow)
 
           VStack(spacing: 0) {
             ForEach(Array(result.reviewCandidates.enumerated()), id: \.element.id) { index, candidate in
@@ -1160,47 +1143,60 @@ private struct ActivityRecommendationCard: View {
                   .font(.title3)
                   .foregroundStyle(selectedCandidateID == candidate.id ? .blue : .secondary)
 
-                  VStack(alignment: .leading, spacing: 3) {
-                    Text(candidate.name)
-                      .font(.subheadline.weight(.semibold))
-                      .foregroundStyle(.primary)
-                    if let address = candidate.formattedAddress, !address.isEmpty {
-                      Text(compactActivityLocation(address))
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                    }
-                  }
-                  Spacer()
+                  ActivityLocationText(
+                    formattedAddress: candidate.formattedAddress.flatMap { $0.isEmpty ? nil : $0 }
+                      ?? candidate.name
+                  )
+                  .font(.subheadline)
+                  .foregroundStyle(.primary)
+
+                  Spacer(minLength: 0)
                 }
-                .padding(.horizontal, 12)
-                .padding(.vertical, 11)
+                .padding(.vertical, 10)
                 .contentShape(Rectangle())
               }
               .buttonStyle(.plain)
 
               if index < result.reviewCandidates.count - 1 {
-                Divider().padding(.leading, 43)
+                Divider().padding(.leading, 31)
               }
             }
           }
-          .background(.secondary.opacity(0.07), in: RoundedRectangle(cornerRadius: 12))
 
           if selectedCandidateID != nil {
-            Button("Confirm Location", systemImage: "checkmark") {
+            Button("Confirm Location") {
               Task { await performConfirmation() }
             }
-            .buttonStyle(.borderedProminent)
-            .frame(maxWidth: .infinity)
+            .buttonStyle(.plain)
+            .font(.subheadline.weight(.semibold))
+            .foregroundStyle(.blue)
+            .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
             .id(result.confirmationAnchorID)
           }
         }
-        .padding(14)
-        .id(result.reviewPanelAnchorID)
-        .transition(.opacity)
+        .padding(.top, 2)
+        .padding(.bottom, 10)
+      } else if let address = result.formattedAddress, !address.isEmpty {
+        HStack(spacing: 9) {
+          Image(systemName: "mappin")
+            .foregroundStyle(.blue)
+
+          ActivityLocationText(formattedAddress: address)
+            .font(.subheadline)
+
+          Spacer(minLength: 0)
+        }
+        .padding(.top, 2)
+        .padding(.bottom, 10)
+      } else if showsMissingLocation {
+        Label("No location matched", systemImage: "exclamationmark.triangle.fill")
+          .font(.subheadline.weight(.semibold))
+          .foregroundStyle(.yellow)
+          .frame(maxWidth: .infinity, alignment: .leading)
+          .padding(.top, 2)
+          .padding(.bottom, 10)
       }
     }
-    .background(.secondary.opacity(0.08), in: RoundedRectangle(cornerRadius: 16))
-    .clipShape(RoundedRectangle(cornerRadius: 16))
     .alert(
       "Couldn’t Confirm Location",
       isPresented: Binding(
@@ -1218,15 +1214,6 @@ private struct ActivityRecommendationCard: View {
     }
   }
 
-  private func toggleReview() {
-    guard canReviewCandidates, !isDeleting, !isConfirming else { return }
-    let willExpand = !isExpanded
-    withAnimation(.easeInOut(duration: 0.2)) { isExpanded = willExpand }
-    if willExpand {
-      DispatchQueue.main.async { scrollToExpandedReview() }
-    }
-  }
-
   private func performConfirmation() async {
     guard let selectedCandidateID else { return }
     isConfirming = true
@@ -1239,20 +1226,42 @@ private struct ActivityRecommendationCard: View {
   }
 }
 
+private struct ActivityLocationText: View {
+  let formattedAddress: String
+
+  var body: some View {
+    let parts = activityLocationParts(formattedAddress)
+    Group {
+      if let locality = parts.locality {
+        Text(parts.street) + Text(", \(locality)").bold()
+      } else {
+        Text(parts.street)
+      }
+    }
+    .lineLimit(1)
+    .minimumScaleFactor(0.85)
+  }
+}
+
 private func activityDeleteMessage(_ result: SavedEntryOutcome) -> String {
   "This removes \(result.name) from this post’s saved recommendations. Other saved sources for it stay in your library."
 }
 
-private func compactActivityLocation(_ formattedAddress: String) -> String {
-  let components = formattedAddress
+private func activityLocationParts(_ formattedAddress: String) -> (street: String, locality: String?) {
+  var components = formattedAddress
     .split(separator: ",")
     .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
     .filter { !$0.isEmpty }
 
-  guard components.count > 2 else { return formattedAddress }
+  if let country = components.last?.lowercased(),
+     ["us", "usa", "united states", "united states of america"].contains(country) {
+    components.removeLast()
+  }
 
-  let componentCount = components.count >= 4 ? 3 : 2
-  let compactComponents = components.suffix(componentCount).map { component in
+  guard components.count > 1 else { return (formattedAddress, nil) }
+
+  let street = components.removeFirst()
+  let localityComponents = components.map { component in
     let words = component.split(separator: " ")
     guard let postalCodeStart = words.firstIndex(where: { word in
       word.contains(where: \Character.isNumber)
@@ -1261,20 +1270,118 @@ private func compactActivityLocation(_ formattedAddress: String) -> String {
   }
   .filter { !$0.isEmpty }
 
-  return compactComponents.isEmpty
-    ? formattedAddress
-    : compactComponents.joined(separator: ", ")
+  let locality = localityComponents.joined(separator: ", ")
+  return (street, locality.isEmpty ? nil : locality)
 }
 
 private extension SavedEntryOutcome {
-  var reviewPanelAnchorID: String {
-    "activity-review-panel-\(entryID)"
-  }
-
   var confirmationAnchorID: String {
     "activity-confirmation-\(entryID)"
   }
 }
+
+#if DEBUG
+struct ActivityExtractionPreview: View {
+  var body: some View {
+    NavigationStack {
+      ActivityDetail(
+        activity: DebugActivityFixtures.neighborhoodRestaurants,
+        retry: {},
+        deleteActivity: {},
+        deleteEntry: { _ in },
+        confirmLocation: { _, _ in }
+      )
+    }
+  }
+}
+
+private enum DebugActivityFixtures {
+  static let neighborhoodRestaurants: IngestActivity = {
+    let data = Data(
+      """
+      {
+        "id": 137,
+        "item_id": 9137,
+        "source_url": "https://www.instagram.com/reel/nyc-neighborhood-restaurants/",
+        "source_platform": "instagram",
+        "creator": "@nycfoodnotes",
+        "caption": "Three neighborhood restaurants to save for your next New York weekend.",
+        "summary": "Three neighborhood favorites for Moroccan brunch, Italian dinner, and a Williamsburg night out.",
+        "status": "partial",
+        "stage": "completed",
+        "attempt_count": 1,
+        "results": [
+          {
+            "entry_id": 13701,
+            "source_connection_id": 23701,
+            "ordinal": 0,
+            "name": "Cafe Mogador",
+            "type": "Restaurant",
+            "description": "A longtime East Village favorite for Moroccan-inspired brunch and dinner.",
+            "location_id": 501,
+            "location_name": "Cafe Mogador",
+            "latitude": 40.7275,
+            "longitude": -73.9843,
+            "formatted_address": "101 Saint Marks Pl, New York, NY",
+            "timestamp_seconds": 18,
+            "resolution_status": "auto",
+            "review_candidates": [],
+            "is_new": true,
+            "source_count": 1
+          },
+          {
+            "entry_id": 13702,
+            "source_connection_id": 23702,
+            "ordinal": 1,
+            "name": "Lilia",
+            "type": "Restaurant",
+            "description": "Wood-fired Italian cooking in a former Williamsburg auto-body shop.",
+            "timestamp_seconds": 44,
+            "resolution_status": "needs_review",
+            "review_candidates": [
+              {
+                "id": "places/lilia-williamsburg",
+                "name": "Lilia",
+                "formatted_address": "567 Union Ave, Brooklyn, NY"
+              },
+              {
+                "id": "places/lilia-hotel",
+                "name": "Lilia Hotel",
+                "formatted_address": "160 N 12th St, Brooklyn, NY"
+              }
+            ],
+            "is_new": true,
+            "source_count": 1
+          },
+          {
+            "entry_id": 13703,
+            "source_connection_id": 23703,
+            "ordinal": 2,
+            "name": "Le Crocodile",
+            "type": "Restaurant",
+            "description": "A relaxed French brasserie inside the Wythe Hotel.",
+            "location_id": 503,
+            "location_name": "Le Crocodile",
+            "latitude": 40.7220,
+            "longitude": -73.9571,
+            "formatted_address": "80 Wythe Ave, Brooklyn, NY",
+            "timestamp_seconds": 71,
+            "resolution_status": "auto",
+            "review_candidates": [],
+            "is_new": true,
+            "source_count": 1
+          }
+        ],
+        "events": [
+          { "message": "Source saved with results needing review" }
+        ]
+      }
+      """.utf8
+    )
+    return try! JSONDecoder().decode(IngestActivity.self, from: data)
+  }()
+}
+#endif
 
 private extension IngestActivity {
   var recommendationCountText: String {
