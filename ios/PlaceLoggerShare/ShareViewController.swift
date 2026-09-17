@@ -1,6 +1,9 @@
 import SwiftUI
 import UniformTypeIdentifiers
 import UserNotifications
+import OSLog
+
+private let shareLogger = Logger(subsystem: "com.natcasd.placelogger.share", category: "ShareFlow")
 
 final class ShareViewController: UIViewController {
   override func viewDidLoad() {
@@ -11,6 +14,7 @@ final class ShareViewController: UIViewController {
         return try await self.sharedURL()
       },
       complete: { [weak self] in
+        shareLogger.info("Requesting automatic share dismissal")
         self?.extensionContext?.completeRequest(returningItems: nil)
       },
       cancel: { [weak self] error in
@@ -109,6 +113,7 @@ private struct ShareStatusView: View {
   enum Phase {
     case starting
     case saving(URL)
+    case processing
     case failed(String)
   }
 
@@ -125,10 +130,8 @@ private struct ShareStatusView: View {
         Text(url.host() ?? url.absoluteString)
           .font(.caption)
           .foregroundStyle(.secondary)
-        Text("Processing your post. You can return to scrolling; results will appear in Activity.")
-          .font(.caption)
-          .multilineTextAlignment(.center)
-          .foregroundStyle(.secondary)
+      case .processing:
+        ShareProcessingConfirmation()
       case .failed(let message):
         Image(systemName: "exclamationmark.triangle.fill")
           .font(.largeTitle)
@@ -147,21 +150,105 @@ private struct ShareStatusView: View {
         let url = try await loadURL()
         state = .saving(url)
         let current = try AccountSession.shared.requireSnapshot()
-        let result = try await PlaceLoggerAPI(account: current, authorizer: AccountSession.shared)
-          .ingest(sourceURL: url, requestKey: requestKey)
-        if result.hasNotificationOutcome {
-          await LocalNotification.send(title: result.notificationTitle, body: result.notificationBody,
-            ingestID: result.ingestID, itemID: result.itemID,
-            entry: result.savedEntries.count == 1 ? result.savedEntries.first : nil, account: current)
+        let api = PlaceLoggerAPI(account: current, authorizer: AccountSession.shared)
+        let key = requestKey
+        _ = try await api.ingest(sourceURL: url, requestKey: key, waitForResult: false)
+        shareLogger.info("Save durably accepted")
+        state = .processing
+
+        // This task deliberately outlives the SwiftUI view's task. Reuse the
+        // accepted request key so the waiting POST cannot create another save.
+        // iOS may still terminate the extension after completeRequest: this is
+        // an on-device experiment, not a guarantee of background notifications.
+        Task {
+          do {
+            let result = try await api.ingest(sourceURL: url, requestKey: key)
+            shareLogger.info("Save result received after acceptance")
+            if result.hasNotificationOutcome {
+              await LocalNotification.send(title: result.notificationTitle, body: result.notificationBody,
+                ingestID: result.ingestID, itemID: result.itemID,
+                entry: result.savedEntries.count == 1 ? result.savedEntries.first : nil, account: current)
+            }
+          } catch {
+            // Receipt is already confirmed. A failed result request must not
+            // produce a misleading failure/accepted notification.
+            shareLogger.info("Result request ended without a notification outcome")
+          }
         }
+        // The check finishes in 220 ms; then use the system dismissal animation.
+        // Aim for roughly half a second total, including that system animation.
+        try await Task.sleep(for: .milliseconds(250))
         complete()
       } catch {
+        guard !Task.isCancelled else { return }
         // A transport error is not a processing outcome. Keep it in the sheet;
         // the accepted save may still finish successfully on the server.
         state = .failed(error.localizedDescription)
       }
     }
   }
+}
+
+/// Acknowledges receipt, not completion of post processing.
+private struct ShareProcessingConfirmation: View {
+  var body: some View {
+    VStack(spacing: 19) {
+      ShareReceiptCheckmark()
+      VStack(spacing: 9) {
+        Text("Processing…")
+          .font(.title2.weight(.semibold))
+        Text("You will be notified on completion.")
+          .font(.subheadline)
+          .foregroundStyle(.secondary)
+          .multilineTextAlignment(.center)
+      }
+    }
+  }
+}
+
+private struct ShareReceiptCheckmark: View {
+  @Environment(\.accessibilityReduceMotion) private var reduceMotion
+  @State private var ringProgress: CGFloat = 0
+  @State private var checkProgress: CGFloat = 0
+
+  var body: some View {
+    ZStack {
+      Circle()
+        .trim(from: 0, to: reduceMotion ? 1 : ringProgress)
+        .stroke(style: StrokeStyle(lineWidth: 3, lineCap: .round))
+        .rotationEffect(.degrees(-90))
+      CheckmarkStroke()
+        .trim(from: 0, to: reduceMotion ? 1 : checkProgress)
+        .stroke(style: StrokeStyle(lineWidth: 3, lineCap: .round, lineJoin: .round))
+    }
+    .foregroundStyle(.green)
+    .frame(width: 68, height: 68)
+    .accessibilityLabel("Post received")
+    .task {
+      guard !reduceMotion else { return }
+      withAnimation(.easeOut(duration: 0.16)) { ringProgress = 1 }
+      do {
+        try await Task.sleep(for: .milliseconds(100))
+        withAnimation(.easeOut(duration: 0.12)) { checkProgress = 1 }
+      } catch {
+        // Dismissal cancels the remaining animation.
+      }
+    }
+  }
+
+  private struct CheckmarkStroke: Shape {
+    func path(in rect: CGRect) -> Path {
+      Path { path in
+        path.move(to: CGPoint(x: rect.width * 0.29, y: rect.height * 0.51))
+        path.addLine(to: CGPoint(x: rect.width * 0.43, y: rect.height * 0.65))
+        path.addLine(to: CGPoint(x: rect.width * 0.71, y: rect.height * 0.36))
+      }
+    }
+  }
+}
+
+#Preview("Share received") {
+  ShareProcessingConfirmation()
 }
 
 @MainActor
@@ -185,7 +272,12 @@ private enum LocalNotification {
     let request = UNNotificationRequest(identifier: identifier, content: content,
                                          trigger: UNTimeIntervalNotificationTrigger(timeInterval: 1, repeats: false))
     guard (try? await AccountSession.shared.validate(account)) != nil else { return }
-    try? await center.add(request)
+    do {
+      try await center.add(request)
+      shareLogger.info("Completion notification scheduled")
+    } catch {
+      shareLogger.info("Completion notification could not be scheduled")
+    }
     if (try? await AccountSession.shared.validate(account)) == nil {
       center.removePendingNotificationRequests(withIdentifiers: [identifier])
       center.removeDeliveredNotifications(withIdentifiers: [identifier])
