@@ -41,6 +41,14 @@ class IngestServiceTests(unittest.TestCase):
 
         self.assertEqual(resolved, "https://www.tiktok.com/@creator/video/123")
 
+    def test_cleans_direct_tiktok_photo_url_without_discarding_post_kind(self) -> None:
+        self.assertEqual(
+            ingest_service._resolve_shared_source_url(
+                "https://www.tiktok.com/@creator/photo/123?_t=tracking"
+            ),
+            "https://www.tiktok.com/@creator/photo/123",
+        )
+
     @patch("ingest_service.process_ingest")
     @patch("ingest_service._resolve_shared_source_url")
     def test_tiktok_short_and_canonical_urls_deduplicate(

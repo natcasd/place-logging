@@ -33,7 +33,7 @@ def resolve_public_url(source_url: str) -> str:
     host = parsed.hostname.lower().rstrip('.')
     parts = parsed.path.strip('/').split('/')
     if host not in TIKTOK_SHORT_HOSTS and not (host in TIKTOK_HOSTS and parts[0] == 't'):
-        raise ValueError('Use an Instagram post, YouTube video, or TikTok video URL')
+        raise ValueError('Use an Instagram post, YouTube video, or TikTok post URL')
 
     # Check each destination before following it; never attach netrc credentials.
     try:
