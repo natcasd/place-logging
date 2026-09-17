@@ -9,7 +9,7 @@ import Security
 private struct SharedSessionStamp: Codable {
   let session: AccountSessionSnapshot?
 
-  static func read(group: String) throws -> SharedSessionStamp? {
+  static func read(group: String?) throws -> SharedSessionStamp? {
     var query = baseQuery(group: group)
     query[kSecReturnData as String] = true
     query[kSecMatchLimit as String] = kSecMatchLimitOne
@@ -22,7 +22,7 @@ private struct SharedSessionStamp: Codable {
     return try JSONDecoder().decode(Self.self, from: data)
   }
 
-  func write(group: String) throws {
+  func write(group: String?) throws {
     let data = try JSONEncoder().encode(self)
     let query = Self.baseQuery(group: group)
     var status = SecItemUpdate(query as CFDictionary, [kSecValueData as String: data] as CFDictionary)
@@ -35,11 +35,14 @@ private struct SharedSessionStamp: Codable {
     guard status == errSecSuccess else { throw PlaceLoggerError.sessionUnavailable }
   }
 
-  private static func baseQuery(group: String) -> [String: Any] {
-    [kSecClass as String: kSecClassGenericPassword,
-     kSecAttrService as String: "com.natcasd.jot.session",
-     kSecAttrAccount as String: "active-account",
-     kSecAttrAccessGroup as String: group]
+  private static func baseQuery(group: String?) -> [String: Any] {
+    var query: [String: Any] = [
+      kSecClass as String: kSecClassGenericPassword,
+      kSecAttrService as String: "com.natcasd.jot.session",
+      kSecAttrAccount as String: "active-account",
+    ]
+    if let group { query[kSecAttrAccessGroup as String] = group }
+    return query
   }
 }
 
@@ -51,6 +54,17 @@ final class AccountSession: ObservableObject, AccountAuthorizer {
   private(set) var isConfigured = false
   private var listener: AuthStateDidChangeListenerHandle?
 
+  /// Xcode 26 simulator apps are unsigned by default and therefore cannot use
+  /// an explicit Keychain access group. Device builds keep the shared group so
+  /// the app and share extension continue to use the same Firebase session.
+  private var sessionAccessGroup: String? {
+#if targetEnvironment(simulator)
+    nil
+#else
+    APIConfig.keychainGroup
+#endif
+  }
+
   func configure() {
     guard !isConfigured else { return }
     do {
@@ -60,7 +74,7 @@ final class AccountSession: ObservableObject, AccountAuthorizer {
             !APIConfig.keychainGroup.isEmpty, !APIConfig.keychainGroup.contains("$(")
       else { throw PlaceLoggerError.signInUnavailable }
       if FirebaseApp.app() == nil { FirebaseApp.configure(options: options) }
-      try Auth.auth().useUserAccessGroup(APIConfig.keychainGroup)
+      if let group = sessionAccessGroup { try Auth.auth().useUserAccessGroup(group) }
       isConfigured = true
       configurationError = nil
       reloadSharedSession()
@@ -76,8 +90,12 @@ final class AccountSession: ObservableObject, AccountAuthorizer {
   func reloadSharedSession() {
     guard isConfigured else { return }
     do {
-      let stamp = try SharedSessionStamp.read(group: APIConfig.keychainGroup)
+      let stamp = try SharedSessionStamp.read(group: sessionAccessGroup)
+#if targetEnvironment(simulator)
+      let stored = Auth.auth().currentUser
+#else
       let stored = try Auth.auth().getStoredUser(forAccessGroup: APIConfig.keychainGroup)
+#endif
       if let session = stamp?.session, session.projectID == APIConfig.firebaseProjectID,
          stored?.uid == session.userID {
         snapshot = session
@@ -103,27 +121,37 @@ final class AccountSession: ObservableObject, AccountAuthorizer {
     }
     let session = AccountSessionSnapshot(projectID: APIConfig.firebaseProjectID,
                                          userID: userID, generation: UUID())
-    try SharedSessionStamp(session: session).write(group: APIConfig.keychainGroup)
+    try SharedSessionStamp(session: session).write(group: sessionAccessGroup)
     snapshot = session
   }
 
   func signOut() throws {
     guard isConfigured else { return }
-    try SharedSessionStamp(session: nil).write(group: APIConfig.keychainGroup)
+    try SharedSessionStamp(session: nil).write(group: sessionAccessGroup)
     snapshot = nil
     try Auth.auth().signOut()
   }
 
   func validate(_ expected: AccountSessionSnapshot) async throws {
+#if targetEnvironment(simulator)
+    let storedUserID = Auth.auth().currentUser?.uid
+#else
+    let storedUserID = try Auth.auth().getStoredUser(forAccessGroup: APIConfig.keychainGroup)?.uid
+#endif
     guard isConfigured,
-          try SharedSessionStamp.read(group: APIConfig.keychainGroup)?.session == expected,
-          try Auth.auth().getStoredUser(forAccessGroup: APIConfig.keychainGroup)?.uid == expected.userID
+          try SharedSessionStamp.read(group: sessionAccessGroup)?.session == expected,
+          storedUserID == expected.userID
     else { throw PlaceLoggerError.sessionChanged }
   }
 
   func token(for expected: AccountSessionSnapshot, forceRefresh: Bool) async throws -> String {
     try await validate(expected)
-    guard let user = try Auth.auth().getStoredUser(forAccessGroup: APIConfig.keychainGroup) else {
+#if targetEnvironment(simulator)
+    let stored = Auth.auth().currentUser
+#else
+    let stored = try Auth.auth().getStoredUser(forAccessGroup: APIConfig.keychainGroup)
+#endif
+    guard let user = stored else {
       throw PlaceLoggerError.signInRequired
     }
     let token: String

@@ -1,5 +1,6 @@
-GOOGLE_REVERSED_CLIENT_ID =
-#include? "Secrets.xcconfig"
+// Public native OAuth callback identifier. Installed iOS apps cannot keep OAuth
+// client identifiers secret; real server credentials must never be added here.
+GOOGLE_REVERSED_CLIENT_ID = com.googleusercontent.apps.271626317276-r4qp5jkj5jtmmrrpjlmk24lpms6v7qjd
 
 CODE_SIGN_IDENTITY[sdk=iphonesimulator*] =
 CODE_SIGNING_REQUIRED[sdk=iphonesimulator*] = NO

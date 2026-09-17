@@ -249,6 +249,14 @@ private struct SignInButtons: View {
 
   var body: some View {
     VStack(spacing: 16) {
+#if GOOGLE_ONLY_DEVICE_DEBUG
+      if deleting != nil && hasApple {
+        Text("Apple verification is unavailable in this development build.")
+          .font(.footnote)
+          .foregroundStyle(.secondary)
+          .multilineTextAlignment(.center)
+      }
+#else
       if deleting == nil || hasApple {
         SignInWithAppleButton(.continue, onRequest: { model.prepareApple($0, linking: linking, deleting: deleting) }) { result in
           Task { await model.completeApple(result, linking: linking, deleting: deleting) }
@@ -257,6 +265,7 @@ private struct SignInButtons: View {
         .frame(height: deleting == nil ? 54 : 50)
         .clipShape(RoundedRectangle(cornerRadius: deleting == nil ? 27 : 8))
       }
+#endif
       if deleting == nil || !hasApple {
         if deleting == nil {
           ContinueWithGoogleButton {
