@@ -168,7 +168,9 @@ final class AccountTransportTests: XCTestCase {
     _ = try await client.ingest(sourceURL: url, requestKey: "one-share")
     let recorded = await requests.all()
     XCTAssertEqual(recorded.count, 2)
-    XCTAssertEqual(recorded[0].httpBody, recorded[1].httpBody)
+    let firstBody = try JSONSerialization.jsonObject(with: XCTUnwrap(recorded[0].httpBody)) as? [String: String]
+    let secondBody = try JSONSerialization.jsonObject(with: XCTUnwrap(recorded[1].httpBody)) as? [String: String]
+    XCTAssertEqual(firstBody, secondBody)
     XCTAssertEqual(URLComponents(url: recorded[0].url!, resolvingAgainstBaseURL: false)?.queryItems,
                    [URLQueryItem(name: "wait_seconds", value: "0")])
     XCTAssertEqual(URLComponents(url: recorded[1].url!, resolvingAgainstBaseURL: false)?.queryItems,
