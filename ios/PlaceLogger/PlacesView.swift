@@ -526,6 +526,10 @@ private struct MappedPlaceGroup: Identifiable {
 
   var primary: SavedEntry { places[0] }
   var category: SavedCategory { SavedCategory.category(for: primary.displayType) }
+  var placeCount: Int {
+    Set(places.map(Self.placeIdentity)).count
+  }
+  var markerTitle: String { placeCount > 1 ? "\(placeCount) places" : name }
   var name: String {
     if let googleName = places.compactMap(\.locationName).first(where: { !$0.isEmpty }) {
       return googleName
@@ -545,8 +549,11 @@ private struct MappedPlaceGroup: Identifiable {
     var indexes: [String: Int] = [:]
 
     for place in places {
-      guard place.latitude != nil, place.longitude != nil else { continue }
-      let key = place.locationID.map { "location:\($0)" } ?? "saved:\(place.id)"
+      guard let latitude = place.latitude, let longitude = place.longitude else { continue }
+      // Map annotations at identical coordinates can never separate through
+      // zooming. Treat that coordinate as one selectable map location while
+      // keeping each canonical place distinct inside the picker.
+      let key = "coordinate:\(latitude.bitPattern):\(longitude.bitPattern)"
       if let index = indexes[key] {
         groups[index].places.append(place)
       } else {
@@ -555,6 +562,10 @@ private struct MappedPlaceGroup: Identifiable {
       }
     }
     return groups
+  }
+
+  private static func placeIdentity(_ place: SavedEntry) -> String {
+    place.locationID.map { "location:\($0)" } ?? "saved:\(place.id)"
   }
 }
 
@@ -968,6 +979,7 @@ private struct CategoryMapMarker: MapContent {
   let title: String
   let category: SavedCategory
   let coordinate: CLLocationCoordinate2D
+  var count: Int? = nil
 
   private static let logoOrange = Color(
     red: 254.0 / 255.0,
@@ -976,13 +988,18 @@ private struct CategoryMapMarker: MapContent {
   )
 
   @MapContentBuilder var body: some MapContent {
-    switch category.icon {
-    case .system(let name):
-      Marker(title, systemImage: name, coordinate: coordinate)
+    if let count, count > 1 {
+      Marker(title, monogram: Text("\(count)"), coordinate: coordinate)
         .tint(Self.logoOrange)
-    case .asset(let name):
-      Marker(title, image: name, coordinate: coordinate)
-        .tint(Self.logoOrange)
+    } else {
+      switch category.icon {
+      case .system(let name):
+        Marker(title, systemImage: name, coordinate: coordinate)
+          .tint(Self.logoOrange)
+      case .asset(let name):
+        Marker(title, image: name, coordinate: coordinate)
+          .tint(Self.logoOrange)
+      }
     }
   }
 }
@@ -1281,6 +1298,123 @@ private extension SavedEntryOutcome {
 }
 
 #if DEBUG
+enum SharedLocationPreviewMode {
+  case map
+  case picker
+  case detail
+
+  init?(processArguments: [String]) {
+    if processArguments.contains("--shared-location-preview-detail") {
+      self = .detail
+    } else if processArguments.contains("--shared-location-preview-picker") {
+      self = .picker
+    } else if processArguments.contains("--shared-location-preview") {
+      self = .map
+    } else {
+      return nil
+    }
+  }
+}
+
+struct SharedLocationMapPreview: View {
+  let mode: SharedLocationPreviewMode
+  @State private var requestedEntryID: Int?
+  @State private var selectedType: String?
+
+  init(mode: SharedLocationPreviewMode) {
+    self.mode = mode
+    _requestedEntryID = State(
+      initialValue: mode == .detail ? DebugSharedLocationFixtures.okdongsik.id : nil
+    )
+    _selectedType = State(initialValue: nil)
+  }
+
+  var body: some View {
+    PlacesMap(
+      places: DebugSharedLocationFixtures.places,
+      requestedEntryID: $requestedEntryID,
+      selectedType: $selectedType,
+      initialCameraPosition: .region(
+        MKCoordinateRegion(
+          center: DebugSharedLocationFixtures.coordinate,
+          latitudinalMeters: 900,
+          longitudinalMeters: 900
+        )
+      ),
+      requestsCurrentLocation: false,
+      opensFirstGroupOnLaunch: mode == .picker,
+      deleteEntryCard: { _ in }
+    )
+    .ignoresSafeArea(edges: .bottom)
+  }
+}
+
+private enum DebugSharedLocationFixtures {
+  static let coordinate = CLLocationCoordinate2D(latitude: 40.74554, longitude: -73.98482)
+
+  static let places: [SavedEntry] = {
+    let data = Data(
+      """
+      [
+        {
+          "id": 13601,
+          "location_id": 801,
+          "item_id": 913601,
+          "name": "George Bang Bang",
+          "latitude": 40.74554,
+          "longitude": -73.98482,
+          "formatted_address": "13 E 30th St, New York, NY 10016",
+          "location_name": "George Bang Bang",
+          "why_its_cool": "A hidden late-night cocktail bar tucked behind Okdongsik.",
+          "type": "Cocktail Bar",
+          "description": "A hidden late-night cocktail bar tucked behind Okdongsik, with Korean-inspired drinks and a compact after-dark atmosphere.",
+          "sources": [
+            {
+              "id": 23601,
+              "item_id": 913601,
+              "source_url": "https://www.instagram.com/reel/shared-location-demo/",
+              "source_platform": "instagram",
+              "creator": "@nycfoodnotes",
+              "description": "A hidden late-night cocktail bar tucked behind Okdongsik.",
+              "why_its_cool": "A hidden late-night cocktail bar tucked behind Okdongsik.",
+              "timestamp_seconds": 14
+            }
+          ]
+        },
+        {
+          "id": 13602,
+          "location_id": 802,
+          "item_id": 913602,
+          "name": "Okdongsik",
+          "latitude": 40.74554,
+          "longitude": -73.98482,
+          "formatted_address": "13 E 30th St, New York, NY 10016",
+          "location_name": "Okdongsik",
+          "why_its_cool": "A tiny counter specializing in clear pork-broth gomtang.",
+          "type": "Restaurant",
+          "description": "A focused Korean restaurant known for clear pork-broth gomtang served at an intimate counter.",
+          "sources": [
+            {
+              "id": 23602,
+              "item_id": 913602,
+              "source_url": "https://www.instagram.com/reel/shared-location-demo/",
+              "source_platform": "instagram",
+              "creator": "@nycfoodnotes",
+              "description": "A tiny counter specializing in clear pork-broth gomtang.",
+              "why_its_cool": "A tiny counter specializing in clear pork-broth gomtang.",
+              "timestamp_seconds": 31
+            }
+          ]
+        }
+      ]
+      """.utf8
+    )
+    return try! JSONDecoder().decode([SavedEntry].self, from: data)
+  }()
+
+  static var okdongsik: SavedEntry { places[1] }
+}
+
 struct ActivityExtractionPreview: View {
   var body: some View {
     NavigationStack {
@@ -1415,10 +1549,12 @@ private struct PlacesMap: View {
   @Binding var requestedEntryID: Int?
   @Binding var selectedType: String?
   let deleteEntryCard: (SavedEntry) async throws -> Void
+  private let requestsCurrentLocation: Bool
+  private let opensFirstGroupOnLaunch: Bool
   @StateObject private var locationModel = LocationModel()
   @StateObject private var searchModel = MapSearchModel()
   @StateObject private var appleMapsDestinations = AppleMapsDestinationCache()
-  @State private var cameraPosition: MapCameraPosition = .automatic
+  @State private var cameraPosition: MapCameraPosition
   @State private var selectedGroupID: String?
   @State private var detailGroup: MappedPlaceGroup?
   @State private var preferredDetailEntryID: Int?
@@ -1429,6 +1565,24 @@ private struct PlacesMap: View {
   @State private var shouldCenterOnNextLocation = false
   @State private var isSearchExpanded = false
   @FocusState private var searchIsFocused: Bool
+
+  init(
+    places: [SavedEntry],
+    requestedEntryID: Binding<Int?>,
+    selectedType: Binding<String?>,
+    initialCameraPosition: MapCameraPosition = .automatic,
+    requestsCurrentLocation: Bool = true,
+    opensFirstGroupOnLaunch: Bool = false,
+    deleteEntryCard: @escaping (SavedEntry) async throws -> Void
+  ) {
+    self.places = places
+    _requestedEntryID = requestedEntryID
+    _selectedType = selectedType
+    _cameraPosition = State(initialValue: initialCameraPosition)
+    self.requestsCurrentLocation = requestsCurrentLocation
+    self.opensFirstGroupOnLaunch = opensFirstGroupOnLaunch
+    self.deleteEntryCard = deleteEntryCard
+  }
 
   private var groups: [MappedPlaceGroup] {
     let activeType = selectedType
@@ -1455,9 +1609,10 @@ private struct PlacesMap: View {
 
           ForEach(groups) { group in
             CategoryMapMarker(
-              title: group.name,
+              title: group.markerTitle,
               category: group.category,
-              coordinate: group.coordinate
+              coordinate: group.coordinate,
+              count: group.placeCount > 1 ? group.placeCount : nil
             )
             .tag(group.id)
           }
@@ -1500,13 +1655,22 @@ private struct PlacesMap: View {
         }
       }
       .onReceive(locationModel.$location.compactMap { $0 }) { location in
+        guard requestsCurrentLocation else { return }
         guard shouldCenterOnNextLocation || !hasChosenInitialCamera else { return }
         shouldCenterOnNextLocation = false
         hasChosenInitialCamera = true
         centerMap(on: location)
       }
       .task {
+        guard requestsCurrentLocation else { return }
         locationModel.requestCurrentLocation()
+      }
+      .task {
+        guard opensFirstGroupOnLaunch,
+              detailGroup == nil,
+              let group = groups.first
+        else { return }
+        showPlaceDetail(group)
       }
       .task(id: requestedEntryID) {
         guard let entryID = requestedEntryID,
@@ -1898,23 +2062,29 @@ private struct LocationEntryPicker: View {
     VStack(alignment: .leading, spacing: 16) {
       HStack(alignment: .top, spacing: 8) {
         VStack(alignment: .leading, spacing: 4) {
-          Text("Location")
-            .font(.caption.weight(.semibold))
-            .foregroundStyle(.secondary)
-            .textCase(.uppercase)
-          Text(group.name)
+          if group.placeCount == 1 {
+            Text("Location")
+              .font(.caption.weight(.semibold))
+              .foregroundStyle(.secondary)
+              .textCase(.uppercase)
+          }
+          Text(group.placeCount > 1 ? "\(group.placeCount) places here" : group.name)
             .font(.title2.bold())
         }
 
         Spacer(minLength: 8)
 
-        AppleMapsButton(entry: group.primary, destinations: appleMapsDestinations)
+        if group.placeCount == 1 {
+          AppleMapsButton(entry: group.primary, destinations: appleMapsDestinations)
+        }
 
       }
 
-      Text("\(group.entryGroups.count) saved entries at this location")
-        .font(.subheadline)
-        .foregroundStyle(.secondary)
+      if group.placeCount == 1 {
+        Text("\(group.entryGroups.count) saved entries at this location")
+          .font(.subheadline)
+          .foregroundStyle(.secondary)
+      }
 
       ForEach(group.entryGroups) { entryGroup in
         Button {
