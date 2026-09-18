@@ -224,6 +224,11 @@ struct IngestResponse: Decodable, Sendable {
     ["completed", "partial", "failed"].contains(status ?? "")
   }
 
+  func notificationIdentifier(accountGeneration: UUID) -> String {
+    let sourceIdentity = itemID.map { "item.\($0)" } ?? "ingest.\(ingestID)"
+    return "jot.save.\(accountGeneration.uuidString).\(sourceIdentity)"
+  }
+
   var notificationTitle: String {
     if status == "queued" || status == "processing" { return "Post accepted" }
     if status == "retry_scheduled" { return "Retry scheduled" }

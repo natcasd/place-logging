@@ -193,7 +193,8 @@ private struct ShareStatusView: View {
             if result.hasNotificationOutcome {
               await LocalNotification.send(title: result.notificationTitle, body: result.notificationBody,
                 ingestID: result.ingestID, itemID: result.itemID,
-                entry: result.savedEntries.count == 1 ? result.savedEntries.first : nil, account: current)
+                entry: result.savedEntries.count == 1 ? result.savedEntries.first : nil,
+                identifier: result.notificationIdentifier(accountGeneration: current.generation), account: current)
             }
           } catch {
             // Receipt is already confirmed. A failed result request must not
@@ -280,7 +281,8 @@ private struct ShareReceiptCheckmark: View {
 @MainActor
 private enum LocalNotification {
   static func send(title: String, body: String, ingestID: Int? = nil, itemID: Int? = nil,
-                   entry: SavedEntryOutcome? = nil, account: AccountSessionSnapshot) async {
+                   entry: SavedEntryOutcome? = nil, identifier: String? = nil,
+                   account: AccountSessionSnapshot) async {
     let center = UNUserNotificationCenter.current()
     guard (try? await AccountSession.shared.validate(account)) != nil else { return }
     let settings = await center.notificationSettings()
@@ -294,8 +296,9 @@ private enum LocalNotification {
     if let itemID { info["item_id"] = itemID }
     if let entry { info["entry_id"] = entry.entryID; info["has_location"] = entry.hasLocation }
     content.userInfo = info
-    let identifier = "jot.save.\(account.generation).\(ingestID.map(String.init) ?? UUID().uuidString)"
-    let request = UNNotificationRequest(identifier: identifier, content: content,
+    let notificationID = identifier
+      ?? "jot.save.\(account.generation.uuidString).\(UUID().uuidString)"
+    let request = UNNotificationRequest(identifier: notificationID, content: content,
                                          trigger: UNTimeIntervalNotificationTrigger(timeInterval: 1, repeats: false))
     guard (try? await AccountSession.shared.validate(account)) != nil else { return }
     do {
@@ -305,8 +308,8 @@ private enum LocalNotification {
       shareLogger.info("Completion notification could not be scheduled")
     }
     if (try? await AccountSession.shared.validate(account)) == nil {
-      center.removePendingNotificationRequests(withIdentifiers: [identifier])
-      center.removeDeliveredNotifications(withIdentifiers: [identifier])
+      center.removePendingNotificationRequests(withIdentifiers: [notificationID])
+      center.removeDeliveredNotifications(withIdentifiers: [notificationID])
     }
   }
 }
