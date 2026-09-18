@@ -344,6 +344,20 @@ private struct PlacesList: View {
   let refresh: () async -> Void
 
   private var categories: [SavedCategory] { SavedCategory.categories(for: places) }
+  private let positionalTints: [Color] = [
+    Color(red: 0.95, green: 0.45, blue: 0.29),
+    Color(red: 0.88, green: 0.60, blue: 0.14),
+    Color(red: 0.89, green: 0.76, blue: 0.15),
+    Color(red: 0.82, green: 0.77, blue: 0.00),
+    Color(red: 0.37, green: 0.72, blue: 0.27),
+    Color(red: 0.00, green: 0.76, blue: 0.55),
+    Color(red: 0.20, green: 0.70, blue: 0.76),
+    Color(red: 0.49, green: 0.63, blue: 0.94),
+    Color(red: 0.38, green: 0.43, blue: 0.78),
+    Color(red: 0.63, green: 0.55, blue: 0.87),
+    Color(red: 0.95, green: 0.33, blue: 0.58),
+    Color(red: 0.96, green: 0.47, blue: 0.61),
+  ]
 
   var body: some View {
     Group {
@@ -362,9 +376,12 @@ private struct PlacesList: View {
             ],
             spacing: 12
           ) {
-            ForEach(categories) { category in
+            ForEach(Array(categories.enumerated()), id: \.element.id) { index, category in
               NavigationLink(value: PlacesNavigation.category(category.type)) {
-                SavedCategoryTile(category: category)
+                SavedCategoryTile(
+                  category: category,
+                  tint: positionalTints[index % positionalTints.count]
+                )
               }
               .buttonStyle(.plain)
               .accessibilityLabel(category.title)
@@ -381,6 +398,7 @@ private struct PlacesList: View {
 
 private struct SavedCategoryTile: View {
   let category: SavedCategory
+  let tint: Color
 
   var body: some View {
     GeometryReader { geometry in
@@ -392,13 +410,9 @@ private struct SavedCategoryTile: View {
             .frame(width: geometry.size.width, height: geometry.size.height)
             .clipped()
             .saturation(0)
-            .colorMultiply(category.artTint)
+            .colorMultiply(tint)
         } else {
-          LinearGradient(
-            colors: [.purple, .indigo],
-            startPoint: .topLeading,
-            endPoint: .bottomTrailing
-          )
+          tint
           SavedCategoryIconView(icon: category.icon)
             .font(.system(size: 38, weight: .medium))
             .frame(width: 38, height: 38)
@@ -412,13 +426,13 @@ private struct SavedCategoryTile: View {
         )
 
         Text(category.title)
-          .font(.headline.weight(.bold))
+          .font(.system(size: 18, weight: .semibold))
           .foregroundStyle(.white)
           .padding(14)
       }
       .frame(width: geometry.size.width, height: geometry.size.height)
     }
-    .aspectRatio(1.5, contentMode: .fit)
+    .aspectRatio(1.786, contentMode: .fit)
     .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
     .contentShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
   }
