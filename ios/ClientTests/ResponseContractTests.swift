@@ -20,6 +20,22 @@ final class ResponseContractTests: XCTestCase {
     XCTAssertEqual(result.notificationBody, "This post could not be downloaded.")
   }
 
+  func testCompletionNotificationsUseTheSavedSourceIdentity() throws {
+    let generation = UUID(uuidString: "AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE")!
+    let first = try JSONDecoder().decode(IngestResponse.self, from: Data(#"{"ingest_id":41,"item_id":7,"status":"completed","saved_entries":[]}"#.utf8))
+    let duplicate = try JSONDecoder().decode(IngestResponse.self, from: Data(#"{"ingest_id":42,"item_id":7,"status":"completed","saved_entries":[]}"#.utf8))
+    let unrelated = try JSONDecoder().decode(IngestResponse.self, from: Data(#"{"ingest_id":43,"item_id":8,"status":"completed","saved_entries":[]}"#.utf8))
+
+    XCTAssertEqual(
+      first.notificationIdentifier(accountGeneration: generation),
+      duplicate.notificationIdentifier(accountGeneration: generation)
+    )
+    XCTAssertNotEqual(
+      first.notificationIdentifier(accountGeneration: generation),
+      unrelated.notificationIdentifier(accountGeneration: generation)
+    )
+  }
+
   func testPrivateRecommendationCanHaveNoSocialURL() throws {
     let data = Data(#"{"id":1,"item_id":2,"source_url":null,"source_platform":"other","description":"Try this cafe","why_its_cool":"Personal note"}"#.utf8)
     let source = try JSONDecoder().decode(SavedEntrySource.self, from: data)

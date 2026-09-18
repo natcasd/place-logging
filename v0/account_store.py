@@ -169,6 +169,10 @@ class AccountStore:
         if not 1 <= limit <= 500:
             raise ValueError('limit must be between 1 and 500')
         with self._transaction() as con:
+            # Keep every request key durably, but present same-source requests
+            # accepted before an earlier run finished as one user operation.
+            # Event IDs provide an exact transaction order without timestamp
+            # precision assumptions; a later deliberate re-share remains visible.
             rows = con.execute('''
                 SELECT r.*, COALESCE(i.raw_payload_json, json_set(COALESCE(
                         json_extract(pc.result_json, '$.metadata'),
@@ -177,6 +181,33 @@ class AccountStore:
                 LEFT JOIN captures i ON i.id = r.item_id AND i.user_id = r.user_id
                 LEFT JOIN post_processing_cache pc ON pc.id = i.post_cache_id
                 WHERE r.user_id = ? AND r.status != 'cancelled'
+                    AND NOT EXISTS (
+                        SELECT 1
+                        FROM ingest_runs earlier
+                        JOIN ingest_events current_accept
+                          ON current_accept.user_id = r.user_id
+                         AND current_accept.ingest_run_id = r.id
+                         AND current_accept.stage = 'accepted'
+                         AND current_accept.status = 'queued'
+                        JOIN ingest_events earlier_accept
+                          ON earlier_accept.user_id = earlier.user_id
+                         AND earlier_accept.ingest_run_id = earlier.id
+                         AND earlier_accept.stage = 'accepted'
+                         AND earlier_accept.status = 'queued'
+                        WHERE r.item_id IS NOT NULL
+                          AND earlier.user_id = r.user_id
+                          AND earlier.item_id = r.item_id
+                          AND earlier.id != r.id
+                          AND earlier.status != 'cancelled'
+                          AND earlier_accept.id < current_accept.id
+                          AND NOT EXISTS (
+                              SELECT 1 FROM ingest_events earlier_terminal
+                              WHERE earlier_terminal.user_id = earlier.user_id
+                                AND earlier_terminal.ingest_run_id = earlier.id
+                                AND earlier_terminal.id < current_accept.id
+                                AND earlier_terminal.status IN ('completed', 'partial', 'failed')
+                          )
+                    )
                 ORDER BY r.updated_at DESC, r.id DESC LIMIT ?
             ''', (self.user_id, limit)).fetchall()
             activity = []

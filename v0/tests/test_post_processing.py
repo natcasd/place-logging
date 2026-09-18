@@ -13,6 +13,7 @@ from unittest.mock import Mock
 import requests
 import store
 from account_movie_enrichment import AccountMovieEnricher
+from account_store import AccountConflict
 from capture_store import CaptureStore
 from multi_user_migration import prepare_copy
 from post_processing_store import LeaseLost, PostProcessingStore
@@ -72,6 +73,58 @@ class PostProcessingTests(unittest.TestCase):
         self.assertEqual(len(self.b.entries()), 1)
         self.assertNotEqual(self.a.entries()[0]['id'], self.b.entries()[0]['id'])
         self.assertEqual(list(worker.workdir.iterdir()), [])
+
+    def test_overlapping_same_account_submissions_share_one_visible_activity(self):
+        first = self.accept(key='first')
+        lease = self.queue.claim()
+        duplicate = self.accept(key='duplicate')
+        self.queue.publish(lease, BASELINE)
+        self.assertEqual(self.queue.deliver_ready(), 2)
+
+        self.assertNotEqual(first['ingest_id'], duplicate['ingest_id'])
+        self.assertEqual(len(self.rows('ingest_runs')), 2)
+        self.assertEqual(len(self.rows('post_processing_cache')), 1)
+        self.assertEqual(len(self.rows('recommendation_mentions')), 1)
+        self.assertEqual([row['id'] for row in self.a.activity()], [first['ingest_id']])
+
+        later = self.accept(key='later')
+        self.assertTrue(PostProcessingWorker(
+            self.queue, self.root, lambda *_: self.fail('Cache hit must not process')
+        ).run_once())
+        self.assertEqual(
+            [row['id'] for row in self.a.activity()],
+            [later['ingest_id'], first['ingest_id']],
+        )
+
+    def test_overlapping_location_review_is_one_visible_decision(self):
+        review = {'mentions': [{'key': 'one', 'extracted': {
+            'extracted_name': 'Cafe', 'type_name': 'Restaurant', 'description': 'Original'},
+            'status': 'needs_review', 'candidate_ids': ['place']}]}
+        first = self.accept(key='first')
+        lease = self.queue.claim()
+        duplicate = self.accept(key='duplicate')
+        self.queue.publish(lease, review, locations=(PlaceLookup(
+            google_place_id='place', display_name='Cafe', lat=40, lng=-74,
+        ),))
+        self.assertEqual(self.queue.deliver_ready(), 2)
+
+        activity = self.a.activity()
+        self.assertEqual([row['id'] for row in activity], [first['ingest_id']])
+        result = activity[0]['results'][0]
+        self.assertEqual(result['resolution_status'], 'needs_review')
+        self.a.confirm_activity_location(
+            first['ingest_id'], result['entry_id'], 'place',
+            mention_id=result['source_connection_id'],
+        )
+
+        refreshed = self.a.activity()
+        self.assertEqual([row['id'] for row in refreshed], [first['ingest_id']])
+        self.assertEqual(refreshed[0]['results'][0]['resolution_status'], 'user_confirmed')
+        with self.assertRaises(AccountConflict):
+            self.a.confirm_activity_location(
+                duplicate['ingest_id'], result['entry_id'], 'place',
+                mention_id=result['source_connection_id'],
+            )
 
     def seed_movie(self, account=None):
         account = account or self.a
