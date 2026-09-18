@@ -85,6 +85,8 @@ The map shows resolved places as selectable pins. Pins use the saved place
 type's icon (for example, a fork and knife for restaurants or a tree for
 parks). Repeated saves with the same Google Place ID share one pin while
 retaining every recommendation and original source post in the detail sheet.
+Distinct places with identical coordinates share a numbered marker; selecting
+it opens a picker so each place remains discoverable and opens its own details.
 Places without resolved coordinates remain available in the list.
 
 New saves retain where each place appears in its source. Reel, TikTok, and

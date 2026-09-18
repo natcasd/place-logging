@@ -16,7 +16,11 @@ struct PlaceLoggerApp: App {
     WindowGroup {
       Group {
 #if DEBUG
-        if ProcessInfo.processInfo.arguments.contains("--activity-extraction-preview") {
+        if let previewMode = SharedLocationPreviewMode(
+          processArguments: ProcessInfo.processInfo.arguments
+        ) {
+          SharedLocationMapPreview(mode: previewMode)
+        } else if ProcessInfo.processInfo.arguments.contains("--activity-extraction-preview") {
           ActivityExtractionPreview()
         } else if let snapshot = session.snapshot {
           PlacesView(router: router, account: snapshot)
